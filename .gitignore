@@ -18,6 +18,8 @@ docs/fixtures/eval/*.jpg
 docs/fixtures/eval/*.jpeg
 docs/fixtures/eval/*.gif
 docs/fixtures/eval/*.webp
+# 下划线开头的是校对用的临时工作表，不是资产
+docs/fixtures/eval/_*.md
 
 # 本地临时产物
 *.log
