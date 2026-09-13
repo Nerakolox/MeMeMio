@@ -1,0 +1,16 @@
+# 只给本机开发用的叠加层。
+#
+# compose.yaml 一个宿主端口都不映射（docs/deployment.md §4），但本机开发时
+# api 跑在宿主机上（npm run dev），必须能连到容器里的 Postgres，所以这里开一个口。
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d db
+#
+# ⚠️ 部署机器上不要带这个文件。deployment.md §8 的检查清单里
+#    「compose 里没有任何 ports: 映射」指的是只用 compose.yaml 的那种起法。
+#
+# 绑 127.0.0.1 而不是 0.0.0.0：即使在开发机上，数据库也不该出现在局域网里。
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_DEV_PORT:-5432}:5432"

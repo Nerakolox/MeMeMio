@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+
+    "baseUrl": ".",
+    "paths": {
+      // 接口类型直接从 api 的源码读，没有生成步骤（SPEC §0.2）。
+      // 只允许 import type —— 这些 import 在编译后会被完全擦除，api 的运行时代码不会进 bundle。
+      "@api/*": ["../api/src/*"],
+      // 词表主源，两端读同一份文件
+      "@shared/*": ["../shared/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.vite
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+docs/fixtures/eval/images
+_archive
+coverage
+*.log

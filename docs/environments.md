@@ -28,6 +28,19 @@ DEFAULT_EMBED_BASE_URL  / DEFAULT_EMBED_API_KEY  / DEFAULT_EMBED_MODEL
 >
 > 它不在数据库备份里，必须单独离线备份。**这是本项目唯一一个「丢了就没法恢复」的东西**——数据库、图片、代码都能重建，它不能。
 
+### `DATABASE_URL` 有两种形态
+
+容器里和本机开发时**主机名不同**，同一个变量名两个值：
+
+| 谁在读 | 值 | 来自哪 |
+|---|---|---|
+| 容器里的 app | `postgres://${APP_SLUG}:${DB_PASSWORD}@${APP_SLUG}-db:5432/${APP_SLUG}` | `compose.yaml` 的 `environment:`，**覆盖** `.env` |
+| 本机 `npm run dev` / `npm test` | `postgres://...@localhost:5432/...` | 仓库根 `.env` |
+
+`.env` 里写 localhost 形态，compose 启动 app 时用 `environment:` 盖掉。**不要为了「统一」把 `.env` 改成容器形态**——那样本机 `npm run dev` 就连不上了，而且错误发生在第一次查询，离根因很远。
+
+测试另有一个库：`npm test` 会把库名加后缀 `_test` 自己建出来并跑迁移，不碰开发库。
+
 ## 2. 启动时校验，不要运行时才发现
 
 进程启动时一次性校验全部环境变量，**缺一个就拒绝启动并打印缺了哪个**。不要用 `process.env.X!` 这类写法把问题推到第一次调用时——那时的报错现场离根因已经很远了。
@@ -41,10 +54,11 @@ DEFAULT_EMBED_BASE_URL  / DEFAULT_EMBED_API_KEY  / DEFAULT_EMBED_MODEL
 需要：Node 22+、Docker（起 Postgres）、ffmpeg（本机装或用容器）。
 
 ```bash
-# 1. 只起数据库
-docker compose up -d db
+# 1. 只起数据库。dev 那层唯一的作用是把 5432 绑到 127.0.0.1，
+#    正式部署绝不能带上它（deployment.md §4 / §8）
+docker compose -f compose.yaml -f compose.dev.yaml up -d db
 
-# 2. 迁移
+# 2. 迁移（永远是独立命令，进程启动时只检查不执行）
 cd api && npm run migrate
 
 # 3. 两端各自起

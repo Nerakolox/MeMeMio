@@ -1,0 +1,29 @@
+import { createDb } from '../../src/data/db.js'
+import { requireDatabaseUrl, testDatabaseUrl } from './db-url.js'
+
+/**
+ * 测试连的是**真 Postgres**（api/agents/rules/testing.md §1）。
+ * pgvector / pg_trgm / bit_count / FOR UPDATE SKIP LOCKED 全都 mock 不出来。
+ *
+ * 用的是独立的 <库名>_test 库，不是开发库 —— 测试会清表。
+ *
+ * ⚠️ 这个文件会经由 db.ts 拉进 src/env.ts，只能在 setupFiles 之后被 import，
+ *    也就是只能被测试文件 import。global-setup 用 db-url.ts。
+ */
+
+export function createTestDb() {
+  return createDb(testDatabaseUrl(requireDatabaseUrl()))
+}
+
+/**
+ * 每个用例自己清理，不靠用例之间的执行顺序（testing.md §2）。
+ * 不加 RESTART IDENTITY 是因为主键是 uuid。
+ */
+export async function truncateAll(sql: ReturnType<typeof createTestDb>['sql']): Promise<void> {
+  await sql`
+    truncate table
+      import_items, import_batches, user_favorites,
+      user_ai_configs, invite_codes, memes, users
+    cascade
+  `
+}

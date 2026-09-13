@@ -126,15 +126,18 @@ FROM node:22-bookworm-slim AS web
 WORKDIR /w
 COPY web/package*.json ./
 RUN npm ci
+# 词表，web 在编译期打进产物
+COPY shared/ /shared/
 COPY web/ ./
 RUN npm run build
 
 FROM node:22-bookworm-slim AS api
 WORKDIR /a
 COPY api/package*.json ./
-RUN npm ci --omit=dev
+# 这里不能加 --omit=dev：tsc 是 devDependency
+RUN npm ci
 COPY api/ ./
-RUN npm run build
+RUN npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
 RUN apt-get update \
@@ -142,15 +145,27 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=api /a/node_modules ./node_modules
-COPY --from=api /a/dist       ./dist
-COPY --from=web /w/dist       ./public     # SPA 产物，由 Hono 同域托管
+COPY --from=api /a/dist        ./dist
+# migrate 命令和启动时的版本检查都要读 migrations/
+COPY --from=api /a/migrations  ./migrations
+# SPA 产物，由 Hono 同域托管
+COPY --from=web /w/dist        ./public
+# 运行期校验标签用，和 web 打进去的是同一份
+COPY shared/ /shared/
 CMD ["node", "dist/server.js"]
 ```
 
-**两个坑：**
+**五个坑**（后三个是 2026-09-13 第一次真正构建这份 Dockerfile 时踩出来的，之前的版本构建不出来）：
 
 - **用 `bookworm-slim`，不要用 Alpine。** `sharp` 的预编译二进制在 musl 上经常出问题，装 ffmpeg 也更麻烦。glibc 基础镜像大一些，但省掉的调试时间远超那点体积。
 - **ffmpeg 会让镜像涨约 100MB+**，这是抽帧方案的必要成本，可接受。不要为了瘦身换成裁剪版 ffmpeg，动图格式的覆盖面会出问题。
+- **api 阶段 `npm ci` 不能带 `--omit=dev`，构建完再 `npm prune --omit=dev`。** `tsc` 在 devDependencies 里，少了它直接 `sh: 1: tsc: not found`。prune 放在同一层，最终镜像里仍然只有运行期依赖。
+- **Dockerfile 里 `#` 只有在行首才是注释。** 写成 `COPY a b   # 说明` 会把 `#` 和后面的词当成额外的源路径，报 `"/#": not found`。所有说明必须单独一行。
+- **`shared/` 要 COPY 两次，路径必须是 `/shared/`。** web 阶段是编译期需要（走 Vite alias 打进产物），最终镜像是运行期需要（api 校验标签时读）。api 用 `process.cwd()/../shared/vocab/vocab.json` 定位它——开发时 cwd 是 `<repo>/api`，镜像里是 `/app`，两边都能解析到，**这是刻意对齐的，改 WORKDIR 会同时打断两边**。
+
+还有一条不在 Dockerfile 里但由它引出：**`npm prune --omit=dev` 之后镜像里没有 `pino-pretty`**，所以日志器不能只按 `NODE_ENV` 决定挂不挂它——拿非 production 的 `NODE_ENV` 跑镜像会在加载日志器时就崩。`api/src/logger.ts` 探测的是「装没装」而不是「哪个环境」。
+
+不做 `npm workspaces`：两个阶段各自 `npm ci`，所以**两个工作区各有一份 lockfile**，没有根 lockfile。`web` 消费 `api` 类型靠 tsconfig `paths`（`@api/* → ../api/src/*`）+ `import type`，不走包解析，api 的运行时代码进不了前端产物。
 
 这个 Dockerfile 同时从 `web/` 和 `api/` 构建，是[单仓库结构](architecture.md)的直接原因。
 
@@ -163,6 +178,16 @@ docker compose run --rm app node dist/migrate.js
 ```
 
 **不要放在容器启动流程里自动执行。** 将来跑多副本时会出现并发迁移，而那种故障发生在启动瞬间，最难排查。多一步手工命令换掉一类隐患，划算。
+
+启动时**只检查不执行**：进程比对 `migrations/meta/_journal.json` 和库里 `drizzle.__drizzle_migrations` 的条数，落后就打印待跑的迁移名 + 上面那条命令，然后 `exit(1)`。「起不来」比「悄悄跑了迁移」好排查得多。
+
+迁移文件名是 `NNNN_动词_对象.sql`（SPEC §7.6）。drizzle-kit 默认给随机名，**生成时必须带 `--name`**：
+
+```bash
+cd api && npm run db:generate -- --name=create_core_tables
+```
+
+`CREATE EXTENSION` drizzle-kit 不会生成，手工补在第一条迁移的最前面（`vector` 和 `pg_trgm`，建表就要用到）。**不要放进 compose 的 initdb 脚本**——那个只在卷第一次创建时跑一次，换环境就会漏。
 
 ## 7. 备份
 
@@ -182,6 +207,7 @@ docker compose run --rm app node dist/migrate.js
 - [ ] `docker volume ls` 中本项目的卷带 `APP_SLUG` 前缀，且不与他人同名
 - [ ] `docker network ls` 中内部网络带前缀；`shared-proxy` 已创建
 - [ ] compose 里**没有任何 `ports:` 映射**（db 尤其不能暴露）
+- [ ] **部署机上不存在、也永远不要用 `compose.dev.yaml`**——它唯一的作用是给本机开发把 db 的 5432 绑到 `127.0.0.1`，只在显式 `-f compose.dev.yaml` 时才生效。命名成 `compose.override.yaml` 会被自动加载，所以刻意**没有**这么命名
 - [ ] `R2_KEY_PREFIX` 已设置（若与其他项目共用 bucket）
 - [ ] `CONFIG_ENC_KEY` 已离线备份到 Docker 和数据库之外的地方
 - [ ] 反代已配置指向 `${APP_SLUG}-app`

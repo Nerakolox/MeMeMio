@@ -1,0 +1,49 @@
+# 部署用的 compose。设计依据见 docs/deployment.md。
+#
+# ⚠️ 这个文件里不允许出现任何 ports: 映射。单机多项目下手工分配宿主端口必然出错，
+#    统一走 shared-proxy 反代，按容器名访问。本机开发要连数据库时用 compose.dev.yaml。
+
+name: ${APP_SLUG}
+
+services:
+  app:
+    build: .
+    image: ${APP_SLUG}-app:latest
+    container_name: ${APP_SLUG}-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # .env 里的 DATABASE_URL 是宿主机开发用的 localhost 版本，容器里必须覆盖成内部网络地址
+      DATABASE_URL: postgres://${APP_SLUG}:${DB_PASSWORD}@${APP_SLUG}-db:5432/${APP_SLUG}
+      PORT: 3000
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [internal, proxy]
+
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: ${APP_SLUG}-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${APP_SLUG}
+      POSTGRES_USER: ${APP_SLUG}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${APP_SLUG}"]
+      interval: 5s
+      retries: 10
+    networks: [internal]
+
+volumes:
+  # 顶层 key 不支持变量插值，只有块内 name: 支持。卷撞车是静默的数据损坏，显式命名不能省。
+  pgdata:
+    name: ${APP_SLUG}_pgdata
+
+networks:
+  internal:
+    name: ${APP_SLUG}-internal
+  proxy:
+    external: true
+    name: shared-proxy
