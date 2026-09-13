@@ -1,0 +1,14 @@
+# 统一换行符：仓库内一律 LF
+# 本项目在 Windows 上开发、在 Linux 容器里构建，
+# CRLF 混进 shell 脚本或迁移文件会以很难排查的方式失败。
+* text=auto eol=lf
+
+# 二进制，不做任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff  binary
+*.woff2 binary

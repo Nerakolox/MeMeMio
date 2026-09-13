@@ -1,0 +1,33 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+
+# 环境变量 —— 只有 .env.example 进仓库，且不放可用值
+.env
+.env.*
+!.env.example
+
+# 评测集图片不进仓库（含擦边内容，见 docs/eval.md）
+# 标注文本是项目核心资产，必须进
+docs/fixtures/eval/images/
+docs/fixtures/eval/*.png
+docs/fixtures/eval/*.jpg
+docs/fixtures/eval/*.jpeg
+docs/fixtures/eval/*.gif
+docs/fixtures/eval/*.webp
+
+# 本地临时产物
+*.log
+tmp/
+coverage/
+.eval-out/
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
