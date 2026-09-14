@@ -85,3 +85,5 @@
 跨端任务只有 `planning` / `in_progress` / `done` 三个主状态，阻塞单列。各端只回填本端任务和有依据的验证结果。联合验收通过后关闭，完成文档移到 `_archive/joint-tasks/`。
 
 长期决策进 [SPEC §9](spec/09-decisions.md)，临时进度进任务，运行手册进 `docs/`，本端实现约束进本端规则。交付时说明本次修改、实测范围、阻塞及下一步，不复述整套规范。
+
+# 提交不允许Co-Authored-By加上claude的名字！
