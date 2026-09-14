@@ -73,7 +73,7 @@ describe('写权限', () => {
   it('非上传者不能 delete / retag，管理员可以', async () => {
     const alice = await createUser(db)
     const bob = await createUser(db)
-    const admin = await createUser(db, { role: 'User' })
+    const admin = await createUser(db, { role: 'admin' })
     const meme = await makeMeme(db, { uploaderId: alice.id })
 
     for (const action of ['delete', 'retag'] as const) {
@@ -84,7 +84,6 @@ describe('写权限', () => {
         expect(isAppError(error) && error.code).toBe('FORBIDDEN')
       }
       expect(() => assertCanMutate(meme, alice, action)).not.toThrow()
-      // 'User' 才是管理员角色，不是 'admin'（SPEC §3.2）
       expect(() => assertCanMutate(meme, admin, action)).not.toThrow()
     }
   })

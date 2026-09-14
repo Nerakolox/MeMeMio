@@ -17,7 +17,7 @@ import { AppError } from '../lib/app-error.js'
 export type MemeRow = typeof memes.$inferSelect
 export type NewMeme = typeof memes.$inferInsert
 
-/** 当前操作者。role 取值见 SPEC §3.2，'User' 是管理员。 */
+/** 当前操作者。role 取值见 SPEC §3.2。 */
 export type Actor = { id: string; role: string }
 
 export type MutateAction = 'edit' | 'delete' | 'retag'
@@ -37,11 +37,11 @@ export function assertCanMutate(meme: MemeRow, actor: Actor, action: MutateActio
   if (action === 'edit') return
 
   const isUploader = meme.uploaderId === actor.id
-  const isAdmin = actor.role === 'User'
+  const isAdmin = actor.role === 'admin'
   if (isUploader || isAdmin) return
 
   const what = action === 'delete' ? '删除' : '重新打标'
-  throw new AppError('FORBIDDEN', `只有上传者或管理员可以${what}`)
+  throw new AppError('FORBIDDEN', `只有上传者或管理员才能${what}`)
 }
 
 /** 永远不返回软删的记录。 */

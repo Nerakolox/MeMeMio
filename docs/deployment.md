@@ -165,6 +165,8 @@ CMD ["node", "dist/server.js"]
 
 还有一条不在 Dockerfile 里但由它引出：**`npm prune --omit=dev` 之后镜像里没有 `pino-pretty`**，所以日志器不能只按 `NODE_ENV` 决定挂不挂它——拿非 production 的 `NODE_ENV` 跑镜像会在加载日志器时就崩。`api/src/logger.ts` 探测的是「装没装」而不是「哪个环境」。
 
+**`web` 的 `npm run typecheck` 必须进提交前检查和 CI。** `vite build`（esbuild）不做类型检查，`web` 与 `api` 之间的类型链路只有 `typecheck` 能验证。漏掉这条，`api` 改字段名后 `web` 端编译照过、链路断了也不知道。
+
 不做 `npm workspaces`：两个阶段各自 `npm ci`，所以**两个工作区各有一份 lockfile**，没有根 lockfile。`web` 消费 `api` 类型靠 tsconfig `paths`（`@api/* → ../api/src/*`）+ `import type`，不走包解析，api 的运行时代码进不了前端产物。
 
 这个 Dockerfile 同时从 `web/` 和 `api/` 构建，是[单仓库结构](architecture.md)的直接原因。

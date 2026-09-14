@@ -10,18 +10,20 @@ import { randomUUID } from 'node:crypto'
 
 export async function createUser(
   db: Db,
-  overrides: { role?: string } = {},
-): Promise<{ id: string; role: string }> {
+  overrides: { role?: string; name?: string } = {},
+): Promise<{ id: string; role: string; name: string }> {
   const rows = await db
     .insert(users)
     .values({
       role: overrides.role ?? 'member',
+      name: overrides.name ?? `user-${randomUUID().slice(0, 8)}`,
+      passwordHash: 'test-hash-not-real',
       storageQuotaBytes: 1_073_741_824n,
     })
     .returning()
   const row = rows[0]
   if (row === undefined) throw new Error('建用户失败')
-  return { id: row.id, role: row.role }
+  return { id: row.id, role: row.role, name: row.name }
 }
 
 export async function makeMeme(

@@ -59,3 +59,103 @@ export async function fetchHealth() {
   if (!res.ok) throw await toApiError(res)
   return res.json()
 }
+
+// stub — replace with InferResponseType<typeof api.auth.me.$get> once api exports the route
+export type User = {
+  id: string
+  role: 'admin' | 'member'
+  storageQuotaBytes: number
+  storageUsedBytes: number
+  createdAt: string
+}
+
+export async function fetchMe(): Promise<User> {
+  const res = await fetch('/api/v1/auth/me')
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<User>
+}
+
+export async function login(name: string, password: string): Promise<User> {
+  const res = await fetch('/api/v1/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, password }),
+  })
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<User>
+}
+
+export async function register(name: string, password: string, inviteCode: string): Promise<User> {
+  const res = await fetch('/api/v1/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, password, inviteCode }),
+  })
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<User>
+}
+
+export async function postLogout(): Promise<void> {
+  const res = await fetch('/api/v1/auth/logout', { method: 'POST' })
+  if (!res.ok && res.status !== 204) throw await toApiError(res)
+}
+
+export type InviteCode = {
+  code: string
+  status: 'unused' | 'used' | 'expired'
+  createdBy: string
+  createdAt?: string
+  expiresAt: string | null
+  usedBy: string | null
+}
+
+export async function fetchInvites(): Promise<InviteCode[]> {
+  const res = await fetch('/api/v1/admin/invites')
+  if (!res.ok) throw await toApiError(res)
+  const data = (await res.json()) as { items: InviteCode[] }
+  return data.items
+}
+
+export async function createInvite(expiresAt?: string): Promise<InviteCode> {
+  const res = await fetch('/api/v1/admin/invites', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresAt: expiresAt ?? null }),
+  })
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<InviteCode>
+}
+
+export type AdminUser = {
+  id: string
+  name: string
+  role: 'admin' | 'member'
+  storageQuotaBytes: number
+  storageUsedBytes: number
+  createdAt: string
+}
+
+export async function fetchAdminUsers(): Promise<AdminUser[]> {
+  const res = await fetch('/api/v1/admin/users')
+  if (!res.ok) throw await toApiError(res)
+  const data = (await res.json()) as { items: { id: string; name: string; role: 'admin' | 'member'; storageQuotaBytes: string; storageUsedBytes: string; createdAt: string }[] }
+  return data.items.map((u) => ({
+    ...u,
+    storageQuotaBytes: Number(u.storageQuotaBytes),
+    storageUsedBytes: Number(u.storageUsedBytes),
+  }))
+}
+
+export async function patchAdminUser(
+  id: string,
+  patch: { role?: 'admin' | 'member'; storageQuotaBytes?: number },
+): Promise<{ id: string; name: string; role: 'admin' | 'member'; storageQuotaBytes: number; createdAt: string }> {
+  const res = await fetch(`/api/v1/admin/users/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw await toApiError(res)
+  const data = (await res.json()) as { id: string; name: string; role: 'admin' | 'member'; storageQuotaBytes: string; createdAt: string }
+  return { ...data, storageQuotaBytes: Number(data.storageQuotaBytes) }
+}

@@ -1,24 +1,97 @@
-import { Link, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, Link } from 'react-router-dom'
+import { AuthProvider, useAuth } from './contexts/auth'
 import { HomePage } from './routes/home'
+import { LoginPage } from './routes/login'
+import { RegisterPage } from './routes/register'
+import { AdminInvitesPage } from './routes/admin-invites'
+import { AdminUsersPage } from './routes/admin-users'
 import { NotFoundPage } from './routes/not-found'
+import { postLogout } from './lib/api'
+import { useNavigate } from 'react-router-dom'
 
-/**
- * 路由骨架。`*` 这条不是摆设 —— 它验证的是「刷新任意深层 URL 不 404」：
- * 生产环境由 api 做 SPA fallback（api/src/server.ts 的 mountWebDist），
- * 本地由 Vite dev server 做。少了任何一边，直接访问子路由就会白屏。
- */
-export function App() {
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  const location = window.location
+  if (!user) {
+    const next = encodeURIComponent(location.pathname + location.search)
+    return <Navigate to={`/login?next=${next}`} replace />
+  }
+  return <>{children}</>
+}
+
+function RequireAdmin({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth()
+  if (!user) {
+    const next = encodeURIComponent(window.location.pathname + window.location.search)
+    return <Navigate to={`/login?next=${next}`} replace />
+  }
+  if (user.role !== 'admin') return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
+function AppShell() {
+  const { user, setUser } = useAuth()
+  const navigate = useNavigate()
+
+  async function handleLogout() {
+    await postLogout()
+    setUser(null)
+    navigate('/login', { replace: true })
+  }
+
   return (
     <div className="app">
       <header className="app__header">
-        <Link to="/">Mememio</Link>
+        <nav className="app__nav">
+          <Link to="/">Mememio</Link>
+          {user?.role === 'admin' && <Link to="/admin/invites">管理</Link>}
+        </nav>
+        {user && (
+          <button className="app__logout" onClick={handleLogout}>
+            登出
+          </button>
+        )}
       </header>
       <main className="app__main">
+        {/* `*` 路由验证「刷新任意深层 URL 不 404」，见 api/src/server.ts mountWebDist */}
         <Routes>
-          <Route path="/" element={<HomePage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route
+            path="/"
+            element={
+              <RequireAuth>
+                <HomePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/admin/invites"
+            element={
+              <RequireAdmin>
+                <AdminInvitesPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/admin/users"
+            element={
+              <RequireAdmin>
+                <AdminUsersPage />
+              </RequireAdmin>
+            }
+          />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </main>
     </div>
+  )
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
   )
 }

@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { onError, onNotFound } from './middleware/error.js'
 import { requestId, type RequestIdVariables } from './middleware/request-id.js'
 import { healthRoutes } from './routes/health.js'
+import { authRoutes } from './routes/auth.js'
+import { adminRoutes } from './routes/admin.js'
 
 /**
  * Hono 应用本体。静态文件托管在 server.ts 里挂，这样测试不需要先构建 web。
@@ -13,6 +15,8 @@ import { healthRoutes } from './routes/health.js'
 export const app = new Hono<{ Variables: RequestIdVariables }>()
   .use('*', requestId)
   .route('/api/v1/health', healthRoutes)
+  .route('/api/v1/auth', authRoutes)
+  .route('/api/v1/admin', adminRoutes)
 
 app.onError(onError)
 app.notFound(onNotFound)

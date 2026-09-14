@@ -31,11 +31,25 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
 
 // ── §5.1 User 与邀请 ────────────────────────────────────────────────
 
-/** role 取值 'member' | 'User'。'User' 是管理员，命名见 SPEC §3.2，不要自作主张改成 'admin'。 */
+/** role 取值 'member' | 'admin'。见 SPEC §3.2。 */
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   role: text('role').notNull().default('member'),
+  /** 登录名，唯一。不在 User 对外表示里，但在 memes.uploaderName 里使用。 */
+  name: text('name').notNull(),
+  /** bcrypt/scrypt 哈希，明文不落盘。SPEC §3.1。 */
+  passwordHash: text('password_hash').notNull(),
   storageQuotaBytes: bigint('storage_quota_bytes', { mode: 'bigint' }).notNull(),
+  createdAt: timestamptz('created_at').notNull().defaultNow(),
+})
+
+// sessions table — 会话存 PostgreSQL，不引入 Redis。见 SPEC §3.1 / §9.11
+export const sessions = pgTable('sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: timestamptz('expires_at').notNull(),
   createdAt: timestamptz('created_at').notNull().defaultNow(),
 })
 
