@@ -54,6 +54,76 @@ export async function toApiError(res: Response): Promise<ApiError> {
   })
 }
 
+/** SPEC §5.2.6 对外表示。storageKey、contentHash、phash、embedding 不在响应里。 */
+export type Meme = {
+  id: string
+  uploaderId: string
+  uploaderName: string
+  url: string
+  thumbUrl: string | null
+  mime: string
+  width: number | null
+  height: number | null
+  sizeBytes: number
+  isAnimated: boolean
+  originalFilename: string | null
+  ocrText: string | null
+  description: string | null
+  emotions: string[]
+  scenes: string[]
+  tags: string[]
+  /** pending | ok | refused | needs_manual (SPEC §5.2.3) */
+  tagStatus: string
+  visionModel: string | null
+  /** 当前登录用户是否收藏（SPEC §5.4） */
+  favorited: boolean
+  editedBy?: string
+  editedAt?: string
+  createdAt: string
+}
+
+export type FetchMemesParams = {
+  emotions?: string[]
+  scenes?: string[]
+  tags?: string[]
+  isAnimated?: boolean
+  favorited?: boolean
+  uploader?: string
+  tagStatus?: string
+  cursor?: string
+  limit?: number
+}
+
+export async function fetchMemes(
+  params: FetchMemesParams = {},
+): Promise<{ items: Meme[]; nextCursor: string | null }> {
+  const qs = new URLSearchParams()
+  params.emotions?.forEach((v) => qs.append('emotions', v))
+  params.scenes?.forEach((v) => qs.append('scenes', v))
+  params.tags?.forEach((v) => qs.append('tags', v))
+  if (params.isAnimated !== undefined) qs.set('isAnimated', String(params.isAnimated))
+  if (params.favorited) qs.set('favorited', 'true')
+  if (params.uploader) qs.set('uploader', params.uploader)
+  if (params.tagStatus) qs.set('tagStatus', params.tagStatus)
+  if (params.cursor) qs.set('cursor', params.cursor)
+  if (params.limit !== undefined) qs.set('limit', String(params.limit))
+
+  const res = await fetch(`/api/v1/memes?${qs.toString()}`)
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<{ items: Meme[]; nextCursor: string | null }>
+}
+
+/**
+ * 收藏/取消收藏。`favorited=true` 发 PUT，`false` 发 DELETE（SPEC §6.4）。
+ * 调用前已乐观更新，失败时调用方负责回滚。
+ */
+export async function toggleFavorite(memeId: string, favorited: boolean): Promise<void> {
+  const res = await fetch(`/api/v1/memes/${memeId}/favorite`, {
+    method: favorited ? 'PUT' : 'DELETE',
+  })
+  if (!res.ok && res.status !== 204) throw await toApiError(res)
+}
+
 export async function fetchHealth() {
   const res = await api.api.v1.health.$get()
   if (!res.ok) throw await toApiError(res)

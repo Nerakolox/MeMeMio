@@ -129,3 +129,168 @@ body {
   font-size: 0.85em;
   margin: 4px 0 0;
 }
+
+/* ---- Browse page ---- */
+
+.browse {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.browse__sidebar {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+
+.browse__content {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.browse__filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.browse__filter-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.browse__clear-btn {
+  font-size: 0.8em;
+  padding: 2px 6px;
+}
+
+.browse__filter-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.browse__filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.browse__filter-section-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.85em;
+}
+
+.browse__tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.browse__tag-btn {
+  padding: 2px 8px;
+  font-size: 0.8em;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.browse__tag-btn--active {
+  font-weight: 600;
+}
+
+/* Grid */
+
+.browse__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.browse__sentinel {
+  height: 1px;
+  margin-top: 24px;
+}
+
+.browse__loading {
+  text-align: center;
+  margin: 16px 0;
+}
+
+.browse__empty {
+  margin: 0;
+}
+
+.browse__error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.browse__request-id {
+  font-size: 0.8em;
+  font-family: monospace;
+}
+
+/* Meme card */
+
+.meme-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.meme-card--skeleton {
+  aspect-ratio: 1;
+}
+
+.meme-card__img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.meme-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  flex-wrap: wrap;
+}
+
+.meme-card__status-badge,
+.meme-card__animated-badge {
+  font-size: 0.7em;
+  padding: 1px 4px;
+}
+
+.meme-card__fav-btn {
+  margin-left: auto;
+  padding: 2px 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* Responsive: collapse sidebar on narrow viewports */
+@media (max-width: 640px) {
+  .browse {
+    flex-direction: column;
+  }
+
+  .browse__sidebar {
+    flex: none;
+    width: 100%;
+    position: static;
+    max-height: none;
+  }
+}

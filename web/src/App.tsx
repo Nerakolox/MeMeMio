@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, Link } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/auth'
 import { HomePage } from './routes/home'
+import { BrowsePage } from './routes/browse'
 import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
 import { AdminInvitesPage } from './routes/admin-invites'
@@ -44,6 +45,7 @@ function AppShell() {
       <header className="app__header">
         <nav className="app__nav">
           <Link to="/">Mememio</Link>
+          <Link to="/browse">浏览</Link>
           {user?.role === 'admin' && <Link to="/admin/invites">管理</Link>}
         </nav>
         {user && (
@@ -62,6 +64,14 @@ function AppShell() {
             element={
               <RequireAuth>
                 <HomePage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/browse"
+            element={
+              <RequireAuth>
+                <BrowsePage />
               </RequireAuth>
             }
           />
