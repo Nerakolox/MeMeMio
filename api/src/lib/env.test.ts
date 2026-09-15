@@ -15,6 +15,7 @@ function validSource(): Record<string, string | undefined> {
     R2_SECRET_ACCESS_KEY: 'secret',
     R2_BUCKET: 'bucket',
     R2_KEY_PREFIX: 'mememio/',
+    R2_PUBLIC_BASE_URL: 'https://cdn.example.com',
   }
 }
 

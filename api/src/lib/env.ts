@@ -33,6 +33,8 @@ export type Env = {
   /** 加密用户 API Key 的主密钥。绝不进日志、绝不进任何响应。 */
   configEncKey: string
   r2: R2Config
+  /** R2 公开访问根地址，不含末尾 /。由 storageKey 派生 url / thumbUrl 时使用。SPEC §5.2.6 */
+  r2PublicBaseUrl: string
   /** 部署方默认视觉配置。可以为 null —— 那时导入照常，图片入库为 tagStatus = pending。 */
   defaultVision: ProviderDefaults | null
   /** 部署方默认 embedding 配置。可以为 null —— 那时搜索降级为两路，degraded: true。 */
@@ -104,6 +106,11 @@ export function parseEnv(source: Record<string, string | undefined>): ParseEnvRe
     keyPrefix: r2KeyPrefix,
   }
 
+  const r2PublicBaseUrl = required('R2_PUBLIC_BASE_URL')
+  if (r2PublicBaseUrl !== '' && r2PublicBaseUrl.endsWith('/')) {
+    errors.push('R2_PUBLIC_BASE_URL 不能以 / 结尾，URL 会拼错（storageKey 本身不带前缀 /）')
+  }
+
   const defaultVision = optionalProvider(source, 'DEFAULT_VISION', errors)
   const defaultEmbed = optionalProvider(source, 'DEFAULT_EMBED', errors)
 
@@ -119,6 +126,7 @@ export function parseEnv(source: Record<string, string | undefined>): ParseEnvRe
       sessionSecret,
       configEncKey,
       r2,
+      r2PublicBaseUrl,
       defaultVision,
       defaultEmbed,
     },

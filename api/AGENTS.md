@@ -51,3 +51,5 @@
 改完说明：本次改了什么、实测跑了什么、有没有动 SPEC、有没有阻塞。见 [git-and-delivery.md](../agents/rules/git-and-delivery.md)。
 
 **动了打标提示词、词表或检索参数，交付时必须说明有没有跑[评测集](../docs/eval.md)。** 没跑就直说没跑，不要用「看着没问题」代替。
+
+# 提交不允许 Co-Authored-By 加上 Claude 的名字！
