@@ -281,6 +281,96 @@ body {
   line-height: 1;
 }
 
+/* ---- Search page (/) ---- */
+
+.search {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.search__bar {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.search__input {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 1rem;
+}
+
+.search__submit {
+  flex: none;
+  min-width: 72px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.search__degraded,
+.search__rewritten,
+.search__copy-note,
+.search__hint {
+  margin: 0;
+}
+
+.search__rewritten,
+.search__copy-note,
+.search__hint {
+  font-size: 0.85em;
+}
+
+.search__error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.search__request-id {
+  font-size: 0.8em;
+  font-family: monospace;
+  margin: 0;
+}
+
+.search__retry {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.search__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.search__result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 键盘选中态：当前阶段不写装饰样式，用轮廓表示选中（styling.md） */
+.meme-card--selected {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.search__card-action {
+  min-height: 44px;
+  cursor: pointer;
+}
+
+/* Responsive: 手机上缩小网格列宽，卡片仍是单手点击目标 */
+@media (max-width: 640px) {
+  .search__grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
 /* Responsive: collapse sidebar on narrow viewports */
 @media (max-width: 640px) {
   .browse {

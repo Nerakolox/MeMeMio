@@ -1,4 +1,4 @@
-import { hc } from 'hono/client'
+import { hc, type InferResponseType } from 'hono/client'
 import type { AppType } from '@api/app'
 
 /**
@@ -54,33 +54,16 @@ export async function toApiError(res: Response): Promise<ApiError> {
   })
 }
 
-/** SPEC §5.2.6 对外表示。storageKey、contentHash、phash、embedding 不在响应里。 */
-export type Meme = {
-  id: string
-  uploaderId: string
-  uploaderName: string
-  url: string
-  thumbUrl: string | null
-  mime: string
-  width: number | null
-  height: number | null
-  sizeBytes: number
-  isAnimated: boolean
-  originalFilename: string | null
-  ocrText: string | null
-  description: string | null
-  emotions: string[]
-  scenes: string[]
-  tags: string[]
-  /** pending | ok | refused | needs_manual (SPEC §5.2.3) */
-  tagStatus: string
-  visionModel: string | null
-  /** 当前登录用户是否收藏（SPEC §5.4） */
-  favorited: boolean
-  editedBy?: string
-  editedAt?: string
-  createdAt: string
-}
+/**
+ * SPEC §5.2.6 对外表示。storageKey、contentHash、phash、embedding 不在响应里。
+ *
+ * **从 api 派生，不手写。** 手写一份意味着接口加了字段这边不会有编译错误，
+ * 而「改字段名 web 编译失败」正是类型同步的全部价值（code-style.md）。
+ *
+ * 注意一个反直觉的字段，手写很容易写错：
+ *   - `sizeBytes` 是**字符串**（bigint 走 JSON 会丢精度，服务端 toString 了）
+ */
+export type Meme = InferResponseType<typeof api.api.v1.memes.$get>['items'][number]
 
 export type FetchMemesParams = {
   emotions?: string[]
@@ -111,6 +94,36 @@ export async function fetchMemes(
   const res = await fetch(`/api/v1/memes?${qs.toString()}`)
   if (!res.ok) throw await toApiError(res)
   return res.json() as Promise<{ items: Meme[]; nextCursor: string | null }>
+}
+
+/**
+ * 检索通路标识。**只用于展示，不参与排序**——顺序由服务端 RRF 融合决定（SPEC §6.3.1）。
+ * 服务端可能新增通路，所以用 Record<string, string> 查表并保留原值兜底，不做穷举联合。
+ */
+export const MATCHED_BY_LABELS: Record<string, string> = {
+  vector: '向量',
+  ocr: 'OCR',
+  tags: '标签',
+}
+
+/** 单条搜索结果：Meme 加一个召回来源标注（SPEC §6.3.1）。类型从 api 派生，不手写。 */
+export type SearchResult = InferResponseType<typeof api.api.v1.search.$get>['items'][number]
+
+export type SearchResponse = InferResponseType<typeof api.api.v1.search.$get>
+
+/**
+ * `GET /search`。三路融合，**不分页**——服务端返回什么就展示什么，默认 50 最大 100（SPEC §6.3.1）。
+ *
+ * 和 fetchMemes 一样用 fetch 而不是 RPC 客户端方法：RPC 客户端把非 2xx 直接当异常抛，
+ * 拿不到 SPEC §2.1 的错误信封，而 code 和 requestId 是必须展示给用户的。
+ */
+export async function fetchSearch(q: string, limit?: number): Promise<SearchResponse> {
+  const qs = new URLSearchParams({ q })
+  if (limit !== undefined) qs.set('limit', String(limit))
+
+  const res = await fetch(`/api/v1/search?${qs.toString()}`)
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<SearchResponse>
 }
 
 /**

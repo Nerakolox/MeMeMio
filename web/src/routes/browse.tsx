@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { type Meme, type FetchMemesParams, fetchMemes, toggleFavorite, ApiError } from '../lib/api'
 import { useAuth } from '../contexts/auth'
+import { MemeCard } from '../components/MemeCard'
 import { emotionOptions, sceneOptions, tagOptions } from '../lib/vocab'
 
 /** 把当前 URL query string 解析为接口参数，游标在外部传入，不放 URL（SPEC §6.3.2）。 */
@@ -66,7 +67,7 @@ export function BrowsePage() {
     if (!el) return
     const obs = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !loading && nextCursor) {
+        if (entries[0]?.isIntersecting && !loading && nextCursor) {
           doLoad(buildParams(searchParams), nextCursor)
         }
       },
@@ -285,38 +286,3 @@ function FilterGroup({
   )
 }
 
-function MemeCard({
-  meme,
-  onFavorite,
-}: {
-  meme: Meme
-  onFavorite: (meme: Meme) => void
-}) {
-  return (
-    <div className="meme-card">
-      <img
-        className="meme-card__img"
-        src={meme.thumbUrl ?? meme.url}
-        alt={meme.description ?? meme.originalFilename ?? meme.id}
-        loading="lazy"
-        width={meme.width ?? undefined}
-        height={meme.height ?? undefined}
-      />
-      <div className="meme-card__footer">
-        {meme.tagStatus !== 'ok' && (
-          <span className="meme-card__status-badge">{meme.tagStatus}</span>
-        )}
-        {/* 动图写不进剪贴板，只能走下载。见 SPEC §9.2 */}
-        {meme.isAnimated && <span className="meme-card__animated-badge">GIF</span>}
-        <button
-          className={`meme-card__fav-btn${meme.favorited ? ' meme-card__fav-btn--active' : ''}`}
-          onClick={() => onFavorite(meme)}
-          aria-label={meme.favorited ? '取消收藏' : '收藏'}
-          aria-pressed={meme.favorited}
-        >
-          ♥
-        </button>
-      </div>
-    </div>
-  )
-}
