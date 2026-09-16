@@ -31,7 +31,7 @@ docs/fixtures/
 >
 > 为什么单独排除它：其余 16 个样本合计 1.3 MB，它一个 23 MB，进了 git 历史就永久占着，而它的内容是脚本按规则生成的纯噪声——**可复现的大文件不该进版本历史**。
 >
-> 待办（api 本端）：`tests/global-setup.ts` 检测到样本缺失时自动生成，这条前置就不用靠人记。
+> 待办（api 本端，已派发 [api 收尾三件](../joint-tasks/2026-09-16-api-housekeeping.md) 第 4 项）：`tests/global-setup.ts` 检测到样本缺失时自动生成，这条前置就不用靠人记。
 
 ## 3. `images/edge/` 是最值钱的那批
 

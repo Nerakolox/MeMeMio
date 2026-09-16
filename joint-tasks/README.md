@@ -24,6 +24,7 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
+| [api 收尾三件](2026-09-16-api-housekeeping.md) | `in_progress` | **api 单端**；`web` 的 typecheck 闸门当前是红的，这条先做 |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
@@ -37,7 +38,7 @@
 >
 > 在 `api/` 里跑 `tsc --noEmit` 是 0 错误——因为 `web/tsconfig.json` 开了 `noUnusedLocals`，而 web 的类型链会把 `api/src/` 一起编译。**所以「api 端自查通过」不等于提交前闸门通过**，闸门是 `npm run typecheck`（见[骨架任务](../_archive/joint-tasks/2026-09-13-skeleton.md)第 10 条）。
 >
-> 归属：api 本端小活，删未使用的导入与变量即可，不改行为。其中 `data/auth.ts` 与 `routes/auth.ts` 两条是认证任务起就有的存量。
+> 归属：已派发，见 [api 收尾三件](2026-09-16-api-housekeeping.md) 第 1、2 项——删未使用的导入与变量（删之前先判断是不是漏实现的信号），并给 `api/tsconfig.json` 也开 `noUnusedLocals`，让两端口径一致。其中 `data/auth.ts` 与 `routes/auth.ts` 两条是认证任务起就有的存量。
 
 ## 打标队列任务转出的遗留项
 
@@ -48,7 +49,7 @@
 | 评测集未跑；**`eval.ts` 内嵌探测期提示词，不 import `src/ai/vision.ts`**，原样跑出的数字会被误读成「新提示词已验证」 | [评测集](2026-09-13-eval-set.md)，已进其「做完的标准」 |
 | `tag_status = 'refused'` 目前不可达（只有主通道，终局失败全落 `needs_manual`） | 等 SPEC §9.5 转 `accepted` + 副通道接入；**不是缺陷**，不要为了让状态可达提前实现 §9.5 |
 | 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | SPEC §6.5 配置任务——探测结果存下来后自然变成真实流量路径 |
-| `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | api 本端小活，补进 `api/agents/rules/ai-providers.md §3` |
+| `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | 已派发：[api 收尾三件](2026-09-16-api-housekeeping.md) 第 3 项 |
 
 ## 导入任务转出的遗留项
 
