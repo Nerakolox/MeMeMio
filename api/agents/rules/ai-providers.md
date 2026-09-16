@@ -51,6 +51,14 @@ if (config.visionJsonModeWorks) { ... }
 
 **第三种最阴险**：JSON 解析成功、类型检查通过、字段都在，代码会当成一次成功的打标写进库，这张图从此带着一组空标签躺在共享库里，搜不到也没人知道为什么。
 
+### `finish_reason: 'length'` 不在这张表里
+
+**输出被截断归 `AI_INVALID_OUTPUT`，不是拒绝形态。** 「这次没拿到完整结果」，重试一次通常就好；按拒绝处理会把一张本来能打标的图直接判死——`AI_REFUSED` 不重试主通道（[retry-policy](../../src/lib/retry-policy.ts)、§4），一次判错就是终局。
+
+**这一条必须和上面那张表放在一起，因为截断正好长得像表里的第二、三种形态**：推理把预算烧光之后，`content` 常常是空串、半截 JSON，或者字段齐全但全空。光看正文分不出「模型拒绝回答」和「模型话没说完」，**只有 `finish_reason` 能分**——所以判定必须先看它，再看正文。
+
+判断的出处见[打标队列任务](../../../_archive/joint-tasks/2026-09-16-tag-queue.md)裁定 3；**这一条目前没有实测频次支撑**，真实分布等[供应商探测](../../../joint-tasks/2026-09-13-provider-spikes.md)跑出来再补。实现在 `lib/vision-output.ts` 的 `interpretVisionContent`。
+
 判定逻辑放 `lib/`，是纯函数，**用 [`docs/fixtures/responses/`](../../../docs/fixtures.md) 里的真实样本做单测**。自己编的假响应只覆盖得到自己想得到的情况。
 
 判定规则当前是 `proposed`，依赖[供应商探测任务](../../../joint-tasks/2026-09-13-provider-spikes.md)的实测结果。
