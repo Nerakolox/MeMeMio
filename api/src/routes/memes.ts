@@ -2,83 +2,11 @@ import { Hono } from 'hono'
 import { AppError } from '../lib/app-error.js'
 import { requireAuth, optionalAuth, type AuthVariables, type OptionalAuthVariables } from '../middleware/auth.js'
 import type { RequestIdVariables } from '../middleware/request-id.js'
-import { listMemes, getMemeById } from '../data/memes.js'
-import { env } from '../env.js'
+import { addFavorite, listMemes, getMemeById, removeFavorite } from '../data/memes.js'
+import { serializeMeme } from '../serialize/meme.js'
 
-/** ISO 8601 UTC 精确到秒。SPEC §1.2 */
-function toIsoSeconds(d: Date): string {
-  return `${d.toISOString().slice(0, 19)}Z`
-}
-
-function toIsoSecondsOrNull(d: Date | null): string | null {
-  if (d === null) return null
-  return toIsoSeconds(d)
-}
-
-/**
- * storageKey → 公开访问 URL。图片地址由 storageKey 派生，不返回 storageKey 本身。SPEC §5.2.6
- *
- * thumbUrl 使用 `/thumb/` 前缀，约定缩略图由 CDN 或图像管线写在该路径下。
- * 如果缩略图管线尚未实现，前端会拿到一个暂时 404 的 URL，而不是拿到原图地址——
- * 这样联调时缺图一目了然，不会静默地把原图当缩略图传出去。
- */
-function storageKeyToUrls(storageKey: string): { url: string; thumbUrl: string } {
-  const base = env.r2PublicBaseUrl
-  return {
-    url: `${base}/${storageKey}`,
-    thumbUrl: `${base}/thumb/${storageKey}`,
-  }
-}
-
-function serializeMeme(row: {
-  id: string
-  uploaderId: string
-  uploaderName: string
-  storageKey: string
-  originalFilename: string | null
-  mime: string
-  width: number | null
-  height: number | null
-  sizeBytes: bigint
-  isAnimated: boolean
-  ocrText: string | null
-  description: string | null
-  emotions: string[] | null
-  scenes: string[] | null
-  tags: string[] | null
-  tagStatus: string
-  visionModel: string | null
-  editedBy: string | null
-  editedAt: Date | null
-  createdAt: Date
-  favorited: boolean
-}) {
-  const { url, thumbUrl } = storageKeyToUrls(row.storageKey)
-  return {
-    id: row.id,
-    uploaderId: row.uploaderId,
-    uploaderName: row.uploaderName,
-    url,
-    thumbUrl,
-    mime: row.mime,
-    width: row.width,
-    height: row.height,
-    sizeBytes: row.sizeBytes.toString(),
-    isAnimated: row.isAnimated,
-    originalFilename: row.originalFilename,
-    ocrText: row.ocrText,
-    description: row.description,
-    emotions: row.emotions ?? [],
-    scenes: row.scenes ?? [],
-    tags: row.tags ?? [],
-    tagStatus: row.tagStatus,
-    visionModel: row.visionModel,
-    favorited: row.favorited,
-    editedBy: row.editedBy ?? null,
-    editedAt: toIsoSecondsOrNull(row.editedAt),
-    createdAt: toIsoSeconds(row.createdAt),
-  }
-}
+// 序列化器搬到了 `serialize/meme.ts`：搜索接口要输出同一批字段，
+// 两份实现迟早会在「不返回 storageKey」这类保证上分叉。见该文件顶部注释。
 
 // GET /memes 用 optionalAuth——未登录可能仍能浏览（取决于部署方，但接口本身不强制登录；
 // tagStatus 参数在内部做权限检查）。GET /memes/:id 同理。
@@ -154,4 +82,36 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     if (row === null) throw new AppError('NOT_FOUND', '这张表情不存在')
 
     return c.json(serializeMeme(row))
+  })
+
+  /**
+   * PUT /api/v1/memes/:id/favorite —— 收藏。SPEC §6.4
+   *
+   * **幂等**：已收藏再调一次仍返回 204。PUT 是幂等动词，而前端会重发——
+   * 双击、断网重试、乐观更新回滚后重来，都会来第二次。
+   *
+   * **收藏是人和图的关系，不是图的属性**（SPEC §5.4）：只写 `user_favorites`，
+   * 不动 `memes`，因此也不走 `assertCanMutate`——收藏别人的图是共享库的正常用法，
+   * 不是对那张图的改动。软删过滤与 NOT_FOUND 在数据层，handler 不自己拼条件。
+   */
+  .put('/:id/favorite', async (c) => {
+    const actor = c.get('currentUser')
+    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+
+    await addFavorite(actor.id, c.req.param('id'))
+    return c.body(null, 204)
+  })
+
+  /**
+   * DELETE /api/v1/memes/:id/favorite —— 取消收藏。SPEC §6.4
+   *
+   * **幂等**：没收藏过也返回 204。和 PUT 是一对，行为必须对称，
+   * 否则前端的乐观更新会在「重复取消」时莫名其妙地回滚。
+   */
+  .delete('/:id/favorite', async (c) => {
+    const actor = c.get('currentUser')
+    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+
+    await removeFavorite(actor.id, c.req.param('id'))
+    return c.body(null, 204)
   })
