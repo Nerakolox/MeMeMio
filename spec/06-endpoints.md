@@ -64,9 +64,13 @@ magic bytes 探测真实格式（不信扩展名）
 {
   fileName, tempUrl, sizeBytes, width, height,
   distance,
-  existing: { id, url, uploaderName, sizeBytes, width, height, createdAt }
+  existing: { id, url, uploaderName, sizeBytes, width, height, createdAt } | null
 }
 ```
+
+**`existing` 可为 `null`。** 条目进队列后，被判为近似重复的那张已有图可能被软删——读路径按 [§3.4](03-auth-permission.md) 必须过滤 `deleted_at is null`，于是关联对象取不到。此时**不删除条目、也不自动入库**：客户端展示「原图已不存在」，`distance` 仍然显示，「仍然导入」/「跳过」两个操作照常可用。理由见 [§9.7](09-decisions.md)——系统不替用户猜，即使重复的理由已经消失，决定权仍在用户手上。
+
+`tempUrl` 同样可为 `null`（暂存对象已过期清理），客户端展示「预览已过期」，不渲染空 `src`。
 
 **不弹中途确认框。** 上千张图导入时每张都弹窗体验会崩掉，所以近似命中不阻塞导入，攒进队列、导入结束后一起处理。队列里只有 1 条时前端把它呈现成即时弹窗即可——**同一个接口，不同的呈现形式**，不为单张上传另做一套。
 
@@ -97,6 +101,8 @@ GET /search?q=今天真的不想上班&limit=50
 `matchedBy` 说明这条是被哪几路召回的，供前端做轻量提示，**不用于排序**——排序由服务端的 RRF 融合决定，客户端不重排。
 
 `degraded: true` 表示本次搜索没有走向量通路（重建索引期间，或 embedding 未配置），只用了 OCR 和标签。前端应当告知用户结果可能不全，但**不阻断搜索**。
+
+**`degraded` 说的是本次查询走了几路，不是库里每条记录被索引得多全。** 单条记录可能 `tag_status = ok` 但 `embedding` 为 null（打标成功、向量化失败，向量化会单独重试）。这种图不出现在向量路的召回里，但仍能被 OCR 和标签搜到，而 `degraded` 仍然是 `false`——因为向量路本身是通的。**不要用 `degraded` 判断某一张图有没有被索引**，那是两个不同层次的问题；分级降级的理由见 [§9.5](09-decisions.md)。
 
 `rewritten` 是 HyDE 改写后的查询，返回它是为了让用户理解「为什么搜出这些」，可以不展示。改写失败时为 `null`，不影响其余通路。
 
