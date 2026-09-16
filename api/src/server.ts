@@ -8,6 +8,7 @@ import { checkMigrations } from './data/migration-state.js'
 import { env } from './env.js'
 import { log } from './logger.js'
 import { assertRuntimeFilesPresent, WEB_DIST_DIR } from './paths.js'
+import { startTagWorker, stopTagWorker } from './queue/worker.js'
 import { vocabulary, vocabularySize } from './vocab.js'
 
 /**
@@ -16,7 +17,7 @@ import { vocabulary, vocabularySize } from './vocab.js'
  *   1. 校验 env       → 失败则 exit(1)      ← import './env.js' 时就做完了
  *   2. 连数据库       → 失败则重试几次后 exit(1)
  *   3. 检查迁移版本   → 落后则打印提示并 exit(1)
- *   4. 起 HTTP（+ 将来的 worker）
+ *   4. 起 HTTP，再起打标 worker
  *
  * 第 3 步**只检查，不自动执行**。多副本时自动迁移会并发跑，而那种故障发生在
  * 启动瞬间，最难排查。执行走独立命令，见 docs/deployment.md §6。
@@ -60,9 +61,40 @@ async function main(): Promise<void> {
 
   mountWebDist()
 
-  serve({ fetch: app.fetch, port: env.port }, (info) => {
+  const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
     log.info({ port: info.port, nodeEnv: env.nodeEnv }, 'HTTP 已启动')
   })
+
+  // worker 在 HTTP 之后起：迁移检查已经过了，且它不影响接口可用性。
+  // 没配 DEFAULT_VISION_* 时 worker 照样起——它自己会空转等待（不消费、不失败重试），
+  // 配置好之后不需要重启进程就能开始补打标
+  startTagWorker()
+
+  installShutdownHandlers(server)
+}
+
+/**
+ * 优雅退出。**worker 必须等在途任务写完**，否则那些任务会永远停在 `running`，
+ * 表现是「这几张图再也不会被打标」——不报错、不告警。
+ *
+ * 在途任务本身有整体超时，所以这里的等待是有界的。真被 SIGKILL 砍掉的那种
+ * 由 worker 启动时的 `requeueStaleRunningJobs` 兜底。
+ */
+function installShutdownHandlers(server: { close: (cb?: () => void) => void }): void {
+  let shuttingDown = false
+
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) return
+    shuttingDown = true
+    log.info({ signal }, '收到退出信号，开始收尾')
+
+    server.close(() => {
+      void stopTagWorker().then(() => process.exit(0))
+    })
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
 }
 
 /**
