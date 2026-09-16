@@ -27,11 +27,13 @@ docs/fixtures/
 | `eval/` 的图片 | ❌ **不进** | 含擦边内容，见 [eval.md](eval.md) |
 | `responses/` | ✅ 进 | 脱敏后是纯文本，价值极高，见下 |
 
-> ⚠️ **新克隆的仓库要先 `cd api && npm run fixtures`**，否则 `huge.png` 不存在，导入测试里「单文件超限」那两条会失败。
+> ✅ **新克隆不用手动做任何事。** `tests/global-setup.ts` 在跑测试前比对 `tests/helpers/fixtures.ts` 的 `FIXTURES` 清单，缺哪个补哪个，所以缺 `huge.png` 的新克隆直接 `npm test` 就是全绿。
 >
 > 为什么单独排除它：其余 16 个样本合计 1.3 MB，它一个 23 MB，进了 git 历史就永久占着，而它的内容是脚本按规则生成的纯噪声——**可复现的大文件不该进版本历史**。
 >
-> 待办（api 本端，已派发 [api 收尾三件](../joint-tasks/2026-09-16-api-housekeeping.md) 第 4 项）：`tests/global-setup.ts` 检测到样本缺失时自动生成，这条前置就不用靠人记。
+> **自动补齐只补缺的，绝不重写已存在的样本**（`generateFixtures('missing')`）。测试路径上重写样本会让「这次跑的和上次跑的是同一批字节」这条保证消失，而它不报错，只是依赖固定哈希的断言开始飘。手动跑 `cd api && npm run fixtures` 仍然是**覆盖**模式，用来重新生成一批。
+>
+> 动图那一组是唯一需要 ffmpeg 的，且整组带前置判断：只缺 `huge.png` 时不会调 ffmpeg，一个 sharp 就够。`huge.png` 生成出来必须正好 **23,560,841 字节**（`tests/helpers/fixtures.ts` 的 `HUGE_BYTES` 断言它）。
 
 ## 3. `images/edge/` 是最值钱的那批
 
