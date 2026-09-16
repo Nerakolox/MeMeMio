@@ -32,26 +32,44 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
 // ── §5.1 User 与邀请 ────────────────────────────────────────────────
 
 /** role 取值 'member' | 'admin'。见 SPEC §3.2。 */
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  role: text('role').notNull().default('member'),
-  /** 登录名，唯一。不在 User 对外表示里，但在 memes.uploaderName 里使用。 */
-  name: text('name').notNull(),
-  /** bcrypt/scrypt 哈希，明文不落盘。SPEC §3.1。 */
-  passwordHash: text('password_hash').notNull(),
-  storageQuotaBytes: bigint('storage_quota_bytes', { mode: 'bigint' }).notNull(),
-  createdAt: timestamptz('created_at').notNull().defaultNow(),
-})
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    role: text('role').notNull().default('member'),
+    /** 登录名，唯一。不在 User 对外表示里，但在 memes.uploaderName 里使用。 */
+    name: text('name').notNull(),
+    /** bcrypt/scrypt 哈希，明文不落盘。SPEC §3.1。 */
+    passwordHash: text('password_hash').notNull(),
+    storageQuotaBytes: bigint('storage_quota_bytes', { mode: 'bigint' }).notNull(),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  // 同名登录不可。0001 建了这个唯一索引，schema.ts 补上声明（原因同 sessions）
+  (table) => [uniqueIndex('users_name_key').on(table.name)],
+)
 
-// sessions table — 会话存 PostgreSQL，不引入 Redis。见 SPEC §3.1 / §9.11
-export const sessions = pgTable('sessions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id')
-    .notNull()
-    .references(() => users.id, { onDelete: 'cascade' }),
-  expiresAt: timestamptz('expires_at').notNull(),
-  createdAt: timestamptz('created_at').notNull().defaultNow(),
-})
+/**
+ * 会话存 PostgreSQL，不引入 Redis。见 SPEC §3.1 / §9.11
+ *
+ * 两个索引不是装饰：`0001_add_auth_fields.sql` 建表时就带上了它们（按 user_id 找会话、
+ * 按 expires_at 清过期会话），但 schema.ts 一直没声明，于是每次 `db:generate` 都会
+ * 生成一份想把它们删掉的迁移。在这里补齐，schema 与库才对得上。
+ */
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    expiresAt: timestamptz('expires_at').notNull(),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('sessions_user_id_idx').on(table.userId),
+    index('sessions_expires_at_idx').on(table.expiresAt),
+  ],
+)
 
 export const inviteCodes = pgTable('invite_codes', {
   code: text('code').primaryKey(),
@@ -199,6 +217,61 @@ export const userFavorites = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.memeId] })],
 )
 
+// ── 打标队列（SPEC §9.11） ─────────────────────────────────────────
+
+/**
+ * 用 PostgreSQL 自己做队列，不引入 Redis。理由见 SPEC §9.11。
+ *
+ * **它不是 `memes` 的一部分**：有独立的访问方法（`data/tag-jobs.ts`），不走 `data/memes.ts`。
+ * 但入队时的 `meme_id` 必须来自 `data/memes.ts` 的查询结果——在队列表上 join `memes`
+ * 会绕过 `deleted_at is null`，表现是给已删除的图打标。见 agents/rules/queue.md §8。
+ *
+ * 消费者（调视觉模型、生成 embedding）是独立任务，本表先建起来供入队。
+ */
+export const tagJobs = pgTable(
+  'tag_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memeId: uuid('meme_id')
+      .notNull()
+      .references(() => memes.id, { onDelete: 'cascade' }),
+    /**
+     * 上传者。**冗余列，不是外键便利**——并发要按人分配（queue.md §4），
+     * 一个人导入一千张不能把别人的图堵在后面，所以取任务时必须能按人分组。
+     *
+     * 存一份而不是 join `memes`：在队列表上 join `memes` 会绕过 `deleted_at is null`
+     * （queue.md §8），而且 `memes` 的 SQL 只许出现在 `data/memes.ts`
+     * （project-structure.md）。入队时的值来自 `createMeme` 的返回行，来源仍然是那一层。
+     */
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** pending | running | done | failed，状态机见 agents/rules/queue.md */
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    /**
+     * 重试靠推后 run_after，不靠 sleep——worker 里长 sleep 会占着消费槽什么都不干。
+     * 见 agents/rules/queue.md §3。
+     */
+    runAfter: timestamptz('run_after').notNull().defaultNow(),
+    lastError: text('last_error'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    // 取任务的那条语句：where status='pending' and run_after <= now() order by run_after。
+    // FOR UPDATE SKIP LOCKED 是方案成立的基础，索引要能直接喂它。
+    index('tag_jobs_claim_idx').on(table.status, table.runAfter),
+    /** 按人轮转取任务时要按 user_id 过滤，claim_idx 喂不了这一路。 */
+    index('tag_jobs_user_idx').on(table.status, table.userId),
+    /**
+     * 一条 meme 同时只应有一个在途任务。
+     * 重复入队（比如 commit 被重放）靠 onConflictDoNothing 变成空操作，
+     * 否则同一张图会被打标两次，直接浪费用户的钱。
+     */
+    uniqueIndex('tag_jobs_meme_id_key').on(table.memeId),
+  ],
+)
+
 // ── §5.5 导入批次 ──────────────────────────────────────────────────
 
 export const importBatches = pgTable('import_batches', {
@@ -210,6 +283,14 @@ export const importBatches = pgTable('import_batches', {
   createdAt: timestamptz('created_at').notNull().defaultNow(),
   /** created_at + 24h。但 needs_review 的条目在用户处理前不清理，见 SPEC §5.5。 */
   expiresAt: timestamptz('expires_at').notNull(),
+  /**
+   * commit 时刻。**非空即已提交**，服务端处理只能启动一次。
+   *
+   * commit 要在处理开始前抢一个原子标志：否则客户端重试一次 commit（网络抖动下常见）
+   * 就会让同一批文件被处理两遍——第二遍不报错，只是把每个文件又走一遍 ffmpeg、
+   * 又判一次重复。有它就退化成一次幂等的空操作。
+   */
+  committedAt: timestamptz('committed_at'),
 })
 
 export const importItems = pgTable(
@@ -227,6 +308,16 @@ export const importItems = pgTable(
     distance: integer('distance'),
     tempStorageKey: text('temp_storage_key'),
     reason: text('reason'),
+    /**
+     * 待确认队列要拿它和库里那张并排对比（SPEC §6.2.3），而条目本身还没进 `memes`，
+     * 配额在 commit 时就该按声明值扣住，所以要在条目上留一份。
+     */
+    sizeBytes: bigint('size_bytes', { mode: 'bigint' }),
   },
-  (table) => [primaryKey({ columns: [table.batchId, table.fileName] })],
+  (table) => [
+    primaryKey({ columns: [table.batchId, table.fileName] }),
+    // 待确认队列是跨批次查 result = 'needs_review'（SPEC §6.2.3），
+    // 主键前缀是 batch_id，帮不上这个查询。
+    index('import_items_result_idx').on(table.result),
+  ],
 )

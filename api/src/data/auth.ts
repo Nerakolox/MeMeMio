@@ -138,6 +138,12 @@ export async function deleteSession(sessionId: string, db: Db = defaultDb): Prom
 
 /**
  * 聚合用户已用空间。软删记录在 30 天内仍计入，SPEC §3.6。
+ *
+ * ⚠️ `sum()` 的结果 postgres.js **不认** `bigint` 的解析器，原样给回字符串，
+ *    哪怕 SQL 里已经 `::bigint`、Drizzle 也标了 `sql<bigint>`。类型注释骗人，
+ *    运行期拿到的是 `'0'`。这里显式转一次——调用方拿到的一定是 bigint。
+ *
+ *    这个坑的杀伤力在于它不报错：`quota - '0'` 才是「Cannot mix BigInt and other types」。
  */
 export async function getStorageUsedBytes(userId: string, db: Db = defaultDb): Promise<bigint> {
   const rows = await db
@@ -150,5 +156,5 @@ export async function getStorageUsedBytes(userId: string, db: Db = defaultDb): P
         sql`(${memes.deletedAt} is null or ${memes.deletedAt} > now() - interval '30 days')`,
       ),
     )
-  return rows[0]?.total ?? BigInt(0)
+  return rows[0] === undefined ? 0n : BigInt(rows[0].total)
 }

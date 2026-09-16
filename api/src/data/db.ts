@@ -1,13 +1,23 @@
 import { drizzle } from 'drizzle-orm/postgres-js'
+import type { PgDatabase } from 'drizzle-orm/pg-core'
+import type { PostgresJsQueryResultHKT } from 'drizzle-orm/postgres-js'
+import type { ExtractTablesWithRelations } from 'drizzle-orm'
 import postgres from 'postgres'
 import { env } from '../env.js'
 import * as schema from './schema.js'
 
 /**
  * 数据库连接。这一层之上（services / routes）不认识 sql 客户端，只认识 db。
+ *
+ * `Db` 刻意写成 `PgDatabase` 的形状而不是 `ReturnType<typeof createDb>['db']`：
+ * 事务里的 `tx` 和连接上的 `db` **不是同一个类型**（后者多一个 `$client`），
+ * 用具体类型会让「能把 db 传进去」的函数收不下 `tx`，于是同事务写入只能各写各的，
+ * 而 `createMeme` + `enqueueTagJob` 必须同事务——见 data/tag-jobs.ts 的说明。
+ *
+ * 收窄成 `PgDatabase` 之后两者都能传，代价是这一层不再能用 `$client`。
+ * 这是有意的：数据层本来就不该直接摸连接。
  */
-
-export type Db = ReturnType<typeof createDb>['db']
+export type Db = PgDatabase<PostgresJsQueryResultHKT, typeof schema, ExtractTablesWithRelations<typeof schema>>
 
 export function createDb(databaseUrl: string = env.databaseUrl) {
   const sql = postgres(databaseUrl, {

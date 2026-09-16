@@ -49,7 +49,10 @@ export async function listUsers(db: Db = defaultDb): Promise<UserRow[]> {
     )
     .groupBy(users.id)
     .orderBy(desc(users.createdAt))
-  return rows
+
+  // `sum()` 回来的是字符串（postgres.js 不认聚合的 bigint 解析器，见 `data/auth.ts`），
+  // 这里转回 bigint，让 `UserRow` 上的类型是真的。
+  return rows.map((row) => ({ ...row, storageUsedBytes: BigInt(row.storageUsedBytes) }))
 }
 
 export async function updateUser(

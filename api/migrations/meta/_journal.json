@@ -15,6 +15,27 @@
       "when": 1789387800000,
       "tag": "0001_add_auth_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789481931062,
+      "tag": "0002_create_tag_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789483104535,
+      "tag": "0003_add_import_pipeline_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789561366148,
+      "tag": "0004_add_user_id_to_tag_jobs",
+      "breakpoints": true
     }
   ]
 }
