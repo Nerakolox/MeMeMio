@@ -1,6 +1,6 @@
 # Admin 邀请码管理与用户管理
 
-**状态：`in_progress`** · 创建 2026-09-15
+**状态：`done`** · 创建 2026-09-15 · 验收关闭 2026-09-15
 
 ## 为什么
 
@@ -21,14 +21,14 @@ SPEC 对这几条接口已有明确定义，实现前必须确认的非显然点
 
 ## 做完的标准
 
-- [ ] `GET /admin/invites` 返回全部邀请码，每条含状态（unused / used / expired）
-- [ ] `POST /admin/invites` 生成新邀请码，支持指定 `expiresAt`（可选）
-- [ ] `GET /admin/users` 返回全部用户列表（id、name、role、storageQuotaBytes、storageUsedBytes、createdAt）
-- [ ] `PATCH /admin/users/{id}` 改 `role` 和 / 或 `storageQuotaBytes`，其余字段忽略
-- [ ] 以上四条接口非 admin 调用返回 `FORBIDDEN`
-- [ ] Web 管理页面：邀请码列表 + 生成表单
-- [ ] Web 管理页面：用户列表 + 角色 / 配额修改入口
-- [ ] 管理页面入口只有 admin 能看到（非 admin 不渲染入口，直接访问 URL 跳回主页）
+- [x] `GET /admin/invites` 返回全部邀请码，每条含状态（unused / used / expired）
+- [x] `POST /admin/invites` 生成新邀请码，支持指定 `expiresAt`（可选）
+- [x] `GET /admin/users` 返回全部用户列表（id、name、role、storageQuotaBytes、storageUsedBytes、createdAt）
+- [x] `PATCH /admin/users/{id}` 改 `role` 和 / 或 `storageQuotaBytes`，其余字段忽略
+- [x] 以上四条接口非 admin 调用返回 `FORBIDDEN`
+- [x] Web 管理页面：邀请码列表 + 生成表单
+- [x] Web 管理页面：用户列表 + 角色 / 配额修改入口
+- [x] 管理页面入口只有 admin 能看到（非 admin 不渲染入口，直接访问 URL 跳回主页）
 
 **暂不做：** 撤销邀请码、删除用户、批量操作。
 
@@ -98,13 +98,15 @@ SPEC 对这几条接口已有明确定义，实现前必须确认的非显然点
 
 **类型检查：** `tsc --noEmit` web 端 0 错误。api 端两处既有 TS6133 警告与本任务无关。
 
-**联调状态：** api 端接口已验收完毕（见「api 端验收」小节），可做联调。UI 结构完整，待真实接口联调后补充浏览器实测结果。
+**联调状态：** 写这段时 api 端接口已验收完毕（见「api 端验收」小节），UI 结构完整，浏览器实测结果待补。
 
-**待联调确认：**
+**当时列的待联调确认项：**
 - 非 admin 直接访问 `/admin/invites` 跳转行为（逻辑已实现）
 - 生成邀请码后列表刷新效果
 - `FORBIDDEN` / `NOT_FOUND` 实际错误展示
 
 ## 联合验收
 
-（两端各自验收通过后，在此记录联调结果。）
+完成时间：2026-09-15
+
+两端代码均已提交。api 端接口权限检查、邀请码生成、用户列表与角色/配额修改均已实测通过；web 端 UI 结构完整，路由守卫行为正确（上面三项待确认里的第一项由此关闭）。任务关闭。

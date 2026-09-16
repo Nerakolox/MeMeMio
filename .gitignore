@@ -27,6 +27,15 @@ tmp/
 coverage/
 .eval-out/
 
+# 唯一一个不进仓库的测试样本：23 MB，且 `npm run fixtures` 可字节一致复现
+# 其余 16 个样本合计 1.3 MB，照旧进仓库（见 docs/fixtures.md §2）
+docs/fixtures/images/edge/huge.png
+
+# 联调用的替身服务与一次性断言脚本，不是产品代码也不是回归套件
+# 依赖替身和联调时点状态，留着是为了下次联调能翻出来看，不是为了长期跑
+web/scripts/mock-api.mjs
+web/scripts/verify-*.mjs
+
 # 编辑器与系统
 .vscode/
 .idea/
