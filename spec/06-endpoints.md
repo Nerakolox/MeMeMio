@@ -190,3 +190,51 @@ Embedding 测试响应：
 Embedding 实测维度 < 1024 直接拒绝保存，返回 `EMBED_DIM_TOO_SMALL`。
 
 更换 embedding 模型且库里已有数据时，`PUT` 需要带 `confirmReindex: true`，否则返回 `EMBED_MODEL_CHANGED`。确认后自动触发全站重建索引，期间搜索降级（`degraded: true`），不中断服务。理由见 [§9.6](09-decisions.md)。
+
+**测试记录由服务端保存，客户端不参与。** 探测结果字段不接受客户端写入（[§5.3](05-data-models.md)），所以「测过了」这件事不能靠前端回传——`POST /config/*/test` 必须把结果存在服务端，`PUT` 从那条记录里抄探测结果写进配置行。存法属实现细节，但记录里**不保存 key 明文或密文**。
+
+匹配三要素：**baseUrl + model + key 指纹**（key 的 SHA-256，只用于比对）。比 §6.5.2 开头那句多一个 key——key 恰恰是最常填错的那一项，只按 baseUrl + model 匹配会让「换了 key 没测就保存」通过校验，而那正是最需要挡住的情况。
+
+### §6.5.3 配置的对外表示
+
+`GET /config/vision`：
+
+```
+{
+  source: "user" | "default",     // 当前生效的是自己的配置还是部署方默认
+  baseUrl: "https://...",         // source=default 时回显部署方默认值
+  model: "...",
+  apiKey: "****1234",             // 固定 "****" + 后四位；未配置时 null
+  verifiedAt: "2026-09-16T...",   // 没通过过测试则 null
+  jsonModeWorks: true,            // 探测结果，未测过则 null
+  multiImageWorks: false
+}
+```
+
+`GET /config/embed` 同构，能力字段换成 `nativeDim` / `dimParamWorks`。
+
+`PUT /config/*` 与 `POST /config/*/test` 的请求体同形，只有 `baseUrl` / `model` / `apiKey` 三个字段——**探测结果字段不出现在请求体里**。`apiKey` 传脱敏串视为「不修改」（[§3.5](03-auth-permission.md)）；此前没配过 key 时传脱敏串等于没传，返回 `VALIDATION_FAILED`。
+
+测试要能在保存之前跑，所以 `POST /config/*/test` 接受尚未保存的配置；它不改变当前生效的配置。
+
+### §6.5.4 重建索引
+
+`POST /admin/reindex` 把所有向量过期的记录排进重算队列，**幂等**——重复调用不会让同一条记录重算两遍。换模型时由 `PUT /config/embed` 自动触发，这个端点是管理员手动补触发用的（[queue.md §6](../api/agents/rules/queue.md) 的「重算过期向量」）。
+
+**重算只重算 embedding。** 从 `search_text` 重新生成向量，不重新调视觉模型、不改 AI 产出字段——换 embedding 模型不影响打标结果，重跑视觉是白花钱。
+
+`GET /admin/reindex/status`：
+
+```
+{
+  running: boolean,      // 队列里还有未完成的重算任务
+  total: number,         // 有向量的非软删记录数
+  done: number,          // embed_model 与当前配置一致的条数
+  stale: number,         // 待重算
+  failed: number         // 重试耗尽的条数，需要看日志
+}
+```
+
+进度必须来自库里的真实计数，**不能是进程内存里的计数器**——重启后内存计数归零，进度条会从头开始，那是假的。失败的条目留在队列里不做断点续传（[queue.md §7](../api/agents/rules/queue.md)），`stale` 长时间不降就是出了问题。
+
+`running` 为真时搜索必须返回 `degraded: true`（[§6.3.1](06-endpoints.md)），因为此时库里的向量一部分属于旧模型，向量路的结果不可信。判断这一条的查询会落在每个搜索请求上，必须是索引命中的存在性查询或带短期缓存，不能是全表 count。

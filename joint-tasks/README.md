@@ -24,6 +24,7 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
+| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——用户视觉通道、全站 Embedding、重建索引；解开三条已记在板上的偏差（降帧梯子走不到、HyDE 借部署方通道、`embed_config` 无读写路径） |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
@@ -31,7 +32,7 @@
 
 **已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
 
-**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、§6.5 的用户视觉配置与 Embedding 配置（含测试连接与重建索引）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署。
+**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、设置页与管理页的统计面板（`settings-ux.md §9`）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署。
 
 > ✅ **两端 typecheck 口径已对齐**（2026-09-16，见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)）。`api/tsconfig.json` 现在也开着 `noUnusedLocals` + `noUnusedParameters`，所以本端自查和提交前闸门看到的是同一批错误。
 >
@@ -45,7 +46,7 @@
 |---|---|
 | 评测集未跑；**`eval.ts` 内嵌探测期提示词，不 import `src/ai/vision.ts`**，原样跑出的数字会被误读成「新提示词已验证」 | [评测集](2026-09-13-eval-set.md)，已进其「做完的标准」 |
 | `tag_status = 'refused'` 目前不可达（只有主通道，终局失败全落 `needs_manual`） | 等 SPEC §9.5 转 `accepted` + 副通道接入；**不是缺陷**，不要为了让状态可达提前实现 §9.5 |
-| 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | SPEC §6.5 配置任务——探测结果存下来后自然变成真实流量路径 |
+| 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | [模型配置与测试连接](2026-09-16-ai-config.md)——探测结果存下来后自然变成真实流量路径 |
 | `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | ✅ 已完成，进了 `api/agents/rules/ai-providers.md §3`（见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)） |
 
 ## api 收尾三件转出的遗留项
@@ -75,8 +76,8 @@
 | 遗留项 | 归属 |
 |---|---|
 | 未跑评测集（`recall@5`）；本次动了 RRF 参数、HyDE 提示词、切词 | [评测集](2026-09-13-eval-set.md) |
-| HyDE 走部署方 `env.defaultVision`，未按搜索者自己的视觉通道解析——**与 SPEC §6.3.1 的已知偏差**，不改契约 | 待 `user_ai_configs` 读写与解密上线；接入点唯一，`api/src/services/search.ts` 的 `startVectorPath()` |
-| `resolveEmbedConfig()` 只读环境变量，`embed_config` 表无读写路径 | 管理页 Embedding 配置任务 |
+| HyDE 走部署方 `env.defaultVision`，未按搜索者自己的视觉通道解析——**与 SPEC §6.3.1 的已知偏差**，不改契约 | [模型配置与测试连接](2026-09-16-ai-config.md) 的「运行时接入」；接入点在 `api/src/ai/hyde.ts:57`（早前记的 `services/search.ts` 的 `startVectorPath()` 是它的调用方） |
+| `resolveEmbedConfig()` 只读环境变量，`embed_config` 表无读写路径 | [模型配置与测试连接](2026-09-16-ai-config.md) |
 | `rrf.ts` 依赖「`data/` 每路返回的 id 不重复」，上游 join 出重复行会静默翻倍 | 改 `api/src/data/search.ts` 的 join 时回看 |
 
 
