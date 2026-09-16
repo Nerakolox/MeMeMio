@@ -2,6 +2,7 @@ import { and, desc, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
 import { memes, users, userFavorites } from './schema.js'
+import { splitHash } from '../lib/phash.js'
 import { AppError } from '../lib/app-error.js'
 
 /**
@@ -55,6 +56,64 @@ export async function findMemeById(id: string, db: Db = defaultDb): Promise<Meme
   return rows[0] ?? null
 }
 
+// ── 导入去重（SPEC §6.2.2 / §1.5） ─────────────────────────────────
+//
+// 两个查询都刻意留在这里而不是 `data/imports.ts`：它们查的是 `memes`，
+// 而 `memes` 只有一个入口。挪出去就等于在第二个文件里手写一遍软删过滤。
+
+/**
+ * SHA-256 精确去重。返回已有记录（含软删的）或 null。
+ *
+ * ⚠️ **这里故意不过滤 `deleted_at`**，是全项目唯一一处。原因：`content_hash` 上有唯一约束，
+ * 一条软删记录仍占着那个哈希位。如果这里看不见它，同一份文件再传一次会在 insert 时
+ * 撞唯一索引报 500，而不是被识别成重复。
+ *
+ * 「看不见软删记录」这条规则防的是**把已删的图当有效图返回**；这里返回给调用方的用途
+ * 是判定「字节完全相同的记录已存在」，不是展示。调用方据 `deletedAt` 决定是否告知用户
+ * 「这张你删过」。
+ */
+export async function findMemeByContentHash(
+  contentHash: string,
+  db: Db = defaultDb,
+): Promise<MemeRow | null> {
+  const rows = await db.select().from(memes).where(eq(memes.contentHash, contentHash)).limit(1)
+  return rows[0] ?? null
+}
+
+/** 近似重复的候选：库里与之最接近的一张，带 Hamming 距离。 */
+export type PhashNeighbor = { meme: MemeRow; distance: number }
+
+/**
+ * pHash 全库 Hamming 扫描。见 agents/rules/database.md §3。
+ *
+ * `bit_count(bigint)` 在本项目的 PostgreSQL 17 上**不存在**（只有 `bit` 和 `bytea` 重载）。
+ * 所以把 64 位哈希拆成两个 32 位肢体分别 `bit_count`，再相加——结果相同，
+ * 且参数落在 int4 范围内能被驱动正确推断类型。拆分由 `lib/phash.ts` 的 `splitHash` 做。
+ *
+ * 不建 BK-tree、不做专用索引：几万行仍在毫秒级，现在就上是提前优化（同一节的结论）。
+ * `deleted_at is null` 是必须的——已删的图不该参与「你重复了这张」的判断。
+ */
+export async function findNearestByPhash(
+  hash: bigint,
+  maxDistance: number,
+  db: Db = defaultDb,
+): Promise<PhashNeighbor | null> {
+  const { hi, lo } = splitHash(hash)
+  const distance = sql<number>`bit_count(((${memes.phash} >> 32) & 4294967295)::bit(32) # ${hi}::int::bit(32))
+    + bit_count((${memes.phash} & 4294967295)::bit(32) # ${lo}::int::bit(32))`
+
+  const rows = await db
+    .select({ meme: memes, distance: distance.as('distance') })
+    .from(memes)
+    .where(and(isNull(memes.deletedAt), sql`${distance} <= ${maxDistance}`))
+    .orderBy(sql`distance`)
+    .limit(1)
+
+  const row = rows[0]
+  if (row === undefined) return null
+  return { meme: row.meme, distance: Number(row.distance) }
+}
+
 /**
  * 管理员「已删除」视图专用。
  *
@@ -91,6 +150,157 @@ export async function softDeleteMeme(
     .update(memes)
     .set({ deletedAt: new Date() })
     .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+}
+
+// ── 打标写回（SPEC §5.2.3） ────────────────────────────────────────
+
+/**
+ * 一次打标的全部产出。**五个字段一次写完**——单次视觉调用产出全部内容，
+ * 没有独立的 OCR 链路（SPEC §5.2.3），也就不存在「先写 ocr_text 再补 description」。
+ */
+export type TagResult = {
+  ocrText: string
+  description: string
+  emotions: string[]
+  scenes: string[]
+  tags: string[]
+  /** 派生字段，由 `lib/vision-output.ts` 的 `buildSearchText` 算。见下方警告。 */
+  searchText: string
+  visionModel: string
+}
+
+/**
+ * 写回打标结果。
+ *
+ * ⚠️ **`search_text` 必须和五个来源字段在同一条 UPDATE 里**（schema 里那句「任一来源变更时
+ *    必须重算」）。拆成两条语句的话，中间崩掉就留下一条 search_text 和标签对不上的记录，
+ *    而这不报错——只是那张图在文本检索里搜不到或搜出错的东西。**将来的 `PATCH /memes/:id`
+ *    改标签时同样要走这个函数，不要在 handler 里手写一遍 UPDATE。**
+ *
+ * `deleted_at is null` 同样是硬条件：打标是异步的，图可能在 AI 调用期间被删掉，
+ * 这时写回等于让一条已删记录悄悄复活出内容。返回 false 让调用方知道白跑了一趟。
+ *
+ * **不写 `edited_by` / `edited_at`**：那两列记的是「人改过」，机器打标不是人工编辑。
+ */
+export async function applyTagResult(
+  id: string,
+  result: TagResult,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const rows = await db
+    .update(memes)
+    .set({
+      ocrText: result.ocrText,
+      description: result.description,
+      emotions: result.emotions,
+      scenes: result.scenes,
+      tags: result.tags,
+      searchText: result.searchText,
+      visionModel: result.visionModel,
+      tagStatus: 'ok',
+    })
+    .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    .returning({ id: memes.id })
+  return rows.length > 0
+}
+
+/**
+ * 只改 `tag_status`。终局失败时用（refused / needs_manual）。
+ *
+ * 取值见 SPEC §5.2.3：pending | ok | refused | needs_manual。**不校验取值**——
+ * 这一层不认识状态机，传错值是调用方的 bug，加一个运行时白名单只会把它藏起来。
+ */
+export async function setTagStatus(
+  id: string,
+  tagStatus: string,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const rows = await db
+    .update(memes)
+    .set({ tagStatus })
+    .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    .returning({ id: memes.id })
+  return rows.length > 0
+}
+
+/**
+ * 单独写 embedding。
+ *
+ * ⚠️ **和打标写回分开是有意的，不要合并成一条语句。** embedding 失败不回滚打标
+ *    （queue.md §3）：标已经打好了，向量没算出来只是让这张图暂时进不了向量路，
+ *    把 tag_status 一起退回 pending 等于扔掉一次已经付过钱的视觉调用。
+ *
+ * ⚠️ 传进来的向量必须**已经**截断并重新 L2 归一化（database.md）。这一层不做归一化——
+ *    在写库这一步补救等于承认上游可能传进没归一化的向量，那才是真正危险的假设。
+ */
+export async function applyEmbedding(
+  id: string,
+  embedding: number[],
+  embedModel: string,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const rows = await db
+    .update(memes)
+    .set({ embedding, embedModel })
+    .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    .returning({ id: memes.id })
+  return rows.length > 0
+}
+
+// ── 收藏（SPEC §5.4 / §6.4） ───────────────────────────────────────
+//
+// ⚠️ **收藏是人和图的关系，不是图的属性。** 所以它写 `user_favorites`，
+//    一个字节都不碰 `memes`：没有 favorite_count、不动 edited_by、不动 updated_at。
+//    「顺手在 memes 上加个计数缓存」会立刻引出「谁来保证它和 user_favorites 一致」，
+//    而不一致的表现是数字错了但没人报错。
+//
+//    也因此**收藏不走 `assertCanMutate`**：那三条规则管的是改动图本身（SPEC §3.3），
+//    而收藏别人的图是共享库的正常用法，不是对那张图的改动。
+
+/**
+ * 收藏。**幂等**：已收藏再调一次是空操作，不报错、不改 created_at。
+ *
+ * PUT 是幂等动词（SPEC §6.4），前端双击、断网重发、离线队列重放都会来第二次。
+ * 返回值区分「这次真加上了」和「本来就有」，只给日志用，接口响应两者相同。
+ *
+ * 软删过滤在这里是一条独立查询而不是 insert ... select：`user_favorites.meme_id`
+ * 上的外键只保证图存在，**不保证它没被软删**，少了这一步就能收藏一张已删的图。
+ */
+export async function addFavorite(
+  userId: string,
+  memeId: string,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const meme = await findMemeById(memeId, db)
+  if (meme === null) throw new AppError('NOT_FOUND', '这张表情不存在')
+
+  const rows = await db
+    .insert(userFavorites)
+    .values({ userId, memeId })
+    .onConflictDoNothing({ target: [userFavorites.userId, userFavorites.memeId] })
+    .returning({ memeId: userFavorites.memeId })
+  return rows.length > 0
+}
+
+/**
+ * 取消收藏。**幂等**：没收藏过也返回成功。
+ *
+ * 图已软删时仍然报 NOT_FOUND 而不是静默成功：这两个接口是一对，一个能操作另一个不能
+ * 会让前端的乐观更新状态对不上。取消一张已删的图本来也没有意义——列表里根本看不到它。
+ */
+export async function removeFavorite(
+  userId: string,
+  memeId: string,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const meme = await findMemeById(memeId, db)
+  if (meme === null) throw new AppError('NOT_FOUND', '这张表情不存在')
+
+  const rows = await db
+    .delete(userFavorites)
+    .where(and(eq(userFavorites.userId, userId), eq(userFavorites.memeId, memeId)))
+    .returning({ memeId: userFavorites.memeId })
+  return rows.length > 0
 }
 
 // ── 浏览接口（SPEC §6.3.2） ─────────────────────────────────────────

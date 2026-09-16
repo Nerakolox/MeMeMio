@@ -5,6 +5,8 @@ import { healthRoutes } from './routes/health.js'
 import { authRoutes } from './routes/auth.js'
 import { adminRoutes } from './routes/admin.js'
 import { memesRoutes } from './routes/memes.js'
+import { searchRoutes } from './routes/search.js'
+import { importRoutes } from './routes/imports.js'
 
 /**
  * Hono 应用本体。静态文件托管在 server.ts 里挂，这样测试不需要先构建 web。
@@ -19,6 +21,8 @@ export const app = new Hono<{ Variables: RequestIdVariables }>()
   .route('/api/v1/auth', authRoutes)
   .route('/api/v1/admin', adminRoutes)
   .route('/api/v1/memes', memesRoutes)
+  .route('/api/v1/search', searchRoutes)
+  .route('/api/v1/imports', importRoutes)
 
 app.onError(onError)
 app.notFound(onNotFound)

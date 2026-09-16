@@ -22,9 +22,16 @@ docs/fixtures/
 | 类 | 进仓库？ | 为什么 |
 |---|---|---|
 | `images/` | ✅ 进 | 小、可公开、测试必须能离线跑 |
+| `images/edge/huge.png` | ❌ **不进** | 23 MB，是「小」这条的唯一例外。`npm run fixtures` 字节一致复现，详见下 |
 | `eval/` 的标注 | ✅ 进 | 是文本，且是项目的核心资产 |
 | `eval/` 的图片 | ❌ **不进** | 含擦边内容，见 [eval.md](eval.md) |
 | `responses/` | ✅ 进 | 脱敏后是纯文本，价值极高，见下 |
+
+> ⚠️ **新克隆的仓库要先 `cd api && npm run fixtures`**，否则 `huge.png` 不存在，导入测试里「单文件超限」那两条会失败。
+>
+> 为什么单独排除它：其余 16 个样本合计 1.3 MB，它一个 23 MB，进了 git 历史就永久占着，而它的内容是脚本按规则生成的纯噪声——**可复现的大文件不该进版本历史**。
+>
+> 待办（api 本端）：`tests/global-setup.ts` 检测到样本缺失时自动生成，这条前置就不用靠人记。
 
 ## 3. `images/edge/` 是最值钱的那批
 
@@ -37,6 +44,7 @@ docs/fixtures/
 | `zero-byte.png` | 0 字节 |
 | `huge.png`（>10MB） | 单文件大小限制 |
 | `single-frame.gif` | 「是 GIF 但只有一帧」——`isAnimated` 应当为 false |
+| `animated-long.gif`（12 帧） | 帧数多到能排出完整的降帧梯子（10 → 4 → 拼图）。`animated.gif` 只有 4 帧，梯子的第一级跑不到 |
 | `animated.webp` / `static.webp` | 同一 MIME，一动一静，验证不能靠 MIME 推断 |
 | `apng.png` | 扩展名和 MIME 都是 PNG，但它是动图 |
 

@@ -1,0 +1,390 @@
+import { Hono } from 'hono'
+import { streamSSE } from 'hono/streaming'
+import { AppError } from '../lib/app-error.js'
+import { requireAuth, type AuthVariables } from '../middleware/auth.js'
+import { getStorageUsedBytes } from '../data/auth.js'
+import {
+  MAX_FILES_PER_BATCH,
+  claimBatchCommit,
+  createBatch,
+  findBatchById,
+  findOwnedBatch,
+  findReviewItem,
+  getBatchDeclaredBytes,
+  getBatchSnapshot,
+  listReviewQueue,
+  resolveReviewItem,
+} from '../data/imports.js'
+import { getMemeById } from '../data/memes.js'
+import { MAX_FILE_BYTES } from '../image/constants.js'
+import { deleteObject, presignUpload, publicUrlFor } from '../storage/r2.js'
+import { publish, subscribe } from '../services/import-events.js'
+import { importReviewedFile, runBatch, type FileToProcess } from '../services/import.js'
+import { serializeMeme } from '../serialize/meme.js'
+
+/**
+ * 导入（SPEC §6.2）。六个端点全部要求登录——导入是写操作，共享库里匿名写入
+ * 等于给全站开放上传口。
+ *
+ * 上传流程分两段，中间夹着一次**浏览器直传 R2**：
+ *
+ *   POST /imports              签一批预签名 PUT，文件字节不经过 api
+ *     → 浏览器 PUT 到 R2
+ *   POST /imports/{id}/commit  告诉服务端「传完了，开始处理」，202 立即返回
+ *     → 服务端后台跑管线，进度走 SSE
+ */
+
+// ── 请求体解析 ─────────────────────────────────────────────────────
+//
+// 校验写在这里而不是通用中间件：这两段请求体字段很少，而「缺字段就补默认值」
+// 那种写法会让「配额算漏了」变成一个没有任何痕迹的错误。
+
+function parseUploadBody(raw: unknown): { fileName: string; sizeBytes: bigint }[] {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON 对象')
+  }
+  const files = (raw as Record<string, unknown>)['files']
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new AppError('VALIDATION_FAILED', 'files 必须是非空数组')
+  }
+  if (files.length > MAX_FILES_PER_BATCH) {
+    throw new AppError('VALIDATION_FAILED', `一次最多 ${MAX_FILES_PER_BATCH} 个文件，请分批发`)
+  }
+
+  const seen = new Set<string>()
+  return files.map((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new AppError('VALIDATION_FAILED', 'files 的每一项必须是 { fileName, sizeBytes }')
+    }
+    const record = entry as Record<string, unknown>
+    const rawName = record['fileName']
+    if (typeof rawName !== 'string' || rawName.trim() === '') {
+      throw new AppError('VALIDATION_FAILED', 'fileName 必须是非空字符串')
+    }
+    const name = rawName.trim()
+
+    // ⚠️ 文件名会直接拼进 R2 键。带 `/` 或 `..` 的名字能写到批次目录之外
+    //    （`temp/<batchId>/../../memes/x`），那是一个路径穿越面。
+    //    这里直接拒绝而不是「转义后接受」——转义的结果用户认不出来，反而更困惑。
+    if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+      throw new AppError('VALIDATION_FAILED', `文件名不能包含路径分隔符：${name}`)
+    }
+    // 同批次重名会让两条 import_items 撞主键（batch_id + file_name）。
+    // 拒绝比自动改名好：前端要能把返回的 uploads 和用户选的文件一一对上。
+    if (seen.has(name)) {
+      throw new AppError('VALIDATION_FAILED', `同一个批次里有重名文件：${name}`)
+    }
+    seen.add(name)
+
+    const size = parseSizeBytes(record['sizeBytes'], name)
+    return { fileName: name, sizeBytes: size }
+  })
+}
+
+/** 声明的大小。**只用于配额预检**——真实大小在管线里按实际字节数重算。 */
+function parseSizeBytes(value: unknown, name: string): bigint {
+  const text = typeof value === 'number' || typeof value === 'string' ? String(value) : ''
+  let size: bigint
+  try {
+    size = BigInt(text)
+  } catch {
+    throw new AppError('VALIDATION_FAILED', `sizeBytes 不是整数：${name}`)
+  }
+  if (size < 0n) throw new AppError('VALIDATION_FAILED', `sizeBytes 不能为负：${name}`)
+  if (size > MAX_FILE_BYTES) {
+    throw new AppError('FILE_TOO_LARGE', `${name} 超过单文件上限`, { fileName: name })
+  }
+  return size
+}
+
+function parseCommitBody(raw: unknown): FileToProcess[] {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON 对象')
+  }
+  const items = (raw as Record<string, unknown>)['items']
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new AppError('VALIDATION_FAILED', 'items 必须是非空数组')
+  }
+
+  return items.map((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      throw new AppError('VALIDATION_FAILED', 'items 的每一项必须是 { fileName, tempKey }')
+    }
+    const record = entry as Record<string, unknown>
+    const fileName = record['fileName']
+    const tempKey = record['tempKey']
+    if (typeof fileName !== 'string' || fileName.trim() === '') {
+      throw new AppError('VALIDATION_FAILED', 'fileName 必须是非空字符串')
+    }
+    if (typeof tempKey !== 'string' || tempKey.trim() === '') {
+      throw new AppError('VALIDATION_FAILED', 'tempKey 必须是非空字符串')
+    }
+    return { fileName: fileName.trim(), tempKey: tempKey.trim() }
+  })
+}
+
+/**
+ * 配额检查。**两处都要调**：签发预签名 URL 前，和 commit 时（SPEC §6.2.1）。
+ *
+ * 为什么要两次：两次之间用户可以并发开另一个批次，也可以同时把配额调小。
+ * 只查第一次的话，超额的那部分图会照常入库。
+ *
+ * 软删记录在保留期内仍计入配额，由 `getStorageUsedBytes` 保证（SPEC §3.6）。
+ */
+async function assertQuota(
+  userId: string,
+  storageQuotaBytes: bigint,
+  incomingBytes: bigint,
+): Promise<void> {
+  const used = await getStorageUsedBytes(userId)
+  const remaining = storageQuotaBytes - used
+  if (incomingBytes > remaining) {
+    throw new AppError('QUOTA_EXCEEDED', '存储空间不足', {
+      // 客户端要能告诉用户「还差多少」，否则他只能反复试
+      remaining: (remaining > 0n ? remaining : 0n).toString(),
+      required: incomingBytes.toString(),
+      used: used.toString(),
+      quota: storageQuotaBytes.toString(),
+    })
+  }
+}
+
+type Vars = AuthVariables
+
+export const importRoutes = new Hono<{ Variables: Vars }>()
+  .use('*', requireAuth)
+
+  /**
+   * POST /api/v1/imports — 签预签名直传 URL（SPEC §6.2.1）
+   *
+   * 只签名，不接收字节。文件从浏览器直传 R2，api 全程不碰图片内容。
+   */
+  .post('/', async (c) => {
+    const actor = c.get('currentUser')
+    const raw: unknown = await c.req.json().catch(() => {
+      throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
+    })
+    const files = parseUploadBody(raw)
+
+    await assertQuota(
+      actor.id,
+      actor.storageQuotaBytes,
+      files.reduce((sum, f) => sum + f.sizeBytes, 0n),
+    )
+
+    const batch = await createBatch({ userId: actor.id, files })
+
+    // 文件名已校验过，这里拼出的 tempKey 一定落在 temp/<batchId>/ 之内
+    const uploads = await Promise.all(
+      files.map(async (f) => {
+        const { uploadUrl, tempKey } = await presignUpload({
+          batchId: batch.id,
+          fileName: f.fileName,
+        })
+        return { fileName: f.fileName, uploadUrl, tempKey }
+      }),
+    )
+
+    return c.json({ batchId: batch.id, uploads })
+  })
+
+  /**
+   * GET /api/v1/imports/reviews — 待确认队列（SPEC §6.2.3）
+   *
+   * ⚠️ **必须注册在 `/:batchId` 之前。** Hono 按注册顺序匹配，`/reviews` 会先被
+   * `/:batchId` 吃掉，表现是「待确认队列一直说批次不存在」。
+   */
+  .get('/reviews', async (c) => {
+    const actor = c.get('currentUser')
+    const entries = await listReviewQueue(actor.id)
+
+    const items = await Promise.all(
+      entries.map(async (entry) => {
+        // existing 用完整的 meme 序列化结果，前端并排展示两侧用的是同一套字段
+        const existing = await getMemeById(entry.existingId, actor.id)
+        return {
+          batchId: entry.batchId,
+          fileName: entry.fileName,
+          // tempUrl 指向**暂存对象**，用户还没决定要不要它。
+          // 用公开地址直出而不是预签名 GET：这个队列可能放好几天，签名会过期。
+          tempUrl: entry.tempStorageKey === null ? null : publicUrlFor(entry.tempStorageKey),
+          sizeBytes: entry.sizeBytes?.toString() ?? null,
+          width: entry.width,
+          height: entry.height,
+          distance: entry.distance,
+          existing: existing === null ? null : serializeMeme(existing),
+        }
+      }),
+    )
+
+    return c.json({ items })
+  })
+
+  /**
+   * POST /api/v1/imports/reviews/{batchId}/{fileName} — 处理一条待确认（SPEC §6.2.3）
+   *
+   * `action: "import"` 才入队打标。在此之前它一直不打标——被判为重复的图
+   * 不该先花掉 AI 的钱再被用户丢掉。
+   */
+  .post('/reviews/:batchId/:fileName', async (c) => {
+    const actor = c.get('currentUser')
+    const batchId = c.req.param('batchId')
+    const fileName = decodeURIComponent(c.req.param('fileName'))
+
+    const raw: unknown = await c.req.json().catch(() => {
+      throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
+    })
+    const action = (raw as Record<string, unknown>)['action']
+    if (action !== 'import' && action !== 'skip') {
+      throw new AppError('VALIDATION_FAILED', 'action 只能是 "import" 或 "skip"')
+    }
+
+    // findReviewItem 里带了归属检查，也带了 result = 'needs_review' 的条件：
+    // 别人的条目和已经处理过的条目在这里都变成 NOT_FOUND
+    const item = await findReviewItem(batchId, fileName, actor.id)
+    if (item === null) throw new AppError('NOT_FOUND', '没有这条待确认记录')
+
+    if (action === 'skip') {
+      // 跳过是最常见的处置方式。**连着 temp 对象一起删**——留着只占空间，
+      // 而且会让「7 天未处理」那条清理任务白跑一趟。
+      await resolveReviewItem(batchId, fileName, { result: 'exact_dup' })
+      if (item.tempStorageKey !== null) await deleteObject(item.tempStorageKey)
+      return c.json({ fileName, result: 'skipped' })
+    }
+
+    if (item.tempStorageKey === null) {
+      // 没有暂存对象就没法导入。这不该发生（条目建的时候就有 tempKey），
+      // 真发生了说明数据被手工改过，直说比抛一个 500 好。
+      throw new AppError('INTERNAL', '这条记录的暂存对象丢失，无法导入', { fileName })
+    }
+
+    // 配额在这里也要查：这条图之前没进库，现在才真正占空间
+    const declared = item.sizeBytes ?? 0n
+    await assertQuota(actor.id, actor.storageQuotaBytes, declared)
+
+    const { memeId } = await importReviewedFile({
+      fileName,
+      tempKey: item.tempStorageKey,
+      userId: actor.id,
+    })
+
+    await resolveReviewItem(batchId, fileName, { result: 'imported', memeId })
+    publish(batchId, { event: 'item', data: { fileName, result: 'imported', memeId } })
+
+    return c.json({ fileName, result: 'imported', memeId })
+  })
+
+  /**
+   * POST /api/v1/imports/{batchId}/commit — 触发处理（SPEC §6.2.1）
+   *
+   * **202 立即返回，不同步等处理完。** 上千张图要跑几分钟，同步等会让请求超时，
+   * 而且中途断开时用户拿不到 batchId——那批图就变成孤儿了。
+   */
+  .post('/:batchId/commit', async (c) => {
+    const actor = c.get('currentUser')
+    const batchId = c.req.param('batchId')
+    const raw: unknown = await c.req.json().catch(() => {
+      throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
+    })
+    const items = parseCommitBody(raw)
+
+    // 归属检查 + 一次性标志写在同一条条件更新里（见 claimBatchCommit）
+    const claimed = await claimBatchCommit(batchId, actor.id)
+    if (claimed === null) {
+      const existing = await findBatchById(batchId)
+      if (existing === null || existing.userId !== actor.id) {
+        // 不是自己的批次，对外统一是「不存在」——不泄露别人的 batchId 存不存在
+        throw new AppError('NOT_FOUND', '没有这个导入批次')
+      }
+      // 是自己的、但已经 commit 过。**这不该报错**：客户端重试是常态，报错会让
+      // 用户以为导入失败了，而实际上它正在跑。返回同一批的幂等结果。
+      return c.json({ batchId, accepted: existing.total, alreadyCommitted: true }, 202)
+    }
+
+    // commit 时再查一次配额（SPEC §6.2.1）：期间可能有别的批次入库了
+    await assertQuota(actor.id, actor.storageQuotaBytes, await getBatchDeclaredBytes(batchId))
+
+    // ⚠️ 故意不 await：这批在后台跑，进度走 SSE。
+    //    catch 是必须的——不接的话 promise 拒绝会变成 unhandledRejection 打挂进程。
+    void runBatch(batchId, actor.id, items).catch(() => {
+      // runBatch 内部已把失败发成 error 事件并记了日志，这里只兜住 promise
+    })
+
+    return c.json({ batchId, accepted: items.length }, 202)
+  })
+
+  /**
+   * GET /api/v1/imports/{batchId} — 批次快照
+   *
+   * **SSE 断线后前端靠它补齐**（SPEC §1.4）。字段和 `done` 事件对齐，
+   * 客户端两处用同一套渲染逻辑。
+   */
+  .get('/:batchId', async (c) => {
+    const actor = c.get('currentUser')
+    const batchId = c.req.param('batchId')
+    const batch = await findOwnedBatch(batchId, actor.id)
+    if (batch === null) throw new AppError('NOT_FOUND', '没有这个导入批次')
+
+    const snapshot = await getBatchSnapshot(batchId)
+    return c.json({
+      total: snapshot.total,
+      done: snapshot.done,
+      skipped: snapshot.skipped,
+      pending: snapshot.pending,
+      needsReview: snapshot.needsReview,
+      failed: snapshot.failed,
+      committed: batch.committedAt !== null,
+    })
+  })
+
+  /**
+   * GET /api/v1/imports/{batchId}/events — SSE 进度（SPEC §1.4）
+   *
+   * **连接断开不影响服务端处理**：处理跑在服务端的批次循环里，这个连接只是旁观。
+   * 断开时漏掉的增量事件不补发，重连后靠快照补齐。
+   */
+  .get('/:batchId/events', async (c) => {
+    const actor = c.get('currentUser')
+    const batchId = c.req.param('batchId')
+    const batch = await findOwnedBatch(batchId, actor.id)
+    if (batch === null) throw new AppError('NOT_FOUND', '没有这个导入批次')
+
+    c.header('Cache-Control', 'no-cache, no-transform')
+    // 反代会缓冲整个响应，SSE 就变成了「结束时一次性收到」。这一行是给 nginx 看的。
+    c.header('X-Accel-Buffering', 'no')
+
+    return streamSSE(c, async (stream) => {
+      // ① 先发当前累计状态。**重连时这一步就是全部的意义**——
+      //    漏掉的增量不补发，由这个快照和 GET /imports/{id} 补齐。
+      const snapshot = await getBatchSnapshot(batchId)
+      await stream.writeSSE({
+        event: 'progress',
+        data: JSON.stringify({
+          total: snapshot.total,
+          done: snapshot.done,
+          skipped: snapshot.skipped,
+          pending: snapshot.pending,
+        }),
+      })
+
+      // ② 再挂实时增量
+      let closed = false
+      const unsubscribe = subscribe(batchId, (event) => {
+        void stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
+      })
+      stream.onAbort(() => {
+        closed = true
+        unsubscribe()
+      })
+
+      // ③ 心跳。反代和 CDN 会在几十秒空闲后掐掉没有字节的连接，而这个批次可能
+      //    正卡在一张 81 帧的动图上——用户看到的表现是「进度条不动」，没有报错。
+      while (!closed) {
+        await stream.sleep(15_000)
+        if (closed) break
+        await stream.writeSSE({ event: 'ping', data: '{}' })
+      }
+
+      unsubscribe()
+    })
+  })
