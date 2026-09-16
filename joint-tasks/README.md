@@ -24,21 +24,18 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
-| [api 收尾三件](2026-09-16-api-housekeeping.md) | `in_progress` | **api 单端**；`web` 的 typecheck 闸门当前是红的，这条先做 |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
 | [梗名别名层](2026-09-13-meme-lexicon.md) | `planning` | 检索实现定稿前做完；词表是闭集，梗名是开集，见 [SPEC §9.18](../spec/09-decisions.md) |
 
-**已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点），见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
+**已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
 
 **还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、§6.5 的用户视觉配置与 Embedding 配置（含测试连接与重建索引）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署。
 
-> ⚠️ **`web` 的 `npm run typecheck` 当前是红的**（2026-09-16 实测，9 条 `TS6133`，全部落在 `api/src/` 里：`data/auth.ts`、`data/memes.ts`、`lib/rrf.ts`、`routes/auth.ts`、`routes/memes.ts`、`services/import.ts`）。
+> ✅ **两端 typecheck 口径已对齐**（2026-09-16，见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)）。`api/tsconfig.json` 现在也开着 `noUnusedLocals` + `noUnusedParameters`，所以本端自查和提交前闸门看到的是同一批错误。
 >
-> 在 `api/` 里跑 `tsc --noEmit` 是 0 错误——因为 `web/tsconfig.json` 开了 `noUnusedLocals`，而 web 的类型链会把 `api/src/` 一起编译。**所以「api 端自查通过」不等于提交前闸门通过**，闸门是 `npm run typecheck`（见[骨架任务](../_archive/joint-tasks/2026-09-13-skeleton.md)第 10 条）。
->
-> 归属：已派发，见 [api 收尾三件](2026-09-16-api-housekeeping.md) 第 1、2 项——删未使用的导入与变量（删之前先判断是不是漏实现的信号），并给 `api/tsconfig.json` 也开 `noUnusedLocals`，让两端口径一致。其中 `data/auth.ts` 与 `routes/auth.ts` 两条是认证任务起就有的存量。
+> 这条留在这里是因为**那次的漏法还会再来**：`web` 的类型链会把 `api/src/` 一起编译（`api/package.json` 的 `exports` 指向 `./src/app.ts`），任何一端往 `tsconfig.json` 加严格开关而另一端不加，就又会出现「api 自查全绿、闸门红、报错全在 api 代码里」。闸门始终是 `cd web && npm run typecheck`，见[骨架任务](../_archive/joint-tasks/2026-09-13-skeleton.md)第 10 条。
 
 ## 打标队列任务转出的遗留项
 
@@ -49,7 +46,16 @@
 | 评测集未跑；**`eval.ts` 内嵌探测期提示词，不 import `src/ai/vision.ts`**，原样跑出的数字会被误读成「新提示词已验证」 | [评测集](2026-09-13-eval-set.md)，已进其「做完的标准」 |
 | `tag_status = 'refused'` 目前不可达（只有主通道，终局失败全落 `needs_manual`） | 等 SPEC §9.5 转 `accepted` + 副通道接入；**不是缺陷**，不要为了让状态可达提前实现 §9.5 |
 | 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | SPEC §6.5 配置任务——探测结果存下来后自然变成真实流量路径 |
-| `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | 已派发：[api 收尾三件](2026-09-16-api-housekeeping.md) 第 3 项 |
+| `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | ✅ 已完成，进了 `api/agents/rules/ai-providers.md §3`（见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)） |
+
+## api 收尾三件转出的遗留项
+
+出处见[该任务归档](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)的总管裁定：
+
+| 遗留项 | 归属 |
+|---|---|
+| `routes/auth.ts` 的 `/me` 自己重复了一遍会话解析，与 `middleware/auth.ts` 的 `resolveUser` 同一套逻辑 | api 本端重构，非紧急；改时确认错误码仍是 `UNAUTHENTICATED`（SPEC §6.1：401 即跳登录页） |
+| `finish_reason: 'length'` 的真实频次**没有实测支撑**——规则里已明写这一点，别把它当已验证的结论引用 | [供应商探测](2026-09-13-provider-spikes.md)，跑出来再补 |
 
 ## 导入任务转出的遗留项
 
