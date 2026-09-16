@@ -33,6 +33,12 @@
 
 **还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、§6.5 的用户视觉配置与 Embedding 配置（含测试连接与重建索引）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署。
 
+> ⚠️ **`web` 的 `npm run typecheck` 当前是红的**（2026-09-16 实测，9 条 `TS6133`，全部落在 `api/src/` 里：`data/auth.ts`、`data/memes.ts`、`lib/rrf.ts`、`routes/auth.ts`、`routes/memes.ts`、`services/import.ts`）。
+>
+> 在 `api/` 里跑 `tsc --noEmit` 是 0 错误——因为 `web/tsconfig.json` 开了 `noUnusedLocals`，而 web 的类型链会把 `api/src/` 一起编译。**所以「api 端自查通过」不等于提交前闸门通过**，闸门是 `npm run typecheck`（见[骨架任务](../_archive/joint-tasks/2026-09-13-skeleton.md)第 10 条）。
+>
+> 归属：api 本端小活，删未使用的导入与变量即可，不改行为。其中 `data/auth.ts` 与 `routes/auth.ts` 两条是认证任务起就有的存量。
+
 ## 打标队列任务转出的遗留项
 
 出处见[打标队列任务归档](../_archive/joint-tasks/2026-09-16-tag-queue.md)的总管裁定：
