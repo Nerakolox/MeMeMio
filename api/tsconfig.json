@@ -12,6 +12,15 @@
     "noFallthroughCasesInSwitch": true,
     "exactOptionalPropertyTypes": false,
 
+    // ⚠️ 这两条必须和 web/tsconfig.json 保持一致，**不是本端的风格偏好**。
+    //    提交前闸门是 `cd web && npm run typecheck`，而 web 的类型链会把 api/src/ 一起
+    //    编译（package.json 的 exports 指向 ./src/app.ts）。这里少开一条，api 执行者
+    //    在自己的工作区里就看不到闸门会报的错——自查全绿、闸门全红，而且报错位置全在
+    //    api 自己的代码里。noUnusedParameters 同样要开：9 条存量里有 2 条是函数参数，
+    //    只开 noUnusedLocals 抓不到它们，口径仍然对不齐。
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,

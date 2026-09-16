@@ -9,8 +9,6 @@ const scryptAsync = promisify(scrypt)
 
 const SALT_LEN = 16
 const KEY_LEN = 64
-/** 30 天。SPEC §3.1 未定义过期时长，取常规值。 */
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 /** 默认存储配额 10 GiB。SPEC §5.1 不定义默认值，这里用合理常量。 */
 const DEFAULT_QUOTA_BYTES = BigInt(10 * 1024 * 1024 * 1024)
 
@@ -108,7 +106,11 @@ export async function createSession(userId: string, db: Db = defaultDb): Promise
     .insert(sessions)
     .values({
       userId,
-      // 让数据库算时间，绕过 drizzle + postgres.js 的 Date 序列化问题
+      // 30 天：SPEC §3.1 未定义过期时长，取常规值。cookie 的 maxAge（routes/auth.ts）
+      // 必须跟这个数字一致，否则会出现「cookie 还在但会话已失效」。
+      //
+      // 让数据库算时间，绕过 drizzle + postgres.js 的 Date 序列化问题。也因此这里是
+      // SQL 字面量而不是 JS 常量——曾经的 SESSION_TTL_MS 在改成 interval 之后就没人用了。
       expiresAt: sql`now() + interval '30 days'`,
     })
     .returning()

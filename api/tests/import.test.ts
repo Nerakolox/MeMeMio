@@ -22,7 +22,7 @@ process.env['DEFAULT_VISION_BASE_URL'] = ''
 process.env['DEFAULT_VISION_API_KEY'] = ''
 process.env['DEFAULT_VISION_MODEL'] = ''
 
-const { installR2Memory, resetR2, seedObject, hasObject, getObjectBytes, keysOf } = await import(
+const { installR2Memory, resetR2, seedObject, hasObject, keysOf } = await import(
   './helpers/r2-memory.js'
 )
 installR2Memory()
@@ -30,7 +30,7 @@ installR2Memory()
 const { createTestDb, truncateAll } = await import('./helpers/test-db.js')
 const { createUser } = await import('./helpers/factories.js')
 const { createSession } = await import('../src/data/auth.js')
-const { createMeme, findMemeByContentHash, findMemeById } = await import('../src/data/memes.js')
+const { findMemeById } = await import('../src/data/memes.js')
 const { softDeleteMeme } = await import('../src/data/memes.js')
 const { onError, onNotFound } = await import('../src/middleware/error.js')
 const { requestId } = await import('../src/middleware/request-id.js')

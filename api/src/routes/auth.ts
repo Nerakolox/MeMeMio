@@ -14,11 +14,18 @@ import {
   deleteSession,
   getStorageUsedBytes,
 } from '../data/auth.js'
-import { SESSION_COOKIE, type AuthVariables } from '../middleware/auth.js'
+import { SESSION_COOKIE } from '../middleware/auth.js'
 import type { RequestIdVariables } from '../middleware/request-id.js'
 import { isProduction } from '../env.js'
 import { db } from '../data/db.js'
 
+/**
+ * 认证路由**不挂 requireAuth / optionalAuth**，所以这里的 Vars 只有 RequestIdVariables。
+ *
+ * 四个端点全都要在「会话无效」时自己决定怎么办：register / login 根本还没有会话，
+ * logout 对无效 session 也要返回 204。中间件解析会话是为了后面的 handler 用 currentUser，
+ * 这条路由上没有那个需求。
+ */
 type Vars = RequestIdVariables
 
 /** ISO 8601 UTC，精确到秒，带 Z。SPEC §1.2 */

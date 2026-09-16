@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
 import { memes, users, userFavorites } from './schema.js'

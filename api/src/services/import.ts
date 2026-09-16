@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { setTimeout as sleep } from 'node:timers/promises'
 import { db } from '../data/db.js'
 import { createMeme, findMemeByContentHash, findNearestByPhash } from '../data/memes.js'
 import {
@@ -96,7 +95,7 @@ async function processOneFile(
   file: FileToProcess,
 ): Promise<void> {
   try {
-    const result = await runPipeline(batchId, userId, file)
+    const result = await runPipeline(userId, file)
     await finish(batchId, file.fileName, {
       result: result.result,
       memeId: result.memeId ?? null,
@@ -121,8 +120,14 @@ type PipelineResult = {
   reason?: string
 }
 
+/**
+ * 一个文件从字节到结论的全部判断。**不带 batchId**：这条管线的每一步都只看这个文件
+ * 本身（大小、magic bytes、SHA-256、pHash），没有一步需要知道它属于哪个批次。
+ *
+ * 「这个条目确实属于这个批次」由 `recordItemOutcome` 的
+ * `where batch_id = ? and file_name = ?` 保证——那是写库那一步的事，落在 `finish()` 里。
+ */
 async function runPipeline(
-  batchId: string,
   userId: string,
   file: FileToProcess,
 ): Promise<PipelineResult> {

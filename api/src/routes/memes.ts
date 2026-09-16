@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import { AppError } from '../lib/app-error.js'
-import { requireAuth, optionalAuth, type AuthVariables, type OptionalAuthVariables } from '../middleware/auth.js'
-import type { RequestIdVariables } from '../middleware/request-id.js'
+import { optionalAuth, type OptionalAuthVariables } from '../middleware/auth.js'
 import { addFavorite, listMemes, getMemeById, removeFavorite } from '../data/memes.js'
 import { serializeMeme } from '../serialize/meme.js'
 
@@ -10,6 +9,12 @@ import { serializeMeme } from '../serialize/meme.js'
 
 // GET /memes 用 optionalAuth——未登录可能仍能浏览（取决于部署方，但接口本身不强制登录；
 // tagStatus 参数在内部做权限检查）。GET /memes/:id 同理。
+//
+// ⚠️ 整条路由只挂 optionalAuth，**收藏那两个端点不另挂 requireAuth**：两种中间件对
+//    `currentUser` 的类型要求相反（AuthUser vs AuthUser | null），同一个 Hono 实例上
+//    混挂会让整条路由的 Variables 退化。所以那两个 handler 自己判 `currentUser === null`
+//    并抛 UNAUTHENTICATED——错误码与 requireAuth 完全一致（SPEC §2.4）。
+//    这是登录判定，不是归属判定；归属判定仍然只在 `assertCanMutate` 一处（AGENTS.md §5）。
 type Vars = OptionalAuthVariables
 
 export const memesRoutes = new Hono<{ Variables: Vars }>()

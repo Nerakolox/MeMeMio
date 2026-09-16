@@ -43,7 +43,10 @@ export function fuseRankings(paths: RankedPath[], limit: number): FusedHit[] {
     // 而去重的代价只是一个 Set，便宜到没有理由不做
     const seenInPath = new Set<string>()
 
-    path.ids.forEach((id, index) => {
+    // ⚠️ rank 取 `seenInPath.size + 1`，**不是数组下标**。去重之后两者会分叉：
+    //    一路里出现过重复 id 时，下标已经往前走了而排名不该走。用下标会让重复之后
+    //    的每一条都白掉一名，不报错、只是排序静静地偏掉。
+    path.ids.forEach((id) => {
       if (seenInPath.has(id)) return
 
       const rank = seenInPath.size + 1
