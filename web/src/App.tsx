@@ -1,7 +1,9 @@
 import { Navigate, Route, Routes, Link } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/auth'
+import { ImportProvider, useImport } from './contexts/import'
 import { HomePage } from './routes/home'
 import { BrowsePage } from './routes/browse'
+import { ImportPage } from './routes/import'
 import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
 import { AdminInvitesPage } from './routes/admin-invites'
@@ -30,6 +32,25 @@ function RequireAdmin({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** 导入跑着的时候导航上留个入口，用户切走再切回来能找到它（import-ux.md §9）。 */
+function ImportNavLink() {
+  const { phase, items, done } = useImport()
+  const running = phase === 'uploading' || phase === 'processing'
+  const settled = items.filter(
+    (it) => it.state !== 'waiting' && it.state !== 'uploading',
+  ).length
+  const total = done?.total ?? items.length
+
+  return (
+    <Link to="/import">
+      导入
+      {running && total > 0 && (
+        <span className="app__nav-progress"> {settled}/{total}</span>
+      )}
+    </Link>
+  )
+}
+
 function AppShell() {
   const { user, setUser } = useAuth()
   const navigate = useNavigate()
@@ -46,6 +67,7 @@ function AppShell() {
         <nav className="app__nav">
           <Link to="/">Mememio</Link>
           <Link to="/browse">浏览</Link>
+          {user && <ImportNavLink />}
           {user?.role === 'admin' && <Link to="/admin/invites">管理</Link>}
         </nav>
         {user && (
@@ -76,6 +98,14 @@ function AppShell() {
             }
           />
           <Route
+            path="/import"
+            element={
+              <RequireAuth>
+                <ImportPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/admin/invites"
             element={
               <RequireAdmin>
@@ -101,7 +131,10 @@ function AppShell() {
 export function App() {
   return (
     <AuthProvider>
-      <AppShell />
+      {/* 导入队列挂在这里而不是 /import 里：切到搜索页时它要继续跑（import-ux.md §9） */}
+      <ImportProvider>
+        <AppShell />
+      </ImportProvider>
     </AuthProvider>
   )
 }

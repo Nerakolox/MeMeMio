@@ -384,3 +384,338 @@ body {
     max-height: none;
   }
 }
+
+/* ---- Import page (/import) ---- */
+
+.app__nav-progress {
+  font-size: 0.8em;
+}
+
+.import {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 960px;
+}
+
+.import__tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.import__tab {
+  min-height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.import__tab--active {
+  font-weight: 600;
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+/* -- 选文件区：点击 / 拖拽 / 粘贴三个入口汇入同一处 -- */
+
+.import__picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.import__dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 140px;
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  outline: 2px dashed currentColor;
+  outline-offset: -4px;
+}
+
+.import__dropzone p {
+  margin: 0;
+}
+
+.import__dropzone--active {
+  outline-style: solid;
+}
+
+.import__dropzone-hint {
+  font-size: 0.85em;
+}
+
+/* 真正的 input 只作为程序化点击的目标，不参与布局 */
+.import__file-input {
+  display: none;
+}
+
+.import__note {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.import__picked-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 600;
+}
+
+.import__clear {
+  font-size: 0.8em;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.import__picked-list,
+.import__item-list,
+.import__review-list,
+.import__failures ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import__picked-item,
+.import__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+}
+
+.import__picked-name,
+.import__item-name {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import__picked-size,
+.import__item-size {
+  font-size: 0.85em;
+}
+
+.import__picked-warn,
+.import__item-reason {
+  font-size: 0.85em;
+}
+
+.import__picked-remove {
+  font-size: 0.8em;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.import__start {
+  align-self: flex-start;
+  min-height: 44px;
+  min-width: 120px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+/* -- 进度区 -- */
+
+.import__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 分阶段：上传中 / 处理中 / 已入库 / 跳过重复 / 待你确认 / 失败 */
+.import__stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0;
+}
+
+.import__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.import__stage dt {
+  font-size: 0.8em;
+}
+
+.import__stage dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.import__reconnect {
+  margin: 0;
+}
+
+.import__request-id {
+  margin: 0;
+  font-size: 0.8em;
+  font-family: monospace;
+}
+
+.import__batch-error,
+.import__review-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import__batch-error p,
+.import__review-error p {
+  margin: 0;
+}
+
+.import__item-state {
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+/* -- 摘要与失败明细 -- */
+
+.import__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import__summary p {
+  margin: 0;
+}
+
+.import__summary-note {
+  font-size: 0.85em;
+}
+
+.import__summary-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.import__summary-actions button {
+  min-height: 44px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.import__failures summary {
+  cursor: pointer;
+}
+
+/* -- 待确认队列 -- */
+
+.import__review {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.import__review-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import__review-count {
+  margin: 0;
+  font-weight: 600;
+}
+
+.import__review-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.import__review-empty p {
+  margin: 0;
+}
+
+.review-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+}
+
+/* 左「你传的这张」右「库里已有的」，让用户自己判断（import-ux.md §5） */
+.review-card__pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.review-card__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+}
+
+/* 固定宽高比容器 + contain，不裁剪：表情包的信息常在边缘（styling.md） */
+.review-card__thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+}
+
+.review-card__thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.review-card__title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.review-card__meta,
+.review-card__filename,
+.review-card__distance,
+.review-card__error {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.review-card__filename {
+  overflow-wrap: anywhere;
+}
+
+.review-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 触摸目标至少 44×44px（styling.md） */
+.review-card__actions button {
+  min-height: 44px;
+  min-width: 88px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  /* 手机上两张图并排会小到看不清边缘信息 —— 改成上下堆叠 */
+  .review-card__pair {
+    grid-template-columns: 1fr;
+  }
+}

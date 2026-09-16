@@ -23,12 +23,15 @@ export default defineConfig({
       // 本地前后端不同域（5173 vs 3000），靠这条把 /api 转过去，
       // 这样 cookie 仍然是同域的 —— 生产是真同域，不需要任何 CORS 配置。
       // 见 docs/environments.md §3、SPEC §0.1
+      //
+      // MEMEMIO_API_PROXY 只用于临时指向替身服务（列 in_progress 的接口联调），
+      // 默认值就是 api 的 dev 端口，正常开发不用设。
       '/api': {
-        target: 'http://localhost:3000',
+        target: process.env.MEMEMIO_API_PROXY ?? 'http://localhost:3000',
         changeOrigin: false,
       },
       '/auth': {
-        target: 'http://localhost:3000',
+        target: process.env.MEMEMIO_API_PROXY ?? 'http://localhost:3000',
         changeOrigin: false,
       },
     },
