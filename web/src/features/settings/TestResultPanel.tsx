@@ -68,8 +68,12 @@ type Props = {
   probes: Probe[]
   /** 探到了但不该判成对错的事实（例如「向量会截断到 1024 维」），单独列，不进 ✓ / ✗ */
   notes?: string[]
-  rawResponse: string | null
-  rawError: string | null
+  /**
+   * 两路原始输出**不对称**，所以都是可选的：视觉测试只回 `rawResponse`，
+   * embedding 测试只回 `rawError`（SPEC §6.5.1 的两段示例）。缺的那一个不渲染空壳。
+   */
+  rawResponse?: string | null
+  rawError?: string | null
 }
 
 export function TestResultPanel({ ok, probes, notes, rawResponse, rawError }: Props) {
@@ -86,8 +90,8 @@ export function TestResultPanel({ ok, probes, notes, rawResponse, rawError }: Pr
           {note}
         </p>
       ))}
-      {rawError !== null && <RawOutput label="rawError（原始错误）" text={rawError} open={!ok} />}
-      {rawResponse !== null && (
+      {rawError != null && <RawOutput label="rawError（原始错误）" text={rawError} open={!ok} />}
+      {rawResponse != null && (
         <RawOutput label="rawResponse（模型原始返回）" text={rawResponse} open={!ok} />
       )}
     </div>

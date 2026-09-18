@@ -118,6 +118,13 @@ export function VisionSettings() {
         {/* 契约文案，逐字（SPEC §9.9）。渲染成 <pre> 以保留它的分段结构 */}
         <pre className="settings-notice">{VISION_NOTICE}</pre>
 
+        {/*
+          上面那段契约文案里提到「副通道」，但这一版没有对应的输入框。
+          这一行**在 <pre> 之外**，是界面现状说明，不是契约文案的一部分——
+          它解释用户为什么找不到那个框，不改变上面一个字。§9.5 落地后删掉这一行。
+        */}
+        <p className="settings-section__hint">副通道的配置入口尚未开放。</p>
+
         <ConfigFields
           idPrefix="vision"
           fields={form.fields}
@@ -151,7 +158,6 @@ export function VisionSettings() {
             ok={form.phase.result.ok}
             probes={visionProbes(form.phase.result)}
             rawResponse={form.phase.result.rawResponse}
-            rawError={form.phase.result.rawError}
           />
         )}
 

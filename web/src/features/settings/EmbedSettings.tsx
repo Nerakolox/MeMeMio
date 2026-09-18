@@ -36,6 +36,8 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
   const [saved, setSaved] = useState(false)
   /** 服务端要求确认换模型，等用户点确认后带 confirmReindex 重发 */
   const [needsConfirm, setNeedsConfirm] = useState(false)
+  /** 这一次保存有没有引发重算，来自 PUT 的回执而不是本地推断（SPEC §6.5.3） */
+  const [reindexNote, setReindexNote] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -64,6 +66,7 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
   async function save(confirmReindex: boolean) {
     setSaveError(null)
     setSaved(false)
+    setReindexNote(null)
     setSaving(true)
     try {
       const updated = await putEmbedConfig(form.fields, confirmReindex)
@@ -75,8 +78,16 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
       })
       setNeedsConfirm(false)
       setSaved(true)
-      // 确认换模型的那一次保存会在服务端排队重算，让进度区立刻去拉一次状态
-      if (confirmReindex) onReindexTriggered()
+      // 以服务端的回执为准，不用「我传了 confirmReindex 所以一定排了队」去猜：
+      // 库里没有向量时 reindexTriggered 为真而 reindexEnqueued 为假（SPEC §6.5.3）
+      setReindexNote(
+        updated.reindexTriggered
+          ? updated.reindexEnqueued
+            ? '已换模型，全站重建索引已排队，进度见下方。'
+            : '已换模型。库里还没有向量，没有需要重算的记录。'
+          : null,
+      )
+      if (updated.reindexEnqueued) onReindexTriggered()
     } catch (err) {
       if (err instanceof ApiError && err.code === 'EMBED_MODEL_CHANGED') {
         // 不是失败，是要求确认（SPEC §6.5.2）
@@ -151,7 +162,6 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
           ok={form.phase.result.ok}
           probes={embedProbes(form.phase.result)}
           notes={embedNotes(form.phase.result)}
-          rawResponse={form.phase.result.rawResponse}
           rawError={form.phase.result.rawError}
         />
       )}
@@ -180,6 +190,7 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
         </p>
       )}
       {saved && <p role="status">已保存</p>}
+      {reindexNote && <p role="status">{reindexNote}</p>}
     </section>
   )
 }

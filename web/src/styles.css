@@ -77,6 +77,18 @@ body {
   text-decoration: none;
 }
 
+/*
+ * 触摸目标至少 44×44px（styling.md）。导航条上中文链接靠行高凑到了 51px，
+ * 拉丁字母的（品牌名、Embedding）只有 26px——同一条导航不该有两种可点尺寸。
+ * 390×844 实测出来的，纯尺寸不是装饰。
+ */
+.app__nav a,
+.app__nav button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
 .admin-page {
   max-width: 1100px;
 }
