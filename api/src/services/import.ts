@@ -78,7 +78,9 @@ export async function runBatch(
       event: 'error',
       data: {
         code: isAppError(error) ? error.code : 'INTERNAL',
-        message: error instanceof Error ? error.message : String(error),
+        // 同 `processOneFile`：原始 message 只进上面那条日志。批次级故障恰恰最可能
+        // 是数据库错误，而那种 message 里带连接串（error-handling.md §1）。
+        message: isAppError(error) ? error.message : '导入处理失败，请重新拉取批次状态',
       },
     })
   }
@@ -104,11 +106,21 @@ async function processOneFile(
       reason: result.reason ?? null,
     })
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    // 原始 message 进日志，**不进响应**（SPEC §2.1）。事件里带的是 code + 可读原因。
+    // 原始 message 进日志，**不进响应**（SPEC §2.1）。事件里带的是可读原因。
     log.warn({ err: error, batchId, fileName: file.fileName }, '导入单文件失败')
-    await finish(batchId, file.fileName, { result: 'failed', reason })
+    await finish(batchId, file.fileName, { result: 'failed', reason: readableReason(error) })
   }
+}
+
+/**
+ * 给用户看的失败原因。
+ *
+ * `AppError` 的 message 本来就是写给用户的中文文案（SPEC §2.2），直接用；
+ * **其余一律收成一句通用的**——数据库和第三方 SDK 的报错里可能带连接串、带 key
+ * （error-handling.md §1），而 `reason` 会原样出现在 SSE `item` 事件和条目列表里。
+ */
+function readableReason(error: unknown): string {
+  return isAppError(error) ? error.message : '处理失败，请稍后重试'
 }
 
 type PipelineResult = {
