@@ -25,6 +25,7 @@
 | 任务 | 状态 | 性质 |
 |---|---|---|
 | [三个管理页并入设置页](2026-09-18-settings-merge.md) | `in_progress` | **web 单端**——`/admin/*` 三页都是设置项；带出两处 SPEC 措辞偏差待总管裁定 |
+| [R2 公开 URL 丢了键前缀](2026-09-18-r2-public-url-prefix.md) | `in_progress` | **api 单端，挡着用**——首次接真实 R2 就全站裂图；派生 URL 有两份实现，都没加 `R2_KEY_PREFIX` |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |

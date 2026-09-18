@@ -201,7 +201,59 @@ cd api && npm run db:generate -- --name=create_core_tables
 
 `pg_dump` 会带上 `vector` 类型列，**恢复端必须先装好 pgvector 扩展**，否则恢复会在中途失败。
 
-## 8. 落地检查清单
+## 8. R2：开通、公开访问与 CORS
+
+图片全部走 R2，浏览器**直接和 R2 打交道两次**——上传时 PUT 到预签名 URL，浏览时 GET 公开地址。这两条路各有一套配置，少配一边的表现完全不同，所以分开列。
+
+### 8.1 开通与凭证
+
+1. Cloudflare 控制台开通 R2（需要绑卡，有免费额度）。
+2. 建 bucket，名字填进 `R2_BUCKET`。
+3. 在 **R2 Overview 页右上角的 `{} API` → Manage API Tokens** 建令牌：**Create User API Token**，权限选 **Object Read & Write**，Specify bucket 限定到本 bucket。
+4. 建完那一屏给出 **Access Key ID** 和 **Secret Access Key**，分别填 `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`。**这一屏关掉就看不到第二次了。**
+5. `R2_ACCOUNT_ID` 填 account id，就是 32 位十六进制那一段。
+
+> ⚠️ **两个 2026-09-18 现踩的坑：**
+>
+> - 令牌**不在 bucket 设置里**，在 R2 账户级的 Manage API Tokens。从 Cloudflare 通用的 **My Profile → API Tokens** 页建出来的令牌只给一个 token value，**不是** S3 的 Access Key ID / Secret Access Key，填进去必然连不上。
+> - `R2_ACCOUNT_ID` **只填那 32 位十六进制**，不要把整条 `https://<id>.r2.cloudflarestorage.com` 粘进去。粘了之后 endpoint 会拼成两层域名，而这**不报错**——一路错到浏览器的 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH`，离根因隔着整条链路。
+
+### 8.2 公开访问
+
+bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形式的地址（或绑自定义域），填进 `R2_PUBLIC_BASE_URL`。
+
+两条硬性格式要求，填错进程直接起不来或图片全裂：
+
+- **不带末尾 `/`**（`api/src/lib/env.ts` 会拦下来）。
+- **不要把 `R2_KEY_PREFIX` 拼进这个地址。** 前缀由代码统一加（`api/src/storage/r2.ts` 的 `key()`），拼进来等于前缀在两个环境变量里各写一份，两边什么时候不一致都不报错。
+
+### 8.3 CORS
+
+**上传必须配，浏览必须不配。** 上传是浏览器跨域 PUT，没有 CORS 会被预检拦掉；公开 GET 是 `<img>` 加载，不受 CORS 管。
+
+在 bucket 的 Settings → CORS Policy 填（正式部署把 origin 换成自己的域名）：
+
+```json
+[
+  {
+    "AllowedOrigins": ["http://localhost:5173"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+上面这份 2026-09-18 实测可用。生产同域部署时 origin 是反代那个域名，**不是** api 容器的地址——CORS 看的是浏览器地址栏。
+
+### 8.4 配错了怎么发现
+
+进程启动时会对 bucket 做一次探活（`api/src/storage/r2.ts` 的 `assertR2Reachable`），不通就**拒绝启动**，日志里给出 endpoint、bucket、前缀和错误类型。
+
+这一步是有来历的：在它存在之前，R2 配错**全程没有任何一处报错**——预签名是纯本地 HMAC 计算，假凭证照样签得出格式完美的 URL，导入接口返回 200，一切看起来都在正常工作。所以**「起不来」在这里是想要的行为**，别把它当成需要绕过的障碍。
+
+## 9. 落地检查清单
 
 新机器部署或者新加一个同机项目时，逐条核对：
 
@@ -210,6 +262,11 @@ cd api && npm run db:generate -- --name=create_core_tables
 - [ ] `docker network ls` 中内部网络带前缀；`shared-proxy` 已创建
 - [ ] compose 里**没有任何 `ports:` 映射**（db 尤其不能暴露）
 - [ ] **部署机上不存在、也永远不要用 `compose.dev.yaml`**——它唯一的作用是给本机开发把 db 的 5432 绑到 `127.0.0.1`，只在显式 `-f compose.dev.yaml` 时才生效。命名成 `compose.override.yaml` 会被自动加载，所以刻意**没有**这么命名
-- [ ] `R2_KEY_PREFIX` 已设置（若与其他项目共用 bucket）
+- [ ] `R2_KEY_PREFIX` 已设置（若与其他项目共用 bucket），且以 `/` 结尾
+- [ ] `R2_PUBLIC_BASE_URL` 已设置，**不带末尾 `/`**，且**没有**把 `R2_KEY_PREFIX` 拼进去（§8.2）
+- [ ] R2 的 S3 凭证来自 **R2 → Manage API Tokens**，不是通用 API Tokens 页那个 token value（§8.1）
+- [ ] bucket 的 CORS 已配，`AllowedOrigins` 是**正式域名**而不是 `localhost:5173`（§8.3）
+- [ ] 起一次进程确认没有「R2 探活失败」——它是 R2 配错唯一会主动报出来的地方（§8.4）
+- [ ] 真导一张图，在浏览器里打开返回的 `url` 和 `thumbUrl`，**看到图**而不是 404
 - [ ] `CONFIG_ENC_KEY` 已离线备份到 Docker 和数据库之外的地方
 - [ ] 反代已配置指向 `${APP_SLUG}-app`

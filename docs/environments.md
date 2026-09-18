@@ -14,10 +14,11 @@ DATABASE_URL=postgres://${APP_SLUG}:${DB_PASSWORD}@${APP_SLUG}-db:5432/${APP_SLU
 SESSION_SECRET=<随机>
 CONFIG_ENC_KEY=<随机 32 字节>     # 加密用户 API Key 的主密钥
 
-# 对象存储
+# 对象存储（开通步骤见 deployment.md §8）
 R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY
 R2_BUCKET=<bucket>
-R2_KEY_PREFIX=${APP_SLUG}/        # ← 共用 bucket 时必须，否则对象互相覆盖
+R2_KEY_PREFIX=${APP_SLUG}/        # ← 共用 bucket 时必须，否则对象互相覆盖。以 / 结尾
+R2_PUBLIC_BASE_URL=https://pub-xxxx.r2.dev   # ← 必填，不带末尾 /，也不要把前缀拼进去
 
 # 部署方提供的默认模型配置（用户未配置时使用）
 DEFAULT_VISION_BASE_URL / DEFAULT_VISION_API_KEY / DEFAULT_VISION_MODEL
@@ -55,7 +56,7 @@ DEFAULT_EMBED_BASE_URL  / DEFAULT_EMBED_API_KEY  / DEFAULT_EMBED_MODEL
 
 ```bash
 # 1. 只起数据库。dev 那层唯一的作用是把 5432 绑到 127.0.0.1，
-#    正式部署绝不能带上它（deployment.md §4 / §8）
+#    正式部署绝不能带上它（deployment.md §4 / §9）
 docker compose -f compose.yaml -f compose.dev.yaml up -d db
 
 # 2. 迁移（永远是独立命令，进程启动时只检查不执行）
@@ -80,6 +81,8 @@ cd web && npm run dev     # :5173，proxy /api → :3000
 | MinIO 容器 | 离线开发，但预签名 URL 的细节与 R2 有差异 |
 
 **不要做「本地存文件系统」的分支。** 那会让上传路径在本地和生产走两套代码，而上传路径恰恰是最难在本地复现问题的地方。
+
+**两个选择必须选一个：进程启动时会探活 bucket，不通就起不来**（`api/src/storage/r2.ts` 的 `assertR2Reachable`，`NODE_ENV=test` 跳过）。填占位符也能起来的日子结束了——那正是 2026-09-18 花掉一整天的原因：R2 配错在运行期完全不报错，错误要等到浏览器里才现身。开通步骤见 [deployment.md §8](deployment.md)。
 
 ## 5. 没有 AI Key 时怎么开发
 
