@@ -24,23 +24,33 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
-| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——只剩**两端各一行**（第三轮联合验收）：web 把 `EmbedSettings.tsx` 两处引用改成 `reindexEnqueuedCount`（闸门现在红 2 行，预期内）；api 把 `POST /admin/reindex` 的 `enqueued` 一并改成 `enqueuedCount`。两件互不依赖，可并行 |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
 | [梗名别名层](2026-09-13-meme-lexicon.md) | `planning` | 检索实现定稿前做完；词表是闭集，梗名是开集，见 [SPEC §9.18](../spec/09-decisions.md) |
 
-**已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
+**已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件、模型配置与测试连接，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
 
 **还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、设置页与管理页的统计面板（`settings-ux.md §9`）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署、**`web/` 的常驻 e2e**。
 
 > 最后一条有明确排期：**排在 §6.4 和部署之后**（测试设施不阻塞核心功能）。`web/package.json` 至今只有 `dev` / `build` / `preview` / `typecheck`，没有任何测试框架——已经是第四个用一次性脚本跑几十条断言、跑完即删的任务了，代价是每轮重写驱动、归档里的数字全不可复现。
 >
-> 沉淀时**不要整包搬**：硬边界（key 不出响应）、错误码路径、403、重建端到端值得留；布局类断言不值得——视觉风格没定稿（`web/AGENTS.md §5`），留下来只会因为装饰改动变红。最该先重建的是那个**六模式的模型上游替身**（`good`/`weak`/`small`/`badkey`/`offvocab`/`refuse`），768 维、上游 401、词表越界这些路径拿真供应商凑不出来。设计记在[模型配置任务](2026-09-16-ai-config.md)的 web 验收里。
+> 沉淀时**不要整包搬**：硬边界（key 不出响应）、错误码路径、403、重建端到端值得留；布局类断言不值得——视觉风格没定稿（`web/AGENTS.md §5`），留下来只会因为装饰改动变红。最该先重建的是那个**六模式的模型上游替身**（`good`/`weak`/`small`/`badkey`/`offvocab`/`refuse`），768 维、上游 401、词表越界这些路径拿真供应商凑不出来。设计记在[模型配置任务](../_archive/joint-tasks/2026-09-16-ai-config.md)的 web 验收里。
 
 > ✅ **两端 typecheck 口径已对齐**（2026-09-16，见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)）。`api/tsconfig.json` 现在也开着 `noUnusedLocals` + `noUnusedParameters`，所以本端自查和提交前闸门看到的是同一批错误。
 >
 > 这条留在这里是因为**那次的漏法还会再来**：`web` 的类型链会把 `api/src/` 一起编译（`api/package.json` 的 `exports` 指向 `./src/app.ts`），任何一端往 `tsconfig.json` 加严格开关而另一端不加，就又会出现「api 自查全绿、闸门红、报错全在 api 代码里」。闸门始终是 `cd web && npm run typecheck`，见[骨架任务](../_archive/joint-tasks/2026-09-13-skeleton.md)第 10 条。
+
+## 模型配置任务转出的遗留项
+
+出处见[该任务归档](../_archive/joint-tasks/2026-09-16-ai-config.md)的第四轮联合验收：
+
+| 遗留项 | 归属 |
+|---|---|
+| 「全站重建索引已排队 N 条」那句话**没有人在浏览器里见过**——代码路径跑过，但 `${n}` 前后的空格、窄屏会不会挤断行只有渲染出来才知道 | web 本端，下次为别的事起浏览器时顺手看一眼 |
+| `POST /admin/reindex` 的 `enqueuedCount` **没有任何界面消费它**（`startReindex()` 按契约只看 `res.ok`，理由正当），只被测试和日志消费 | 不是缺陷，记着就行：它的回归只有测试会发现 |
+| 模型上游全程是替身。真供应商的超时、限流、流式截断、各家 `error` 体型一条都没验过 | [供应商探测](2026-09-13-provider-spikes.md) |
+| 设置页与管理页只在 Playwright 的 390×844 视口测过，**不是真机**。本任务两页不涉及复制 / 分享路径所以够用 | 动复制 / 分享路径时必须上真机（`web/AGENTS.md §6`） |
 
 ## 打标队列任务转出的遗留项
 
@@ -50,7 +60,7 @@
 |---|---|
 | 评测集未跑；**`eval.ts` 内嵌探测期提示词，不 import `src/ai/vision.ts`**，原样跑出的数字会被误读成「新提示词已验证」 | [评测集](2026-09-13-eval-set.md)，已进其「做完的标准」 |
 | `tag_status = 'refused'` 目前不可达（只有主通道，终局失败全落 `needs_manual`） | 等 SPEC §9.5 转 `accepted` + 副通道接入；**不是缺陷**，不要为了让状态可达提前实现 §9.5 |
-| 设置页会在 `VISION_NOTICE` 底下多一行「副通道的配置入口尚未开放」——因为契约文案让用户去配副通道，而界面上没有那个输入框（2026-09-18 总管裁定，见[模型配置与测试连接](2026-09-16-ai-config.md)的联合验收） | **同样绑 §9.5**：副通道入口一开放，这行字必须删。它是对界面现状的说明，不是契约的一部分，所以写在 `<pre>` 契约块之外——契约文案仍然逐字可比对 |
+| 设置页会在 `VISION_NOTICE` 底下多一行「副通道的配置入口尚未开放」——因为契约文案让用户去配副通道，而界面上没有那个输入框（2026-09-18 总管裁定，见[模型配置与测试连接](../_archive/joint-tasks/2026-09-16-ai-config.md)的联合验收） | **同样绑 §9.5**：副通道入口一开放，这行字必须删。它是对界面现状的说明，不是契约的一部分，所以写在 `<pre>` 契约块之外——契约文案仍然逐字可比对 |
 | 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | ✅ api 端已修（2026-09-18，`81e1aeb`）：能力位跟着配置来源走，用户测出 `multiImage: true` 后梯子才是真实流量路径。部署方默认通道仍固定 null，那是有意的 |
 | `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | ✅ 已完成，进了 `api/agents/rules/ai-providers.md §3`（见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)） |
 
