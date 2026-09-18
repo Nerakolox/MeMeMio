@@ -217,7 +217,18 @@ Embedding 实测维度 < 1024 直接拒绝保存，返回 `EMBED_DIM_TOO_SMALL`�
 
 测试要能在保存之前跑，所以 `POST /config/*/test` 接受尚未保存的配置；它不改变当前生效的配置。
 
-`PUT /config/embed` 的响应在配置之外多两个字段：`reindexTriggered`（本次保存是否换掉了模型）与 `reindexEnqueued`（是否真的排进了重算队列，库里没有向量时为 false）。它们回答的是「**这一次保存**有没有引发重算」——`GET /admin/reindex/status` 只能告诉你此刻有没有重算在跑，分不出那是不是你刚才那一下造成的。
+`PUT /config/embed` 的响应在配置之外多两个字段：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `reindexTriggered` | boolean | 本次保存是否换掉了模型 |
+| `reindexEnqueuedCount` | number | 本次保存排进重算队列的条数；没换模型、或库里没有向量时为 `0` |
+
+它们回答的是「**这一次保存**有没有引发重算」——`GET /admin/reindex/status` 只能告诉你此刻有没有重算在跑，分不出那是不是你刚才那一下造成的。
+
+**条数不是布尔。** 入队时这个数已经算出来了，退化成 `true` / `false` 是白扔掉信息：管理员点完保存最想知道的就是「这一下牵动了多少条」。它和 `status.stale` 不是一个东西——`stale` 是此刻全局待重算的量，会被并发的手动触发和 worker 的消费改写；这个数是**那一次保存**的记账，不随后续变化。
+
+名字必须带 `Count`。叫 `reindexEnqueued` 而返回数字，客户端写 `=== true` 会**静默**判错——不报错、不告警，只是保存完不跳进度条。
 
 ### §6.5.4 重建索引
 

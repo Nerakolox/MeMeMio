@@ -24,7 +24,7 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
-| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——api 端 A–G 已完成并合入（2026-09-18），**剩 web 收尾**：占位类型换 `InferResponseType` + 真接口联调。两端至今没有对接过，字段名对不对还没人知道 |
+| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——两端已真对接（真 api + 真 Postgres + 真 Chromium，2026-09-18），**只剩 api 一次收尾**：`reindexEnqueued` → `reindexEnqueuedCount`（SPEC §6.5.3 已改，见第二轮联合验收的 §8.4 裁定） |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
@@ -32,7 +32,11 @@
 
 **已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
 
-**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、设置页与管理页的统计面板（`settings-ux.md §9`）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署。
+**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、设置页与管理页的统计面板（`settings-ux.md §9`）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署、**`web/` 的常驻 e2e**。
+
+> 最后一条有明确排期：**排在 §6.4 和部署之后**（测试设施不阻塞核心功能）。`web/package.json` 至今只有 `dev` / `build` / `preview` / `typecheck`，没有任何测试框架——已经是第四个用一次性脚本跑几十条断言、跑完即删的任务了，代价是每轮重写驱动、归档里的数字全不可复现。
+>
+> 沉淀时**不要整包搬**：硬边界（key 不出响应）、错误码路径、403、重建端到端值得留；布局类断言不值得——视觉风格没定稿（`web/AGENTS.md §5`），留下来只会因为装饰改动变红。最该先重建的是那个**六模式的模型上游替身**（`good`/`weak`/`small`/`badkey`/`offvocab`/`refuse`），768 维、上游 401、词表越界这些路径拿真供应商凑不出来。设计记在[模型配置任务](2026-09-16-ai-config.md)的 web 验收里。
 
 > ✅ **两端 typecheck 口径已对齐**（2026-09-16，见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)）。`api/tsconfig.json` 现在也开着 `noUnusedLocals` + `noUnusedParameters`，所以本端自查和提交前闸门看到的是同一批错误。
 >
