@@ -5,7 +5,9 @@ import {
   fetchWithTimeout,
   HYDE_TIMEOUT_MS,
   joinEndpoint,
+  type ProviderCredentials,
 } from './provider.js'
+import { resolveVisionConfig } from './vision.js'
 
 /**
  * HyDE：把用户的短口语查询改写成一句库里那种长描述，再拿去做向量检索。
@@ -45,16 +47,30 @@ function parseContent(payload: unknown): string | null {
 }
 
 /**
+ * 这次改写用谁的通道。
+ *
+ * **登录用户用他本人配置的视觉通道**（SPEC §6.3.1、`ai-providers.md §6`），解析走
+ * `resolveVisionConfig()`——那是三个运行时解析落点之一，DB 优先、环境变量兜底都在它里面，
+ * 这里不重写。原来直接读 `env.defaultVision` 的写法是本任务要修的偏差。
+ *
+ * 匿名搜索没有「本人」可言，只能落到部署方默认值。这一支走 `asCredentials()`，
+ * 也是那三个落点之一，没有新起第四处「先查库、查不到用 env」。
+ */
+async function resolveHydeCredentials(actorId: string | null): Promise<ProviderCredentials | null> {
+  if (actorId === null) return asCredentials(env.defaultVision)
+  return resolveVisionConfig(actorId)
+}
+
+/**
+ * @param actorId **搜索者本人**。匿名搜索传 null，那时回落到部署方默认通道。
  * @returns 改写后的查询；**任何一步失败都返回 null**，调用方拿原查询继续走三路。
  */
 export async function rewriteQuery(
   query: string,
+  actorId: string | null,
   requestId: string,
 ): Promise<string | null> {
-  // 用的是**搜索者本人**配置的视觉通道，纯文本调用（retrieval.md §3）。
-  // 用户侧的视觉配置存在 user_ai_configs 里，那一层（SPEC §6.5）还没实现，
-  // 所以现在只有部署方默认值可回退——和 embedding 一个处境。
-  const credentials = asCredentials(env.defaultVision)
+  const credentials = await resolveHydeCredentials(actorId)
   if (credentials === null) {
     log.info({ requestId, reason: 'not_configured' }, 'hyde skipped, falling back to raw query')
     return null

@@ -10,12 +10,10 @@ import type { TagJobFailure } from '../lib/retry-policy.js'
 import {
   buildSearchText,
   interpretVisionContent,
-  type VocabAdapter,
-  type VocabField,
 } from '../lib/vision-output.js'
 import { log } from '../logger.js'
 import { getObject } from '../storage/r2.js'
-import { isKnownLabel, vocabulary } from '../vocab.js'
+import { vocabAdapter } from '../vocab.js'
 
 /**
  * 打标编排：取图 → 送 AI → 校验 → 写回 → 算向量。
@@ -42,11 +40,7 @@ export type TagOutcome =
   | { kind: 'not_configured' }
   | { kind: 'failed'; failure: TagJobFailure; detail: string }
 
-/** 把词表接进纯函数层。`lib/vision-output.ts` 自己不读磁盘，所以别名表从这里注入。 */
-const vocabAdapter: VocabAdapter = {
-  alias: (value: string): string => vocabulary.aliases?.[value] ?? value,
-  isKnown: (field: VocabField, value: string): boolean => isKnownLabel(field, value),
-}
+/** 把词表接进纯函数层的适配器在 `src/vocab.ts`，探测（`ai/probe.ts`）用的是同一份。 */
 
 export async function tagMeme(memeId: string, signal: AbortSignal): Promise<TagOutcome> {
   const meme = await findMemeById(memeId)
@@ -65,7 +59,16 @@ export async function tagMeme(memeId: string, signal: AbortSignal): Promise<TagO
     return embedAndStore(memeId, meme.searchText)
   }
 
-  const config = resolveVisionConfig()
+  /**
+   * **用上传者的视觉配置，不是部署方的**（SPEC §6.5、ai-providers.md §6）。
+   *
+   * 打标发生在队列里，此刻没有「当前请求的用户」可用——所以配置的归属只能从
+   * `meme.uploaderId` 来。传错人的后果是花了别人的钱，而且不报错。
+   *
+   * 解析不出来（这个人没配，部署方也没配）走 `not_configured`：worker 会把任务
+   * **不计次数**地推后（`deferTagJob`），因为那是稳定的降级态，不是这次调用失败了。
+   */
+  const config = await resolveVisionConfig(meme.uploaderId)
   if (config === null) return { kind: 'not_configured' }
 
   let images: Buffer[]
@@ -224,13 +227,15 @@ function describeAttempt(attempt: VisionAttempt): string {
  * **这里不补做**——在写库前补救等于承认上游可能传进没归一化的向量。
  */
 async function embedAndStore(memeId: string, searchText: string): Promise<TagOutcome> {
-  const embedConfig = resolveEmbedConfig()
+  const embedConfig = await resolveEmbedConfig()
   if (embedConfig === null) {
     log.debug({ memeId }, '未配置 embedding 通道，向量留空')
     return { kind: 'done', embedded: false }
   }
 
-  const result = await embedText(searchText)
+  // 配置显式传下去，**不让 embedText 自己再解析一次**：写 embed_model 用的必须是
+  // 真正算出这个向量的那个模型名，两次解析之间配置可能刚好被改掉
+  const result = await embedText(searchText, embedConfig)
   if (!result.ok) {
     if (result.reason === 'not_configured') return { kind: 'done', embedded: false }
     log.warn({ memeId, reason: result.reason }, 'embedding 失败，打标结果保留')

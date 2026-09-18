@@ -1,4 +1,5 @@
 import { env } from '../env.js'
+import { hasAnyVerifiedVisionConfig, loadUserVisionCredentials } from '../data/ai-configs.js'
 import {
   classifyHttpFailure,
   parseChatEnvelope,
@@ -11,6 +12,7 @@ import {
   asCredentials,
   fetchWithTimeout,
   joinEndpoint,
+  resolveCredentials,
   type ProviderCredentials,
 } from './provider.js'
 
@@ -32,25 +34,46 @@ export type VisionConfig = ProviderCredentials & {
 }
 
 /**
- * 当前生效的视觉配置。**worker 不许直接读 `env.defaultVision`**——
- * 接入点收在这一个函数里，配置任务（SPEC §6.5：用户自带 key + AES-GCM 解密 +
- * 测试连接）上线后只改这一处。类比 `ai/embedder.ts` 的 `resolveEmbedConfig()`。
+ * 当前生效的视觉配置：**本人的配置 → 部署方默认值**。
  *
- * ⚠️ 本任务**只用部署方默认通道**（joint-tasks/2026-09-16-tag-queue.md「范围裁定」）。
- *    用户自带配置存在 `user_ai_configs` 里，读写那张表是另一个跨端任务。
+ * 这是 SPEC §6.5 说的三个运行时解析落点之一。`worker.ts` / `hyde.ts` / `tagging.ts`
+ * 都不许直接读 `env.defaultVision`，也不许自己写「先查库、查不到用 env」——
+ * 那个判断只在 `provider.ts` 的 `resolveCredentials` 里有一份。
  *
- * ⚠️ 两个能力位固定返回 null，这是**有意的**：部署方默认通道同样没有测试连接记录，
- *    不许因为「这是我们自己配的」就假设它支持什么。没有探测记录时按最保守路径走——
- *    不用 json mode、不发多图、客户端截断（ai-providers.md §2）。
+ * @param userId **谁的配置**。打标用上传者的（`meme.uploader_id`），
+ *               HyDE 用搜索者本人的（ai-providers.md §6）。这个参数不能省成
+ *               「当前请求的用户」——打标发生在队列里，那时没有请求。
+ *
+ * ⚠️ 能力位跟着来源走：用户自己的配置带实测出来的探测位，部署方默认通道**固定 null**。
+ *    后者是有意的——部署方通道同样没有测试连接记录，不许因为「这是我们自己配的」
+ *    就假设它支持什么。null 时按最保守路径走：不用 json mode、不发多图
+ *    （ai-providers.md §2）。
  */
-export function resolveVisionConfig(): VisionConfig | null {
-  const credentials = asCredentials(env.defaultVision)
-  if (credentials === null) return null
-  return { ...credentials, jsonModeWorks: null, multiImage: null }
+export async function resolveVisionConfig(userId: string): Promise<VisionConfig | null> {
+  const stored = await loadUserVisionCredentials(userId)
+  const resolved = resolveCredentials(stored, env.defaultVision)
+  if (resolved === null) return null
+
+  if (resolved.source === 'user' && stored !== null) {
+    return { ...resolved.credentials, jsonModeWorks: stored.jsonModeWorks, multiImage: stored.multiImage }
+  }
+  return { ...resolved.credentials, jsonModeWorks: null, multiImage: null }
 }
 
-export function isVisionConfigured(): boolean {
-  return resolveVisionConfig() !== null
+/**
+ * 全站有没有**任何一条**可用的视觉配置。队列 worker 用它决定要不要进入低频轮询。
+ *
+ * ⚠️ 这里必须是「部署方配了 **或** 有任何一个用户配了」，不能只看部署方
+ *    （任务 E 项）。原来的写法是 `resolveVisionConfig() !== null` 这个纯环境变量判断，
+ *    用户自带 key 之后那个前提就不成立了：**部署方没配、用户自己配了**的图会永远
+ *    停在 pending——worker 60 秒轮询一次且一条都不取，不报错、不告警。
+ *
+ * 它只回答「值不值得去取任务」。取到任务之后仍然要按上传者逐条解析，
+ * 解析不出来的那条走 `not_configured` 降级——**本函数为真不代表每个人都配了**。
+ */
+export async function isVisionConfigured(): Promise<boolean> {
+  if (asCredentials(env.defaultVision) !== null) return true
+  return hasAnyVerifiedVisionConfig()
 }
 
 // ── 提示词 ─────────────────────────────────────────────────────────
@@ -93,8 +116,14 @@ function buildSystemPrompt(): string {
   ].join('\n')
 }
 
-/** 进程内算一次就够，词表在运行期不变（改词表要重启，见 shared/vocab/README.md）。 */
-const SYSTEM_PROMPT = buildSystemPrompt()
+/**
+ * 进程内算一次就够，词表在运行期不变（改词表要重启，见 shared/vocab/README.md）。
+ *
+ * **导出是给测试连接用的**（SPEC §9.7：测试要发「内置测试图 + 正式的打标提示词」）。
+ * 探测必须用这一份，不许另抄一份简化版——两份提示词迟早分叉，那时测试连接
+ * 测的就不是打标真正会走的路径了。
+ */
+export const SYSTEM_PROMPT = buildSystemPrompt()
 
 /** 多帧时告诉模型这些是同一个动图的连续帧，否则它会当成好几张不相干的图各描述一遍。 */
 const FRAMES_HINT = '下面是同一个动态表情包按时间顺序抽出的若干帧，请合并成一条描述。'
@@ -107,8 +136,8 @@ export type VisionPayloadMode = 'single' | 'frames' | 'collage'
 // ── 调用 ───────────────────────────────────────────────────────────
 
 export type VisionCallResult =
-  | { ok: true; envelope: ChatEnvelope }
-  | { ok: false; failure: VisionFailure }
+  | { ok: true; envelope: ChatEnvelope; rawResponse: string }
+  | { ok: false; failure: VisionFailure; rawResponse: string }
 
 /**
  * 发一次视觉调用。
@@ -116,6 +145,14 @@ export type VisionCallResult =
  * @param images **只会是 PNG**（image-pipeline.md）。动图已经在上游抽过帧，
  *               这一层不认识 GIF，也不该认识。
  * @param signal 任务级整体超时（queue.md §5）。和单次调用超时叠加，不是覆盖。
+ *
+ * `rawResponse` 是**原始响应体文本**，成功失败都带。它只有一个消费者——
+ * 测试连接（`ai/probe.ts`，SPEC §6.5.1「失败时把模型的原始返回原样展示出来」）。
+ * 打标路径拿到就丢。
+ *
+ * ⚠️ **它绝不能进日志**：某些中转服务会在错误体里回显 Authorization 头
+ *    （error-handling.md §4）。返回给调用方和写进日志是两件事——
+ *    交给用户之前要过 `redactSecret`，而日志没有那一步，所以下面只记状态码。
  */
 export async function callVision(
   images: Buffer[],
@@ -163,31 +200,32 @@ export async function callVision(
   } catch {
     // 超时和网络错误都归 unreachable。**不记 err 原文**——某些中转服务会在错误体里
     // 回显 Authorization 头（error-handling.md §4）
-    return { ok: false, failure: 'unreachable' }
+    return { ok: false, failure: 'unreachable', rawResponse: '' }
   }
 
+  const rawResponse = await safeText(response)
+
   if (!response.ok) {
-    const text = await safeText(response)
-    const failure = classifyHttpFailure(response.status, text)
+    const failure = classifyHttpFailure(response.status, rawResponse)
     // 只记状态码和判定结果。**错误体原文不进日志**，同上
     log.warn({ status: response.status, failure, model: config.model }, '视觉调用失败')
-    return { ok: false, failure }
+    return { ok: false, failure, rawResponse }
   }
 
   let payload: unknown
   try {
-    payload = await response.json()
+    payload = JSON.parse(rawResponse)
   } catch {
-    return { ok: false, failure: 'invalid_output' }
+    return { ok: false, failure: 'invalid_output', rawResponse }
   }
 
   const envelope = parseChatEnvelope(payload)
-  if (envelope === null) return { ok: false, failure: 'invalid_output' }
+  if (envelope === null) return { ok: false, failure: 'invalid_output', rawResponse }
 
-  return { ok: true, envelope }
+  return { ok: true, envelope, rawResponse }
 }
 
-/** 错误体读不出来时当空串——判定函数对空串的处置是确定的（归 unsupported，不重试）。 */
+/** 响应体读不出来时当空串——判定函数对空串的处置是确定的（归 unsupported，不重试）。 */
 async function safeText(response: Response): Promise<string> {
   try {
     return await response.text()

@@ -135,8 +135,10 @@ async function tick(self: WorkerState): Promise<void> {
   }
 
   // AI_NOT_CONFIGURED：**不消费**，图留在 pending 等配置好后批量补打标（queue.md §3）。
-  // 在取任务之前判断，免得白白 claim 一条又放回去
-  if (!isVisionConfigured()) {
+  // 在取任务之前判断，免得白白 claim 一条又放回去。
+  // ⚠️ 这是个**全局**判断：部署方配了 **或** 任何一个用户配了，都算「值得去取任务」
+  //    （任务 E 项）。它现在要查一次库，所以只在这里问一次，取到任务之后按上传者逐条解析
+  if (!(await isVisionConfigured())) {
     await idle(self, UNCONFIGURED_POLL_MS)
     return
   }

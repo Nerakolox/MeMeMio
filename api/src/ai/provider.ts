@@ -42,17 +42,44 @@ export function joinEndpoint(baseUrl: string, path: string): string {
 /**
  * 把环境变量里的一组默认值当作可用的供应商配置。
  *
- * 解析顺序是「本人的配置 → 部署方默认值」，两处都没有就是没配置，
- * 调用方按降级处理而不是报错（SPEC §2.4）。
- *
- * 目前环境变量是唯一的默认来源。等配置接口（SPEC §6.5）落地后，DB 里的
- * 记录排在环境变量前面，这个函数是那个改动的唯一落点。
+ * 三个字段齐全才算「配了」。半套配置去调 AI 只会得到一个难懂的 401，
+ * 不如当成未配置走兜底。
  */
 export function asCredentials(defaults: ProviderDefaults | null): ProviderCredentials | null {
   if (defaults === null) return null
   const { baseUrl, apiKey, model } = defaults
   if (baseUrl === '' || apiKey === '' || model === '') return null
   return { baseUrl, apiKey, model }
+}
+
+/** 这套凭据是用户（或管理员）自己配的，还是部署方的默认值。SPEC §6.5.3 的 `source`。 */
+export type CredentialSource = 'user' | 'default'
+
+export type ResolvedCredentials = {
+  credentials: ProviderCredentials
+  source: CredentialSource
+}
+
+/**
+ * **「DB 里的记录排在环境变量前面」的唯一落点。**
+ *
+ * 三个解析落点（`resolveVisionConfig` / `resolveEmbedConfig` / HyDE 经前者）全都走这里，
+ * 各自不许再写一遍 `if (stored) ... else ...`。多一处就多一个会忘记查 `verified_at`
+ * 的地方——而忘了查的表现不是报错，是「测失败的配置被拿去打标」。
+ *
+ * ⚠️ `stored` 必须已经过滤过 `verified_at`：**测过但没通过的行不能进生产打标**
+ *    （任务 E 项）。过滤在 `data/ai-configs.ts` 的 `loadUserVisionCredentials` /
+ *    `loadEmbedCredentials` 里做，那是唯一能看见那一列的地方。
+ *
+ * 两处都没有就是没配置，调用方按降级处理而不是报错（SPEC §2.4）。
+ */
+export function resolveCredentials(
+  stored: ProviderCredentials | null,
+  defaults: ProviderDefaults | null,
+): ResolvedCredentials | null {
+  if (stored !== null) return { credentials: stored, source: 'user' }
+  const fallback = asCredentials(defaults)
+  return fallback === null ? null : { credentials: fallback, source: 'default' }
 }
 
 /**

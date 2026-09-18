@@ -6,6 +6,7 @@ import { fuseRankings, type RankedPath } from '../lib/rrf.js'
 import { matchVocabTerms } from '../lib/vocab-match.js'
 import type { Db } from '../data/db.js'
 import type { MemeRow } from '../data/memes.js'
+import { hasUnfinishedReindexJobs } from '../data/reindex-jobs.js'
 import {
   findMemesForSearch,
   ocrPathCandidates,
@@ -42,7 +43,16 @@ export type SearchHit = MemeRow & {
 
 export type SearchOutcome = {
   items: SearchHit[]
-  /** 向量通路未参与。前端提示结果可能不全，不阻断展示。 */
+  /**
+   * 结果可能不全，前端提示但不阻断展示。两种原因共用这一个布尔：
+   *
+   *   1. 向量路没参与（没配 embedding 或调用失败）；
+   *   2. 还有未完成的重算任务——一部分图的向量是旧模型算的，和查询向量不在同一个
+   *      空间里，召回会偏（SPEC §6.5.4）。
+   *
+   * 不拆成两个字段是因为前端的动作是同一个（挂一条「结果可能不全」的提示），
+   * 而拆开会让「两个都为真」时的文案变成一道组合题。具体原因写在日志里。
+   */
   degraded: boolean
   /** HyDE 改写后的查询，失败时为 null。 */
   rewritten: string | null
@@ -68,12 +78,15 @@ export async function searchMemes(
   //   - OCR 路要的是「用户还记得的那句原文」，改写反而会把它抹掉。
   // 只有向量路用改写结果——语义检索才是 HyDE 真正帮上忙的地方（retrieval.md §3）。
   const terms = matchVocabTerms(query)
-  const vector = startVectorPath(query, requestId)
+  const vector = startVectorPath(query, actorId, requestId)
 
-  const [vectorResult, ocrResult, tagResult] = await Promise.allSettled([
+  const [vectorResult, ocrResult, tagResult, reindexResult] = await Promise.allSettled([
     vector.candidates,
     ocrPathCandidates(query, db),
     tagPathCandidates(terms, db),
+    // 和三路一起出发，不串在后面：它是存在性查询（`limit 1` 命中 claim 索引，
+    // 见 `hasUnfinishedReindexJobs` 的注释），但再便宜的查询串行也是加一个往返
+    hasUnfinishedReindexJobs(db),
   ])
 
   const paths: RankedPath[] = []
@@ -100,6 +113,15 @@ export async function searchMemes(
       { requestId, reason: vectorResult.status === 'rejected' ? 'failed' : 'not_available' },
       'search degraded: vector path did not run',
     )
+  }
+
+  // 重算在跑：向量路**照常参与**（旧向量也是向量，能召回总比召不回强），只是标记结果不全。
+  // 查询本身失败时按「没在重算」处理——为了一个提示字段让整次搜索 500 是不划算的
+  if (reindexResult.status === 'rejected') {
+    log.warn({ requestId, err: reindexResult.reason }, 'search: reindex 进度查询失败，按未降级处理')
+  } else if (reindexResult.value) {
+    degraded = true
+    log.info({ requestId }, 'search degraded: 还有未完成的重算任务')
   }
 
   const fused = fuseRankings(paths, effectiveLimit)
@@ -140,26 +162,35 @@ type VectorPath = {
  *
  * embedding 失败时用原查询再试一次是没意义的（同一个配置、同一个供应商，会话级故障
  * 不会因为少一次改写就好），所以直接放弃这一路，交给另外两路。
+ *
+ * ⚠️ **本函数不是 async，这是有意的。** `resolveEmbedConfig()` 现在要查库（配置表优先于
+ *    环境变量，SPEC §6.5），如果把它 await 在函数体顶上，调用方就得先 await 整个
+ *    `startVectorPath`，OCR 路和标签路要等这次查库回来才出发——三路并发变成串行，
+ *    **不报错，只是每个搜索请求多一个往返**。所以配置解析留成 Promise，两个产物
+ *    各自 `await` 它。
  */
-function startVectorPath(query: string, requestId: string): VectorPath {
-  const config = resolveEmbedConfig()
-  if (config === null) {
-    return { candidates: Promise.resolve(null), rewritten: Promise.resolve(null) }
-  }
+function startVectorPath(query: string, actorId: string | null, requestId: string): VectorPath {
+  const configured = resolveEmbedConfig()
 
-  const rewritten = rewriteQuery(query, requestId).catch((err: unknown) => {
-    // rewriteQuery 自己已经把所有失败路径收成 null 了。这层是防它将来改坏——
-    // 一个漏出来的 rejection 会让整个请求 500，只为了一个展示用的字段，不值得
-    log.warn({ requestId, err }, 'search: hyde rewrite threw, treating as no rewrite')
-    return null
-  })
+  const rewritten = configured
+    .then((config) => (config === null ? null : rewriteQuery(query, actorId, requestId)))
+    .catch((err: unknown) => {
+      // rewriteQuery 自己已经把所有失败路径收成 null 了。这层是防它将来改坏——
+      // 一个漏出来的 rejection 会让整个请求 500，只为了一个展示用的字段，不值得
+      log.warn({ requestId, err }, 'search: hyde rewrite threw, treating as no rewrite')
+      return null
+    })
 
   const candidates = (async (): Promise<string[] | null> => {
+    const config = await configured
+    if (config === null) return null
+
     // 改写失败（null）时退回原查询：改写只是锦上添花，不该让整条向量路跟着消失
     const text = (await rewritten) ?? query
 
     // 查询侧要 instruct 前缀，文档侧不要。两边都加或都不加会掉点（retrieval.md §4）
-    const embedded = await embedText(withInstructPrefix(text, config.model))
+    // 配置显式传下去，不让 embedText 再解析一次（同一请求里查两次库，还可能拿到不同结果）
+    const embedded = await embedText(withInstructPrefix(text, config.model), config)
     if (!embedded.ok) {
       log.warn({ requestId, reason: embedded.reason }, 'search: embed failed, vector path skipped')
       return null
