@@ -129,6 +129,8 @@ R2 上的原图延迟清理：软删满 30 天后由定时任务物理删除，�
 
 **不返回**：`contentHash`、`phash`、`embedding`、`searchText`、`embedModel`、`deletedAt`、`storageKey`。它们是内部字段，客户端没有消费场景。
 
+**上面那份清单就是「展示全部图片信息」的上限。** 编辑面板想显示得越全，越容易滑向「再要一个字段」——`phash` 和 `embedding` 对用户没有任何可读的含义，`storageKey` 是应该被派生 URL 取代的东西。**不要为了把面板填满去加接口字段**：这份清单里没有的，就是界面上不该出现的。
+
 ## §5.3 AI 配置
 
 视觉配置每人一份，Embedding 配置全站一份。两者待遇不同的理由见 [§9.3](09-decisions.md) 与 [§9.6](09-decisions.md)。

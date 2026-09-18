@@ -229,7 +229,11 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 
 ### 8.3 CORS
 
-**上传必须配，浏览必须不配。** 上传是浏览器跨域 PUT，没有 CORS 会被预检拦掉；公开 GET 是 `<img>` 加载，不受 CORS 管。
+**上传要 PUT，复制要 GET，`<img>` 浏览不用配。**
+
+- 上传是浏览器跨域 PUT，没有 CORS 会被预检拦掉
+- `<img src>` 加载公开地址**不受 CORS 管**——只要 bucket 开了公开访问就能显示
+- **「复制到剪贴板」要 `fetch` 那个公开地址**（取原图字节 → 转 PNG → 写剪贴板，见 [`web/agents/rules/clipboard-share.md`](../web/agents/rules/clipboard-share.md)），**这是一次跨域 GET，要 CORS**
 
 在 bucket 的 Settings → CORS Policy 填（正式部署把 origin 换成自己的域名）：
 
@@ -237,7 +241,7 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 [
   {
     "AllowedOrigins": ["http://localhost:5173"],
-    "AllowedMethods": ["PUT"],
+    "AllowedMethods": ["PUT", "GET"],
     "AllowedHeaders": ["*"],
     "ExposeHeaders": ["ETag"],
     "MaxAgeSeconds": 3600
@@ -245,7 +249,9 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 ]
 ```
 
-上面这份 2026-09-18 实测可用。生产同域部署时 origin 是反代那个域名，**不是** api 容器的地址——CORS 看的是浏览器地址栏。
+上面这份 2026-09-18 实测可用（`GET` 是 2026-09-19 加的）。生产同域部署时 origin 是反代那个域名，**不是** api 容器的地址——CORS 看的是浏览器地址栏。
+
+> ⚠️ **漏配 `GET` 不会报错，只会退化成下载。** 复制路径的设计就是「失败就降级到下载」（`clipboard-share.md §6`），所以 CORS 没配好时界面上一切正常——只是**每一个用户点「复制」拿到的都是下载**，而这件事不会有任何一处日志或错误提示。它的表现和「这台浏览器不支持剪贴板写入」完全一样。**排查复制问题时，先确认这条 CORS，再去怀疑浏览器。**
 
 ### 8.4 配错了怎么发现
 
@@ -265,7 +271,8 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 - [ ] `R2_KEY_PREFIX` 已设置（若与其他项目共用 bucket），且以 `/` 结尾
 - [ ] `R2_PUBLIC_BASE_URL` 已设置，**不带末尾 `/`**，且**没有**把 `R2_KEY_PREFIX` 拼进去（§8.2）
 - [ ] R2 的 S3 凭证来自 **R2 → Manage API Tokens**，不是通用 API Tokens 页那个 token value（§8.1）
-- [ ] bucket 的 CORS 已配，`AllowedOrigins` 是**正式域名**而不是 `localhost:5173`（§8.3）
+- [ ] bucket 的 CORS 已配，`AllowedOrigins` 是**正式域名**而不是 `localhost:5173`，且 `AllowedMethods` **同时有 `PUT` 和 `GET`**（§8.3）
+- [ ] 在浏览器里点一次「复制」——**剪贴板里是图，不是下载**。漏了 CORS 的 `GET` 时这一步会静默退化成下载（§8.3）
 - [ ] 起一次进程确认没有「R2 探活失败」——它是 R2 配错唯一会主动报出来的地方（§8.4）
 - [ ] 真导一张图，在浏览器里打开返回的 `url` 和 `thumbUrl`，**看到图**而不是 404
 - [ ] `CONFIG_ENC_KEY` 已离线备份到 Docker 和数据库之外的地方

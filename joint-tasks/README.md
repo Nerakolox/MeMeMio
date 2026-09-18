@@ -24,6 +24,7 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
+| [浏览页图片操作](2026-09-19-browse-meme-actions.md) | `in_progress` | **跨端**——SPEC §6.4 的 `PATCH` / `DELETE` 写在契约里很久但一行没实现，打标失败的图至今没有出路；卡片「⋯」入口给复制 / 编辑 / 删除，编辑开侧边栏。顺带把首页那段临时的「复制地址」换成 `clipboard-share.md` 的真流程 |
 | [首页随机图墙](2026-09-19-home-random-grid.md) | `done` | **跨端**——首页现在是纯搜索框，没有「翻」的入口；`GET /memes` 加 `random=true` 在全库抽样（SPEC §6.3.2，已转 `accepted`） |
 | [打标状态界面](2026-09-19-tagging-status.md) | `planning` | **跨端**——打标跑起来了但界面上看不见，兑现 §5.2.3 / `styling.md` / `settings-ux.md §9` 三处已写下的承诺；新增 `GET /memes/tag-status`（SPEC §6.6，`proposed`） |
 | [三个管理页并入设置页](2026-09-18-settings-merge.md) | `in_progress` | **web 单端**——`/admin/*` 三页都是设置项；带出两处 SPEC 措辞偏差待总管裁定 |
@@ -35,7 +36,7 @@
 
 **已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件、模型配置与测试连接，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
 
-**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口（**`needs_manual` 的图要能补标，等的就是这一批**）、`queue.md §6` 的五个定时清理任务、设置页与管理页的统计面板（`settings-ux.md §9`，接口随[打标状态界面](2026-09-19-tagging-status.md)一起做，界面没做）、部署、**`web/` 的常驻 e2e**。
+**还没有任务、但已知缺口**：SPEC §6.4 余下的三个接口 **restore / retag / 查重**（编辑与软删已进[浏览页图片操作](2026-09-19-browse-meme-actions.md)——**但那次没有 retag**，所以 `needs_manual` 的图现在能人工补标签、不能重跑模型）、`queue.md §6` 的五个定时清理任务、设置页与管理页的统计面板（`settings-ux.md §9`，接口随[打标状态界面](2026-09-19-tagging-status.md)一起做，界面没做）、部署、**`web/` 的常驻 e2e**。
 
 > ~~web 侧 `tagStatus` 徽标直出英文枚举~~ —— 已并入[打标状态界面](2026-09-19-tagging-status.md)（2026-09-19）。
 
