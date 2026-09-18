@@ -79,15 +79,17 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
       setNeedsConfirm(false)
       setSaved(true)
       // 以服务端的回执为准，不用「我传了 confirmReindex 所以一定排了队」去猜：
-      // 库里没有向量时 reindexTriggered 为真而 reindexEnqueued 为假（SPEC §6.5.3）
+      // 库里没有向量时 reindexTriggered 为真而 reindexEnqueuedCount 为 0（SPEC §6.5.3）。
+      // 它是条数不是布尔，所以判真值写 `> 0`；这个数是**那一次保存**的记账，
+      // 和下方进度条里会被 worker 和并发触发改写的 stale 不是一个东西。
       setReindexNote(
         updated.reindexTriggered
-          ? updated.reindexEnqueued
-            ? '已换模型，全站重建索引已排队，进度见下方。'
+          ? updated.reindexEnqueuedCount > 0
+            ? `已换模型，全站重建索引已排队 ${updated.reindexEnqueuedCount} 条，进度见下方。`
             : '已换模型。库里还没有向量，没有需要重算的记录。'
           : null,
       )
-      if (updated.reindexEnqueued) onReindexTriggered()
+      if (updated.reindexEnqueuedCount > 0) onReindexTriggered()
     } catch (err) {
       if (err instanceof ApiError && err.code === 'EMBED_MODEL_CHANGED') {
         // 不是失败，是要求确认（SPEC §6.5.2）

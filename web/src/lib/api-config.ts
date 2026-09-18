@@ -30,7 +30,9 @@ export type EmbedConfig = InferResponseType<typeof api.api.v1.config.embed.$get>
 
 /**
  * `PUT /config/embed` 的响应**比 GET 多两个字段**：`reindexTriggered`（这一次保存有没有
- * 换掉模型）与 `reindexEnqueued`（是否真的排进了重算队列，库里没有向量时为 false）。
+ * 换掉模型）与 `reindexEnqueuedCount`（这一次排进重算队列的**条数**，没换模型或库里
+ * 没有向量时为 0）。后者是数字不是布尔，用它判断时写 `> 0`，别写 `=== true`——
+ * 那是静默判错，不报错只是进度条不跳（SPEC §6.5.3）。
  *
  * 它们回答的是「**这一次保存**引发了重算吗」——`GET /admin/reindex/status` 只能说明
  * 此刻有没有重算在跑，分不出是不是你刚才那一下造成的（SPEC §6.5.3）。
@@ -120,7 +122,7 @@ export async function testEmbedConfig(input: ConfigInput): Promise<EmbedTestResu
  * 换模型且库里已有数据时缺 `confirmReindex` 会被拒（`EMBED_MODEL_CHANGED`，409），
  * 确认后服务端自动触发全站重建索引（SPEC §6.5.2）。
  *
- * 返回体带 `reindexTriggered` / `reindexEnqueued`，调用方据此决定要不要刷进度，
+ * 返回体带 `reindexTriggered` / `reindexEnqueuedCount`，调用方据此决定要不要刷进度，
  * 而不是「我传了 confirmReindex 所以一定排了队」——库里没有向量时不会排。
  */
 export async function putEmbedConfig(
@@ -136,7 +138,8 @@ export async function putEmbedConfig(
 /**
  * 手动补触发，幂等——换模型时由 `PUT /config/embed` 自动入队（SPEC §6.5.4）。
  *
- * 不读响应体：SPEC §6.5.4 没有规定这个端点回什么，进度一律以
+ * 不读响应体：SPEC §6.5.4 的 `{ enqueuedCount, ...status }` 里 `enqueuedCount` 是
+ * 「这一次点击」排进去的条数，而这个按钮要显示的是全局进度，一律以
  * `GET /admin/reindex/status` 为准（那才是库里的真实计数），调用方触发完重新拉一次状态。
  */
 export async function startReindex(): Promise<void> {
