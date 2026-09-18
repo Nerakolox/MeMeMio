@@ -3,6 +3,7 @@ import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
 import { memes, users, userFavorites } from './schema.js'
 import { splitHash } from '../lib/phash.js'
+import { buildSearchText } from '../lib/vision-output.js'
 import { AppError } from '../lib/app-error.js'
 
 /**
@@ -18,6 +19,15 @@ import { AppError } from '../lib/app-error.js'
 
 export type MemeRow = typeof memes.$inferSelect
 export type NewMeme = typeof memes.$inferInsert
+
+/**
+ * 一条记录 + 两个**不属于这张表**的字段：`uploaderName` 来自 join `users`，
+ * `favorited` 来自 join `user_favorites`（当前登录用户，未登录恒 false）。
+ *
+ * 浏览、详情、编辑三处给的是同一个形状，所以它只写一遍——三份的话，
+ * 迟早有一处少一个字段，而那表现为「同一个对象在不同接口里字段不一样」。
+ */
+export type MemeView = MemeRow & { uploaderName: string; favorited: boolean }
 
 /** 当前操作者。role 取值见 SPEC §3.2。 */
 export type Actor = { id: string; role: string }
@@ -52,6 +62,30 @@ export async function findMemeById(id: string, db: Db = defaultDb): Promise<Meme
     .select()
     .from(memes)
     .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+/**
+ * 同 `findMemeById`，但**加行锁**（`select ... for update`），**只能在事务里用**。
+ *
+ * 存在的理由是 `updateMemeContent` 是一次**读-改-写**：没传的字段要保留原值，
+ * 而 `search_text` 又必须按五个字段重算。不加锁的话会这样交错——
+ * T1 读到旧标签 → T2 写完自己的标签 → T1 拿**旧标签**拼出 search_text 写回，
+ * 库里于是留下 T2 的标签配 T1 的文本。那正是 SPEC §5.2.3 说的「文本与标签对不上」，
+ * 而且**不报错**。撞上后台打标写回（`applyTagResult`）也是同一种交错。
+ *
+ * 加锁之后两个写者按顺序排开，晚到的那个读到的是前一个提交后的行。
+ * 「最后写入者赢」照样成立（SPEC §6.4.1），只是不再有半新半旧的派生字段。
+ *
+ * ⚠️ **故意不导出**：这是本文件里唯一需要锁的读，多一个调用方就多一处持锁时间。
+ */
+async function findMemeByIdForUpdate(id: string, db: Db): Promise<MemeRow | null> {
+  const rows = await db
+    .select()
+    .from(memes)
+    .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    .for('update')
     .limit(1)
   return rows[0] ?? null
 }
@@ -249,6 +283,112 @@ export async function applyEmbedding(
     .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
     .returning({ id: memes.id })
   return rows.length > 0
+}
+
+// ── 人工编辑（SPEC §6.4.1） ────────────────────────────────────────
+
+/**
+ * `PATCH /memes/{id}` 的请求体，**只认这四个字段**。`ocrText` 不在里面（§6.4.1）。
+ *
+ * 键**不出现** = 不改这个字段；`description: null` = 清空描述；`tags: []` = 清空该维度。
+ * 三种传法含义不同，所以判据是「键在不在对象里」，不是「值是不是 undefined」。
+ * 类型上写成可选正是为了让「没传」能表达出来——词表和字段名校验在 handler
+ * （`routes/memes.ts`），这一层拿到的已经是归一化过的规范词条。
+ */
+export type MemeContentPatch = {
+  description?: string | null
+  emotions?: string[]
+  scenes?: string[]
+  tags?: string[]
+}
+
+/**
+ * 写回人工编辑，返回更新后的完整视图（与 `GET /memes/{id}` 同形，SPEC §6.4.1）。
+ *
+ * **权限是所有人**：`assertCanMutate(meme, actor, 'edit')` 第一个分支直接放行。
+ * 这是 SPEC §9.1 有意的不对称（标签是公共品，谁看见标错了顺手改掉对所有人是净收益），
+ * **不要「顺手补一个归属检查」** —— 那会把共享库最核心的一条产品决策改掉。
+ *
+ * 四件事在这个函数里一次做完，缺一不可：
+ *
+ * 1. **内容字段、`search_text`、`edited_by` / `edited_at` 全在一条 UPDATE 里**。
+ *    `search_text` 拆出去单独写的话，中间崩掉会留下一条文本与标签对不上的记录——
+ *    表现是那张图在文本检索里搜不到或搜出错的东西，**不报错**（SPEC §5.2.3）。
+ * 2. `search_text` 用 `lib/vision-output.ts` 的 `buildSearchText` 重算，**和打标写回
+ *    `applyTagResult` 是同一份实现**。这里再拼一次的表现是「手动改过的图搜不到」。
+ * 3. **不碰 `embedding` / `embed_model`，也不入队。** 这不是漏做，是 SPEC §9.19 写下的
+ *    取舍：embedding 走部署方的 key 而编辑对全员开放，「编辑一次重算一次」是一条
+ *    任何人都能走的烧钱路径。**不要「顺手补上」**——真要改，落点是「编辑后入队一条
+ *    重算任务」，不是同步重算。
+ * 4. **不动 `tag_status`**：§6.4.1 的请求体和写入清单里都没有它。人工补标签不改变
+ *    「这次打标是模型做的还是失败的」这个事实。
+ *
+ * 软删记录够不着这里：`findMemeByIdForUpdate` 先查（带 `deleted_at is null`）再判权限，
+ * 查不到就把 `NOT_FOUND` 抛出去，归属检查根本没机会跑（SPEC §6.4.2）。
+ *
+ * 整段在一个事务里、以**加锁的读**开头：见 `findMemeByIdForUpdate` 的解释。
+ * 这次读-改-写不加锁，就会在并发编辑（或撞上后台打标写回）时留下
+ * 「文本与标签对不上」的记录，而它不报错。
+ */
+export async function updateMemeContent(
+  id: string,
+  actor: Actor,
+  patch: MemeContentPatch,
+  db: Db = defaultDb,
+): Promise<MemeView> {
+  // 一个字段都没传：不写库、不动 `edited_at`。空 PATCH 不该留下「有人编辑过」的痕迹。
+  const touches =
+    patch.description !== undefined ||
+    patch.emotions !== undefined ||
+    patch.scenes !== undefined ||
+    patch.tags !== undefined
+
+  return await db.transaction(async (tx) => {
+    const meme = await findMemeByIdForUpdate(id, tx)
+    if (meme === null) throw new AppError('NOT_FOUND', '这张表情不存在')
+
+    assertCanMutate(meme, actor, 'edit')
+
+    if (touches) {
+      const description = patch.description === undefined ? meme.description : patch.description
+      const emotions = patch.emotions ?? meme.emotions ?? []
+      const scenes = patch.scenes ?? meme.scenes ?? []
+      const tags = patch.tags ?? meme.tags ?? []
+
+      // ocr_text 取的**永远是库里那一个**：它不可编辑（§6.4.1），人工改它会让文本和图
+      // 不再对应，而 search_text 会忠实转发这个错。要重来只能靠 retag，不是靠手改。
+      const searchText = buildSearchText({
+        ocrText: meme.ocrText ?? '',
+        description: description ?? '',
+        emotions,
+        scenes,
+        tags,
+      })
+
+      // 内容字段、search_text、edited_by / edited_at 全在这一条里——
+      // 拆成两条的话中间崩掉会留下文本与标签对不上的记录（SPEC §5.2.3 / §6.4.1）。
+      //
+      // 不加 `returning`：下面那次 `getMemeById` 既是响应内容的读取，也是
+      // 「这一条还在不在」的检查。`deleted_at is null` 是写路径的硬条件（§3.4），
+      // 少了它已删的记录会被改活——行锁让并发删除挡在锁外，但不构成省掉它的理由。
+      await tx
+        .update(memes)
+        .set({
+          description,
+          emotions,
+          scenes,
+          tags,
+          searchText,
+          editedBy: actor.id,
+          editedAt: new Date(),
+        })
+        .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    }
+
+    const updated = await getMemeById(id, actor.id, tx)
+    if (updated === null) throw new AppError('NOT_FOUND', '这张表情不存在')
+    return updated
+  })
 }
 
 // ── 重建索引（SPEC §6.5.4） ────────────────────────────────────────
@@ -476,7 +616,7 @@ export async function listMemes(
   params: ListMemesParams,
   actorId: string | null,
   db: Db = defaultDb,
-): Promise<{ items: (MemeRow & { uploaderName: string; favorited: boolean })[]; nextCursor: string | null }> {
+): Promise<{ items: MemeView[]; nextCursor: string | null }> {
   const limit = Math.min(params.limit ?? 40, 100)
 
   const conditions: SQL[] = [isNull(memes.deletedAt)]
@@ -663,7 +803,7 @@ export async function getMemeById(
   id: string,
   actorId: string | null,
   db: Db = defaultDb,
-): Promise<(MemeRow & { uploaderName: string; favorited: boolean }) | null> {
+): Promise<MemeView | null> {
   const rows = await db
     .select({
       meme: memes,

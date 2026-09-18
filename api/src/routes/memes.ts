@@ -1,7 +1,17 @@
 import { Hono } from 'hono'
 import { AppError } from '../lib/app-error.js'
 import { optionalAuth, type OptionalAuthVariables } from '../middleware/auth.js'
-import { addFavorite, listMemes, getMemeById, removeFavorite } from '../data/memes.js'
+import {
+  addFavorite,
+  listMemes,
+  getMemeById,
+  removeFavorite,
+  softDeleteMeme,
+  updateMemeContent,
+  type MemeContentPatch,
+} from '../data/memes.js'
+import type { VocabField } from '../lib/vision-output.js'
+import { vocabAdapter } from '../vocab.js'
 import { getTagStatusSummary } from '../services/tag-status.js'
 import { serializeMeme } from '../serialize/meme.js'
 
@@ -17,6 +27,85 @@ import { serializeMeme } from '../serialize/meme.js'
 //    并抛 UNAUTHENTICATED——错误码与 requireAuth 完全一致（SPEC §2.4）。
 //    这是登录判定，不是归属判定；归属判定仍然只在 `assertCanMutate` 一处（AGENTS.md §5）。
 type Vars = OptionalAuthVariables
+
+// ── PATCH /memes/:id 的请求体（SPEC §6.4.1） ───────────────────────
+//
+// 校验写在这里而不是通用中间件：字段少，而「缺字段就当空」那种写法会让
+// 不传 / `null` / `[]` 三种传法混成一种，那正是本节要区分的。
+
+/**
+ * 可编辑字段。**`ocrText` 不在里面**——它是模型对图像的读数，人工改它会让
+ * 文本和图不再对应，而 `search_text` 会忠实转发这个错（SPEC §6.4.1）。
+ */
+const EDITABLE_FIELDS = ['description', 'emotions', 'scenes', 'tags'] as const
+
+/**
+ * 三个数组字段的元素校验。**走 `vocab.ts` 的 `vocabAdapter`**（`alias()` 归一化 →
+ * `isKnownLabel()` 判定），和打标写回同一套——另写一份的表现是模型输出过得去、
+ * 人工编辑过不去（或反过来）。`vocab.ts` 顶部写着「全进程只有这一份」。
+ *
+ * 词表外返回 **`VALIDATION_FAILED`（400）**，不是 `AI_INVALID_OUTPUT`：后者描述的是
+ * 模型输出的失败，会走重试与降级。人工编辑是一次普通请求，客户端要展示的是
+ * 「这个词不在词表里，请从列表里选」。用错的表现是编辑失败时前端去等一个**永远不会来的**
+ * AI 降级——没有报错，只是屏幕上什么都没有（SPEC §4.5 / §6.4.1）。
+ *
+ * 空串和重复项都不特殊对待：空串不在词表里，走同一条拒绝路径（**不静默丢掉**，
+ * 丢了前端会以为存上了）；重复项归一化后去重，与 `lib/vision-output.ts` 的过滤同口径。
+ */
+function parseLabels(field: VocabField, value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    throw new AppError('VALIDATION_FAILED', `${field} 必须是数组`)
+  }
+
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      throw new AppError('VALIDATION_FAILED', `${field} 的每一项必须是字符串`)
+    }
+    const canonical = vocabAdapter.alias(item.trim())
+    if (!vocabAdapter.isKnown(field, canonical)) {
+      throw new AppError('VALIDATION_FAILED', `不在词表里：${item}`)
+    }
+    if (seen.has(canonical)) continue
+    seen.add(canonical)
+    out.push(canonical)
+  }
+  return out
+}
+
+function parseEditBody(raw: unknown): MemeContentPatch {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON 对象')
+  }
+  const body = raw as Record<string, unknown>
+
+  // 未知字段一律拒绝，**包括 `ocrText`**。静默忽略看起来更宽容，但前端会以为改成功了，
+  // 而 `ocrText` 是只读字段——那个「成功」是假的。
+  for (const key of Object.keys(body)) {
+    if (!(EDITABLE_FIELDS as readonly string[]).includes(key)) {
+      throw new AppError('VALIDATION_FAILED', `不可编辑的字段：${key}`)
+    }
+  }
+
+  const patch: MemeContentPatch = {}
+
+  if (body['description'] !== undefined) {
+    const value = body['description']
+    if (value !== null && typeof value !== 'string') {
+      throw new AppError('VALIDATION_FAILED', 'description 必须是字符串或 null')
+    }
+    // `null` 是「清空描述」，与「不传」不同（§6.4.1 的表）。空串照存，它只是空描述。
+    patch.description = value === null ? null : value.trim()
+  }
+
+  for (const field of ['emotions', 'scenes', 'tags'] as const) {
+    const value = body[field]
+    if (value !== undefined) patch[field] = parseLabels(field, value)
+  }
+
+  return patch
+}
 
 export const memesRoutes = new Hono<{ Variables: Vars }>()
   .use('*', optionalAuth)
@@ -130,6 +219,47 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     if (row === null) throw new AppError('NOT_FOUND', '这张表情不存在')
 
     return c.json(serializeMeme(row))
+  })
+
+  /**
+   * PATCH /api/v1/memes/:id —— 人工改 description 与三个标签数组。SPEC §6.4.1
+   *
+   * **权限是「所有人」**：非上传者改别人的图必须成功。这是 SPEC §9.1 有意的不对称，
+   * 而归属判定**只在 `assertCanMutate` 一处**（AGENTS.md §5）——handler 里
+   * **不要「顺手补一个归属检查」**，哪怕写对了也是错的：下一个人会照着它再写一遍。
+   *
+   * 登录判定与收藏那两个端点同一写法（文件顶部解释了为什么不换 requireAuth）。
+   * 响应是**更新后的完整 Meme**，与 `GET /:id` 同形，客户端据此就地更新列表、不再拉一次。
+   */
+  .patch('/:id', async (c) => {
+    const actor = c.get('currentUser')
+    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+
+    const raw: unknown = await c.req.json().catch(() => {
+      throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
+    })
+
+    const updated = await updateMemeContent(c.req.param('id'), actor, parseEditBody(raw))
+    return c.json(serializeMeme(updated))
+  })
+
+  /**
+   * DELETE /api/v1/memes/:id —— 软删，204。SPEC §6.4.2
+   *
+   * **不幂等**：对一条已软删的记录再调一次是 `NOT_FOUND`，不是 204。与收藏那两条刻意
+   * 不同——那两条幂等是因为前端会重发（双击、断网重试、乐观更新回滚），而**删除不做
+   * 乐观更新**，客户端不会在没看到结果的情况下再发一次。剩下的重复调用只可能来自
+   * 「这张图已经不在列表里了」，此时 404 比 204 诚实，客户端把它当成功处理即可。
+   *
+   * 归属判定在 `softDeleteMeme` 里的 `assertCanMutate(meme, actor, 'delete')`，
+   * **这里不重复判一遍**；软删过滤也在那一层（先查 `deleted_at is null` 再判权限）。
+   */
+  .delete('/:id', async (c) => {
+    const actor = c.get('currentUser')
+    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+
+    await softDeleteMeme(c.req.param('id'), actor)
+    return c.body(null, 204)
   })
 
   /**
