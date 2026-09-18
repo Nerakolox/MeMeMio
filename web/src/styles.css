@@ -89,11 +89,9 @@ body {
   min-height: 44px;
 }
 
-.admin-page {
-  max-width: 1100px;
-}
+/* 表格类布局。原来在 .admin-page 下，三个管理页并进 /settings 之后跟着改名。 */
 
-.admin-invite-form {
+.settings-invite-form {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -101,43 +99,43 @@ body {
   margin-bottom: 24px;
 }
 
-.admin-table {
+.settings-table {
   width: 100%;
   border-collapse: collapse;
 }
 
-.admin-table th,
-.admin-table td {
+.settings-table th,
+.settings-table td {
   padding: 8px 12px;
   text-align: left;
   border-bottom: 1px solid rgb(128 128 128 / 20%);
   vertical-align: middle;
 }
 
-.admin-table th {
+.settings-table th {
   font-weight: 600;
 }
 
-.admin-table__code {
+.settings-table__code {
   font-family: monospace;
 }
 
-.admin-table__mono {
+.settings-table__mono {
   font-family: monospace;
   font-size: 0.85em;
 }
 
-.admin-table__quota-input {
+.settings-table__quota-input {
   width: 120px;
 }
 
-.admin-table__warn {
+.settings-table__warn {
   font-size: 0.85em;
   display: block;
   margin-top: 2px;
 }
 
-.admin-table__row-error {
+.settings-table__row-error {
   font-size: 0.85em;
   margin: 4px 0 0;
 }
@@ -732,11 +730,42 @@ body {
   }
 }
 
-/* ---- Settings / Embedding 管理页 ---- */
+/* ---- Settings page (/settings) ---- */
 /* 只写布局：flex / grid、尺寸、间距、折叠区的 display。视觉风格未定稿（web/AGENTS.md §5）。 */
 
+/*
+ * 1100px 是原三个管理页的宽度：用户表有七列，并进来之后页面不能再按 800px 的表单宽度走，
+ * 否则表格立刻挤成一团。表单类内容各自有自己的 max-width（.config-fields 等），不受影响。
+ */
 .settings-page {
-  max-width: 800px;
+  max-width: 1100px;
+}
+
+/* 锚点目录：分段多了之后要能一跳到底，横排换行，手机上也不另做一套 */
+.settings-page__toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+/* 触摸目标至少 44×44px（styling.md） */
+.settings-page__toc a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/*
+ * 锚点落点：跳过来时标题贴着视口顶边不好读，留一点余量。
+ * scroll-margin 是滚动落点，不是装饰。
+ */
+.settings-page__block {
+  scroll-margin-top: 16px;
+}
+
+.settings-page__admin-note {
+  margin: 0 0 16px;
 }
 
 .settings-section {

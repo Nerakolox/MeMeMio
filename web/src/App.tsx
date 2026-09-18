@@ -6,9 +6,6 @@ import { BrowsePage } from './routes/browse'
 import { ImportPage } from './routes/import'
 import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
-import { AdminInvitesPage } from './routes/admin-invites'
-import { AdminUsersPage } from './routes/admin-users'
-import { AdminEmbeddingPage } from './routes/admin-embedding'
 import { SettingsPage } from './routes/settings'
 import { NotFoundPage } from './routes/not-found'
 import { postLogout } from './lib/api'
@@ -21,16 +18,6 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     const next = encodeURIComponent(location.pathname + location.search)
     return <Navigate to={`/login?next=${next}`} replace />
   }
-  return <>{children}</>
-}
-
-function RequireAdmin({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth()
-  if (!user) {
-    const next = encodeURIComponent(window.location.pathname + window.location.search)
-    return <Navigate to={`/login?next=${next}`} replace />
-  }
-  if (user.role !== 'admin') return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -71,8 +58,6 @@ function AppShell() {
           <Link to="/browse">浏览</Link>
           {user && <ImportNavLink />}
           {user && <Link to="/settings">设置</Link>}
-          {user?.role === 'admin' && <Link to="/admin/invites">管理</Link>}
-          {user?.role === 'admin' && <Link to="/admin/embedding">Embedding</Link>}
         </nav>
         {user && (
           <button className="app__logout" onClick={handleLogout}>
@@ -117,29 +102,22 @@ function AppShell() {
               </RequireAuth>
             }
           />
+          {/*
+            三个管理页并进了 /settings（见 routes/settings.tsx）。旧地址保留成重定向而不是
+            直接删掉：管理员的书签和文档里的链接都指着它们，404 比多留三行路由贵。
+          */}
+          <Route path="/admin" element={<Navigate to="/settings" replace />} />
           <Route
             path="/admin/invites"
-            element={
-              <RequireAdmin>
-                <AdminInvitesPage />
-              </RequireAdmin>
-            }
+            element={<Navigate to="/settings#invites" replace />}
           />
           <Route
             path="/admin/users"
-            element={
-              <RequireAdmin>
-                <AdminUsersPage />
-              </RequireAdmin>
-            }
+            element={<Navigate to="/settings#users" replace />}
           />
           <Route
             path="/admin/embedding"
-            element={
-              <RequireAdmin>
-                <AdminEmbeddingPage />
-              </RequireAdmin>
-            }
+            element={<Navigate to="/settings#embedding" replace />}
           />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
