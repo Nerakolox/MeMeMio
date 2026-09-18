@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import type { VocabAdapter, VocabField } from './lib/vision-output.js'
 import { VOCAB_PATH } from './paths.js'
 
 /**
@@ -45,4 +46,17 @@ export const vocabularySize = {
   emotions: vocabulary.emotions.length,
   scenes: vocabulary.scenes.length,
   tags: tagSet.size,
+}
+
+/**
+ * 把词表接进纯函数层。`lib/vision-output.ts` 自己不读磁盘，所以别名表从这里注入。
+ *
+ * ⚠️ **全进程只有这一份。** 打标（`services/tagging.ts`）和测试连接的探测
+ *    （`ai/probe.ts`）用的必须是同一个适配器——「不要为测试连接另写一套判定，
+ *    两套判定迟早给出不同结论」。两套的表现是测试连接说 `vocabCompliant: true`，
+ *    同一个模型打标时标签却被丢掉。
+ */
+export const vocabAdapter: VocabAdapter = {
+  alias: (value: string): string => vocabulary.aliases?.[value] ?? value,
+  isKnown: (field: VocabField, value: string): boolean => isKnownLabel(field, value),
 }

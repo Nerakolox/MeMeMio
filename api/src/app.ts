@@ -4,6 +4,7 @@ import { requestId, type RequestIdVariables } from './middleware/request-id.js'
 import { healthRoutes } from './routes/health.js'
 import { authRoutes } from './routes/auth.js'
 import { adminRoutes } from './routes/admin.js'
+import { embedConfigRoutes, visionConfigRoutes } from './routes/config.js'
 import { memesRoutes } from './routes/memes.js'
 import { searchRoutes } from './routes/search.js'
 import { importRoutes } from './routes/imports.js'
@@ -20,6 +21,10 @@ export const app = new Hono<{ Variables: RequestIdVariables }>()
   .route('/api/v1/health', healthRoutes)
   .route('/api/v1/auth', authRoutes)
   .route('/api/v1/admin', adminRoutes)
+  // 配置是两个路由组，因为权限不同：视觉是本人，embedding 是管理员（SPEC §6.5）。
+  // 权限由中间件表达，一个组只挂一套——理由写在 routes/config.ts 的文件头
+  .route('/api/v1/config/vision', visionConfigRoutes)
+  .route('/api/v1/config/embed', embedConfigRoutes)
   .route('/api/v1/memes', memesRoutes)
   .route('/api/v1/search', searchRoutes)
   .route('/api/v1/imports', importRoutes)
