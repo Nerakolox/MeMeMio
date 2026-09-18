@@ -87,8 +87,12 @@ export type PhashNeighbor = { meme: MemeRow; distance: number }
  * pHash 全库 Hamming 扫描。见 agents/rules/database.md §3。
  *
  * `bit_count(bigint)` 在本项目的 PostgreSQL 17 上**不存在**（只有 `bit` 和 `bytea` 重载）。
- * 所以把 64 位哈希拆成两个 32 位肢体分别 `bit_count`，再相加——结果相同，
- * 且参数落在 int4 范围内能被驱动正确推断类型。拆分由 `lib/phash.ts` 的 `splitHash` 做。
+ * 所以把 64 位哈希拆成两个 32 位肢体分别 `bit_count`，再相加——结果相同。
+ * 拆分由 `lib/phash.ts` 的 `splitHash` 做，**它给的是有符号 int4**：无符号的半个哈希
+ * 有一半概率超过 2147483647，`$1::int` 会在 Bind 阶段就报
+ * `value "3480189747" is out of range for type integer`，一行数据都没有照样炸。
+ * 列这一侧的 `& 4294967295` 则是为了消掉算术右移带来的符号扩展——两侧都只剩位模式，
+ * `::bit(32)` 之后异或出来的结果与符号无关。
  *
  * 不建 BK-tree、不做专用索引：几万行仍在毫秒级，现在就上是提前优化（同一节的结论）。
  * `deleted_at is null` 是必须的——已删的图不该参与「你重复了这张」的判断。

@@ -32,6 +32,7 @@ const { createUser } = await import('./helpers/factories.js')
 const { createSession } = await import('../src/data/auth.js')
 const { findMemeById } = await import('../src/data/memes.js')
 const { softDeleteMeme } = await import('../src/data/memes.js')
+const { splitHash } = await import('../src/lib/phash.js')
 const { onError, onNotFound } = await import('../src/middleware/error.js')
 const { requestId } = await import('../src/middleware/request-id.js')
 const { importRoutes } = await import('../src/routes/imports.js')
@@ -279,6 +280,23 @@ describe('正常入库（无重复）', () => {
       expect(await memeOf(name.slice(name.lastIndexOf('/') + 1)), `${name} 的 isAnimated`)
         .toMatchObject({ isAnimated: expected })
     }
+  })
+
+  it('pHash 高位为 1 的图照常入库 —— 半个哈希会超出 int4 上限', async () => {
+    // animated-long.gif 的 dHash 低半边是 0xb04c1026，超过 int4 上限 2147483647。
+    // 把半个哈希当无符号传给查重 SQL 的 `$1::int`，Postgres 在 Bind 阶段就报
+    // `out of range for type integer`，这张图会 failed 而不是入库——64 位哈希里
+    // 有一半概率触发一次，真实图库里大约四分之三的图都会中。
+    const alice = await signIn()
+    const { snapshot } = await runImport(alice, await sample([FIXTURES.animatedLongGif]))
+
+    expect(snapshot).toMatchObject({ total: 1, done: 1, failed: 0, needsReview: 0 })
+
+    const meme = await memeOf('animated-long.gif')
+    expect(meme).not.toBeNull()
+    // 断言这个样本**确实**还担得起上面那个角色：哪天它的哈希变了（换了样本、
+    // 换了 sharp 版本），这条用例就不再守着任何东西了，要换一个样本。
+    expect(splitHash(meme?.phash ?? 0n).lo).toBeLessThan(0)
   })
 
   it('改了扩展名的文件按真实格式入库', async () => {

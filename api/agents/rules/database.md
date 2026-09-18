@@ -70,6 +70,13 @@ limit 10;
 
 `#` 是 XOR。几万行仍在毫秒级，到十万量级再考虑专用结构。**现在就上专用索引是提前优化**。
 
+> ⚠️ **上面是示意，真实实现拆成了两个 32 位半边**（`data/memes.ts` 的 `findNearestByPhash`）。
+> 两处不能省：`bit_count` 在 PG 17 上没有 `bigint` 重载；半个哈希**必须按有符号 int4 传**。
+> dHash 是 64 位满的，两个半边各有一半概率超过 2147483647，当无符号传进去
+> `$1::int` 会在 Bind 阶段就报 `value "3480189747" is out of range for type integer`——
+> 库里一行都没有照样炸，表现是「导入几乎每张图都失败」。同理 `phash` 落库前也是有符号 64 位，
+> 由 `lib/phash.ts` 的 `dHashFromGray` 直接产出，**不要在中间「把负数改回正数」**。
+
 > ⚠️ **`phash` 上不能加唯一约束。** 它只是普通 btree 索引。加了会硬性挡掉 Hamming 距离为 0 的情况，而那恰恰可能是用户看过之后决定要保留的不同图——判断权在人，DB 不能先斩后奏。见 [SPEC §9.7](../../../spec/09-decisions.md)。
 >
 > 反过来，`content_hash` 的 `unique` 是硬约束，不能降级。
