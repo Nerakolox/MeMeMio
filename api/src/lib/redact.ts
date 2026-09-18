@@ -27,3 +27,31 @@ export function maskApiKey(key: string | null | undefined): string | null {
 export function isMaskedApiKey(value: string): boolean {
   return value.startsWith(MASK)
 }
+
+/**
+ * 从一段**要原样返回给用户**的外部文本里抹掉 key。
+ *
+ * 这是 SPEC §6.5.1 的「`rawResponse` / `rawError` 原样带回」和 AGENTS.md §5 的
+ * 「API Key 不出响应」正面相撞的唯一一处，两条都不能让步，所以解法必须是精确的：
+ *
+ * - 原始返回里一般**没有** key。但 error-handling.md §4 明写：**某些中转服务会在
+ *   错误体里回显 Authorization 头**。那正好是测试连接最常触发的路径——填错 key、
+ *   拿 401，而 401 的错误体恰恰最可能把 key 抄回来。
+ * - 调用那一刻 key 就在手上，所以这里不用猜、不用正则找「看起来像 key 的串」，
+ *   直接拿明文做字面替换。**能不能漏**这件事因此是确定的：只要外部文本里出现了
+ *   这把 key，它就一定被换掉；没出现就一个字节都不动。
+ *
+ * 替换成脱敏串而不是删掉，是为了让用户看得出「这里本来是你的 key」——
+ * 那本身就是「中转服务把你的 key 回显了」这条重要信息。
+ *
+ * ⚠️ 只抹 key，**不做任何别的过滤**。`settings-ux.md §5` 要求原文不截断、不包装，
+ *    顺手再删点别的会把用户真正需要的那行错误信息弄没。
+ *
+ * @param secret 明文 key。空串直接返回原文——空串是 `String.replaceAll` 的病态输入
+ *               （会在每个字符间插入替换串），而「没有 key」本来也没什么可抹的。
+ */
+export function redactSecret(text: string, secret: string): string {
+  if (secret === '') return text
+  const replacement = maskApiKey(secret) ?? MASK
+  return text.split(secret).join(replacement)
+}

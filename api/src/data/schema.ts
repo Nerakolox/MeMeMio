@@ -197,6 +197,54 @@ export const embedConfig = pgTable(
   (table) => [check('embed_config_singleton', sql`${table.id} = 1`)],
 )
 
+/**
+ * 测试连接的结果，**存在服务端**（SPEC §6.5.2）。
+ *
+ * 为什么必须有这张表：探测结果字段不接受客户端写入（§5.3），所以「我刚测过了」
+ * 这件事不能靠前端在 `PUT` 里回传。流程被固定成「`POST /test` 实测并落这张表 →
+ * `PUT` 回来按组合查到那条成功记录 → 把探测结果抄进配置行」。
+ *
+ * 匹配三要素是 **base_url + model + key 指纹**，少了指纹，「换了 key 没测就保存」
+ * 能过校验，而那恰恰是最常见的填错方式。
+ *
+ * ⚠️ 本表**不存 key 明文也不存密文**，只存 SHA-256 指纹（§6.5.2 明写）。
+ *    指纹只用于比对，不参与任何解密路径——所以这张表整体可以在不接触
+ *    `CONFIG_ENC_KEY` 的情况下读写。
+ */
+export const configTests = pgTable(
+  'config_tests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** vision | embed */
+    scope: text('scope').notNull(),
+    /**
+     * 视觉配置是每人一份，embedding 配置是全站一份（§5.2.4）——
+     * 所以 embed 的记录 user_id 为 null，那是「全站」而不是「不知道谁测的」。
+     */
+    userId: uuid('user_id').references(() => users.id),
+    baseUrl: text('base_url').notNull(),
+    model: text('model').notNull(),
+    /** key 的 SHA-256 十六进制。见 lib/config-crypto.ts 的 fingerprintSecret。 */
+    keyFingerprint: text('key_fingerprint').notNull(),
+    ok: boolean('ok').notNull(),
+    /** vision 探测位；embed 记录上为 null */
+    jsonModeWorks: boolean('json_mode_works'),
+    multiImage: boolean('multi_image'),
+    /** embed 探测位；vision 记录上为 null */
+    nativeDim: integer('native_dim'),
+    dimParamWorks: boolean('dim_param_works'),
+    testedAt: timestamptz('tested_at').notNull().defaultNow(),
+  },
+  (table) => [
+    /**
+     * 查的永远是「这个组合最近一次测出了什么」。指纹是 64 位十六进制、选择性极高，
+     * 放在 scope 后面就够把候选压到个位数，base_url / model 再在堆上比对——
+     * 把长文本列也塞进索引只会让索引变大而不会更快。
+     */
+    index('config_tests_lookup_idx').on(table.scope, table.keyFingerprint),
+  ],
+)
+
 // ── §5.4 收藏 ──────────────────────────────────────────────────────
 
 /**
@@ -269,6 +317,46 @@ export const tagJobs = pgTable(
      * 否则同一张图会被打标两次，直接浪费用户的钱。
      */
     uniqueIndex('tag_jobs_meme_id_key').on(table.memeId),
+  ],
+)
+
+// ── 重建索引队列（SPEC §6.5.4） ────────────────────────────────────
+
+/**
+ * 换 embedding 模型后全站重算向量的队列。**独立于 `tag_jobs`**，三个理由缺一不可：
+ *
+ * 1. `tag_jobs` 上 `meme_id` 有唯一索引——一条重算任务和同一张图的待打标任务会互相踢掉
+ * 2. 重算**不调视觉模型**，只从 `search_text` 重新算向量（§6.5.4），重试策略也不同
+ * 3. 打标并发按人分组（一个人导入一千张不该堵住别人），而重算是**运维操作，不是谁的配额**，
+ *    所以本表没有 `user_id` 列——不是忘了冗余，是不按人分组
+ *
+ * 和 `tag_jobs` 一样：入队的 `meme_id` 必须来自 `data/memes.ts` 的查询结果，
+ * **不许在本表上 join `memes`**——那会绕过 `deleted_at is null`（queue.md §8）。
+ */
+export const reindexJobs = pgTable(
+  'reindex_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memeId: uuid('meme_id')
+      .notNull()
+      .references(() => memes.id, { onDelete: 'cascade' }),
+    /** pending | running | done | failed */
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    runAfter: timestamptz('run_after').notNull().defaultNow(),
+    lastError: text('last_error'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('reindex_jobs_claim_idx').on(table.status, table.runAfter),
+    /**
+     * 幂等的落点（§6.5.4「重复调用不会让同一条记录重算两遍」）：
+     * `PUT /config/embed` 自动触发和 `POST /admin/reindex` 手动补触发都靠
+     * onConflictDoNothing 撞这个唯一索引变成空操作。
+     *
+     * 它同时也是搜索侧 `degraded` 那条存在性查询的索引——见 claim_idx。
+     */
+    uniqueIndex('reindex_jobs_meme_id_key').on(table.memeId),
   ],
 )
 

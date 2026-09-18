@@ -36,6 +36,13 @@
       "when": 1789561366148,
       "tag": "0004_add_user_id_to_tag_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789573424179,
+      "tag": "0005_add_config_tests_and_reindex_jobs",
+      "breakpoints": true
     }
   ]
 }
