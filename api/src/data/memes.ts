@@ -247,6 +247,116 @@ export async function applyEmbedding(
   return rows.length > 0
 }
 
+// ── 重建索引（SPEC §6.5.4） ────────────────────────────────────────
+//
+// ⚠️ 这一组存在的唯一理由是「`memes` 的 SQL 只许出现在本文件」。重算队列
+//    （`data/reindex-jobs.ts`）需要知道哪些图的向量过期了、进度是多少，
+//    但它**不能自己去查 `memes`**——在队列表上 join `memes` 会绕过
+//    `deleted_at is null`（queue.md §8），表现是给已删除的图重算向量。
+//    所以 id 从这里查出来，再传给那一层。
+
+/**
+ * 库里有没有已经向量化的记录。`PUT /config/embed` 换模型时用它决定要不要
+ * `EMBED_MODEL_CHANGED`——**没数据就没必要拦**，第一次配置不该被一个 409 挡住。
+ *
+ * 存在性查询，不是 count：只需要知道「有没有」。
+ */
+export async function hasEmbeddedMemes(db: Db = defaultDb): Promise<boolean> {
+  const rows = await db
+    .select({ id: memes.id })
+    .from(memes)
+    .where(and(isNull(memes.deletedAt), sql`${memes.embedding} is not null`))
+    .limit(1)
+  return rows.length > 0
+}
+
+/**
+ * 向量过期的记录 id：有 `search_text` 可以重算，但 `embed_model` 不是当前模型
+ * （含 `embed_model is null` ——打标成功、向量化失败的那些，SPEC §6.3.1）。
+ *
+ * **只取 id，不取 search_text。** 一次重算几万条，把文本全拉进内存没有意义；
+ * worker 取到任务后按 id 单条回查。
+ *
+ * `search_text` 为空的跳过：重算是「从 search_text 重新算向量」（§6.5.4），
+ * 没有 search_text 就没有可算的东西，排进队列只会得到一条必然失败的任务。
+ *
+ * @param offset 分批取。入队**不会**让这些行不再过期（`embed_model` 要等算完才改），
+ *               所以不能反复取第一页——那是个死循环。按 `created_at` 排序 + offset
+ *               往后翻，中途有图被删会漏掉几条，再点一次「重建索引」就能补上
+ *               （入队幂等）。
+ */
+export async function listStaleEmbeddingMemeIds(
+  currentModel: string,
+  limit: number,
+  offset = 0,
+  db: Db = defaultDb,
+): Promise<string[]> {
+  const rows = await db
+    .select({ id: memes.id })
+    .from(memes)
+    .where(
+      and(
+        isNull(memes.deletedAt),
+        sql`${memes.searchText} is not null and ${memes.searchText} <> ''`,
+        or(isNull(memes.embedModel), sql`${memes.embedModel} <> ${currentModel}`),
+      ),
+    )
+    .orderBy(memes.createdAt)
+    .limit(limit)
+    .offset(offset)
+  return rows.map((row) => row.id)
+}
+
+/** 重算要用的原文。**只读 `search_text`，不碰 AI 产出字段**（§6.5.4：重算不重跑视觉）。 */
+export async function getSearchTextForEmbedding(
+  id: string,
+  db: Db = defaultDb,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ searchText: memes.searchText })
+    .from(memes)
+    .where(and(eq(memes.id, id), isNull(memes.deletedAt)))
+    .limit(1)
+  const text = row?.searchText ?? null
+  return text === '' ? null : text
+}
+
+export type EmbeddingProgress = { total: number; done: number; stale: number }
+
+/**
+ * `GET /admin/reindex/status` 的 `total` / `done` / `stale`（§6.5.4：进度必须来自库里的
+ * 真实计数，不能是进程内存里的计数器——重启后内存计数归零，进度条会从头开始，那是假的）。
+ *
+ * 三个数**一次扫表算完**，不是三条查询。分三次查的话三个数各自是不同时刻的快照，
+ * 管理员会看到 `done + stale > total` 这种自相矛盾的进度。
+ *
+ * ⚠️ `stale` 的口径必须和 `listStaleEmbeddingMemeIds` 的 WHERE **逐字一致**——
+ *    它是「还会被排进队列的条数」。两边写岔了的表现是进度条停在某个数不动，
+ *    而队列其实已经空了。
+ *
+ * 这里是**唯一**允许 count 全表的地方：它只在管理员盯着进度条时被调用，
+ * 不落在搜索请求上。搜索侧的 `degraded` 走存在性查询，见 `data/reindex-jobs.ts`。
+ */
+export async function countEmbeddingProgress(
+  currentModel: string,
+  db: Db = defaultDb,
+): Promise<EmbeddingProgress> {
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*) filter (where ${memes.embedding} is not null)::int`,
+      done: sql<number>`count(*) filter (
+        where ${memes.embedding} is not null and ${memes.embedModel} = ${currentModel}
+      )::int`,
+      stale: sql<number>`count(*) filter (
+        where ${memes.searchText} is not null and ${memes.searchText} <> ''
+          and (${memes.embedModel} is null or ${memes.embedModel} <> ${currentModel})
+      )::int`,
+    })
+    .from(memes)
+    .where(isNull(memes.deletedAt))
+  return { total: row?.total ?? 0, done: row?.done ?? 0, stale: row?.stale ?? 0 }
+}
+
 // ── 收藏（SPEC §5.4 / §6.4） ───────────────────────────────────────
 //
 // ⚠️ **收藏是人和图的关系，不是图的属性。** 所以它写 `user_favorites`，

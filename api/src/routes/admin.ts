@@ -7,6 +7,7 @@ import {
   updateUser,
 } from '../data/admin.js'
 import { AppError } from '../lib/app-error.js'
+import { enqueueAllStale, getReindexStatus } from '../services/ai-config.js'
 
 /** ISO 8601 UTC 精确到秒。SPEC §1.2 */
 function toIsoSeconds(d: Date | null): string | null {
@@ -116,4 +117,23 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
       storageQuotaBytes: updated.storageQuotaBytes.toString(),
       createdAt: toIsoSeconds(updated.createdAt)!,
     })
+  })
+
+  /**
+   * 手动补触发全站重建索引（SPEC §6.5.4）。
+   *
+   * **幂等**：重复点不会让同一条记录重算两遍（`onConflictDoNothing`），所以前端
+   * 不需要防重复提交，`enqueued: 0` 也不是错误——它的意思是「该排的都已经排上了」。
+   *
+   * 换模型时由 `PUT /config/embed` 自动触发，这里是管理员发现 `stale` 不降时的补手。
+   * ⚠️ 这个端点**不清 failed 行**：清了等于把「有 12 条重试耗尽了」这个事实抹掉，
+   *    而那正是他点进来要看的东西。清 failed 只发生在换模型开启新一轮时。
+   */
+  .post('/reindex', async (c) => {
+    const enqueued = await enqueueAllStale()
+    return c.json({ enqueued, ...(await getReindexStatus()) })
+  })
+
+  .get('/reindex/status', async (c) => {
+    return c.json(await getReindexStatus())
   })

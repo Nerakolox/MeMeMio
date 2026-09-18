@@ -8,6 +8,7 @@ import { checkMigrations } from './data/migration-state.js'
 import { env } from './env.js'
 import { log } from './logger.js'
 import { assertRuntimeFilesPresent, WEB_DIST_DIR } from './paths.js'
+import { startReindexWorker, stopReindexWorker } from './queue/reindex-worker.js'
 import { startTagWorker, stopTagWorker } from './queue/worker.js'
 import { vocabulary, vocabularySize } from './vocab.js'
 
@@ -70,6 +71,11 @@ async function main(): Promise<void> {
   // 配置好之后不需要重启进程就能开始补打标
   startTagWorker()
 
+  // 重算 worker 是**另一个** worker，不是打标 worker 的一个分支（理由写在
+  // queue/reindex-worker.ts 的文件头）。同样无条件起：没配 embedding 通道时它空转，
+  // 管理员在界面上配好之后不用重启进程，重建就会自己开始动
+  startReindexWorker()
+
   installShutdownHandlers(server)
 }
 
@@ -89,7 +95,9 @@ function installShutdownHandlers(server: { close: (cb?: () => void) => void }): 
     log.info({ signal }, '收到退出信号，开始收尾')
 
     server.close(() => {
-      void stopTagWorker().then(() => process.exit(0))
+      // 两个 worker 并行收尾，不串行：各自的在途任务都有整体超时，串起来等于把两个
+      // 超时上限加在一起，停机时间平白翻倍
+      void Promise.allSettled([stopTagWorker(), stopReindexWorker()]).then(() => process.exit(0))
     })
   }
 
