@@ -217,6 +217,8 @@ Embedding 实测维度 < 1024 直接拒绝保存，返回 `EMBED_DIM_TOO_SMALL`�
 
 测试要能在保存之前跑，所以 `POST /config/*/test` 接受尚未保存的配置；它不改变当前生效的配置。
 
+`PUT /config/embed` 的响应在配置之外多两个字段：`reindexTriggered`（本次保存是否换掉了模型）与 `reindexEnqueued`（是否真的排进了重算队列，库里没有向量时为 false）。它们回答的是「**这一次保存**有没有引发重算」——`GET /admin/reindex/status` 只能告诉你此刻有没有重算在跑，分不出那是不是你刚才那一下造成的。
+
 ### §6.5.4 重建索引
 
 `POST /admin/reindex` 把所有向量过期的记录排进重算队列，**幂等**——重复调用不会让同一条记录重算两遍。换模型时由 `PUT /config/embed` 自动触发，这个端点是管理员手动补触发用的（[queue.md §6](../api/agents/rules/queue.md) 的「重算过期向量」）。

@@ -24,7 +24,7 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
-| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——用户视觉通道、全站 Embedding、重建索引；解开三条已记在板上的偏差（降帧梯子走不到、HyDE 借部署方通道、`embed_config` 无读写路径） |
+| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——api 端 A–G 已完成并合入（2026-09-18），**剩 web 收尾**：占位类型换 `InferResponseType` + 真接口联调。两端至今没有对接过，字段名对不对还没人知道 |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
@@ -46,7 +46,8 @@
 |---|---|
 | 评测集未跑；**`eval.ts` 内嵌探测期提示词，不 import `src/ai/vision.ts`**，原样跑出的数字会被误读成「新提示词已验证」 | [评测集](2026-09-13-eval-set.md)，已进其「做完的标准」 |
 | `tag_status = 'refused'` 目前不可达（只有主通道，终局失败全落 `needs_manual`） | 等 SPEC §9.5 转 `accepted` + 副通道接入；**不是缺陷**，不要为了让状态可达提前实现 §9.5 |
-| 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | [模型配置与测试连接](2026-09-16-ai-config.md)——探测结果存下来后自然变成真实流量路径 |
+| 设置页会在 `VISION_NOTICE` 底下多一行「副通道的配置入口尚未开放」——因为契约文案让用户去配副通道，而界面上没有那个输入框（2026-09-18 总管裁定，见[模型配置与测试连接](2026-09-16-ai-config.md)的联合验收） | **同样绑 §9.5**：副通道入口一开放，这行字必须删。它是对界面现状的说明，不是契约的一部分，所以写在 `<pre>` 契约块之外——契约文案仍然逐字可比对 |
+| 降帧梯子 `[10, 4, 1]` 生产里走不到：`resolveVisionConfig()` 固定 `multiImage: null` | ✅ api 端已修（2026-09-18，`81e1aeb`）：能力位跟着配置来源走，用户测出 `multiImage: true` 后梯子才是真实流量路径。部署方默认通道仍固定 null，那是有意的 |
 | `finish_reason: 'length'` 归 `AI_INVALID_OUTPUT` 的判断只活在任务文件里 | ✅ 已完成，进了 `api/agents/rules/ai-providers.md §3`（见[api 收尾三件](../_archive/joint-tasks/2026-09-16-api-housekeeping.md)） |
 
 ## api 收尾三件转出的遗留项
@@ -76,8 +77,8 @@
 | 遗留项 | 归属 |
 |---|---|
 | 未跑评测集（`recall@5`）；本次动了 RRF 参数、HyDE 提示词、切词 | [评测集](2026-09-13-eval-set.md) |
-| HyDE 走部署方 `env.defaultVision`，未按搜索者自己的视觉通道解析——**与 SPEC §6.3.1 的已知偏差**，不改契约 | [模型配置与测试连接](2026-09-16-ai-config.md) 的「运行时接入」；接入点在 `api/src/ai/hyde.ts:57`（早前记的 `services/search.ts` 的 `startVectorPath()` 是它的调用方） |
-| `resolveEmbedConfig()` 只读环境变量，`embed_config` 表无读写路径 | [模型配置与测试连接](2026-09-16-ai-config.md) |
+| HyDE 走部署方 `env.defaultVision`，未按搜索者自己的视觉通道解析——**与 SPEC §6.3.1 的已知偏差** | ✅ api 端已修（2026-09-18，`81e1aeb`）：`rewriteQuery` 收 `actorId`，登录用户走本人通道，匿名落部署方默认 |
+| `resolveEmbedConfig()` 只读环境变量，`embed_config` 表无读写路径 | ✅ api 端已修（2026-09-18，`81e1aeb`）：配置表优先、环境变量兜底，只认 `verified_at` 非空的行 |
 | `rrf.ts` 依赖「`data/` 每路返回的 id 不重复」，上游 join 出重复行会静默翻倍 | 改 `api/src/data/search.ts` 的 join 时回看 |
 
 
