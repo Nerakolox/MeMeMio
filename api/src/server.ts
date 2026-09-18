@@ -10,17 +10,23 @@ import { log } from './logger.js'
 import { assertRuntimeFilesPresent, WEB_DIST_DIR } from './paths.js'
 import { startReindexWorker, stopReindexWorker } from './queue/reindex-worker.js'
 import { startTagWorker, stopTagWorker } from './queue/worker.js'
+import { assertR2Reachable } from './storage/r2.js'
 import { vocabulary, vocabularySize } from './vocab.js'
 
 /**
  * 启动顺序（agents/rules/env-validation.md §3）：
  *
  *   1. 校验 env       → 失败则 exit(1)      ← import './env.js' 时就做完了
- *   2. 连数据库       → 失败则重试几次后 exit(1)
- *   3. 检查迁移版本   → 落后则打印提示并 exit(1)
- *   4. 起 HTTP，再起打标 worker
+ *   2. 探活 R2        → 失败则 exit(1)
+ *   3. 连数据库       → 失败则重试几次后 exit(1)
+ *   4. 检查迁移版本   → 落后则打印提示并 exit(1)
+ *   5. 起 HTTP，再起打标 worker
  *
- * 第 3 步**只检查，不自动执行**。多副本时自动迁移会并发跑，而那种故障发生在
+ * 第 2 步在连库之前：它和第 1 步是同一件事的两半——「变量填了」和「填的能用」。
+ * 校验能不能用必须放在启动，因为 R2 配错**在运行期完全不报错**（预签名是纯本地
+ * 计算，假凭证照样签得出 200），理由写在 storage/r2.ts 的 `assertR2Reachable`。
+ *
+ * 第 4 步**只检查，不自动执行**。多副本时自动迁移会并发跑，而那种故障发生在
  * 启动瞬间，最难排查。执行走独立命令，见 docs/deployment.md §6。
  */
 async function main(): Promise<void> {
@@ -39,6 +45,8 @@ async function main(): Promise<void> {
   if (env.defaultEmbed === null) {
     log.warn({}, '未配置 DEFAULT_EMBED_*：搜索只走 OCR + 标签两路，响应会带 degraded: true')
   }
+
+  await assertR2Reachable()
 
   await waitForDatabase()
   log.info({}, '数据库已连接')

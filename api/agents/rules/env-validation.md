@@ -25,6 +25,7 @@ const env = parseEnv(process.env)   // 失败则 process.exit(1)
 | `CONFIG_ENC_KEY` | **必须是 32 字节**，短了直接拒启动 |
 | `DATABASE_URL` | 能解析成合法连接串 |
 | `R2_KEY_PREFIX` | 以 `/` 结尾（不带会导致对象键拼错） |
+| `R2_PUBLIC_BASE_URL` | **不**以 `/` 结尾（带了会拼出 `//`；键本身不带前导 `/`） |
 | `DEFAULT_VISION_*` / `DEFAULT_EMBED_*` | **可以全空**，见 §4 |
 
 `CONFIG_ENC_KEY` 长度不对时 AES-GCM 会在第一次加密用户 key 时才报错——那时用户正在设置页点保存，看到的是一个莫名其妙的 500。
@@ -33,12 +34,21 @@ const env = parseEnv(process.env)   // 失败则 process.exit(1)
 
 ```
 1. 校验 env          → 失败则 exit(1)
-2. 连数据库          → 失败则重试几次后 exit(1)
-3. 检查迁移版本      → 落后则打印提示并 exit(1)
-4. 起 HTTP + worker
+2. 探活 R2           → 失败则 exit(1)
+3. 连数据库          → 失败则重试几次后 exit(1)
+4. 检查迁移版本      → 落后则打印提示并 exit(1)
+5. 起 HTTP + worker
 ```
 
-第 3 步**只检查，不自动执行迁移**。理由见 [`docs/deployment.md`](../../../docs/deployment.md)：多副本时会并发迁移，而那种故障发生在启动瞬间，最难排查。
+第 2 步和第 1 步是同一件事的两半：**「变量填了」和「填的能用」**。
+
+R2 是本项目唯一一个「配错了在运行期也完全不报错」的依赖——预签名是纯本地 HMAC 计算，假凭证照样签得出格式完美的 URL，`POST /imports` 返回 200，错误最终只在浏览器里以一句 TLS 握手失败现身（2026-09-18 实际发生过）。所以它必须在启动时探一次，`ListObjectsV2` + `MaxKeys: 1` 即可。
+
+三个约束：**`NODE_ENV=test` 跳过**（否则单测全变成要联网）、**必须带超时**（网络不通时要起不来，不能吊死在启动上）、**错误信息只带 endpoint / bucket / 前缀，绝不带凭证**（硬边界，SPEC §5.3；S3 的鉴权错误体会回显 AccessKeyId，所以只取 `error.name`）。
+
+这**不是**按环境分支：除 `test` 外所有环境行为一致。本地开发也要能连上 R2，理由见 [`docs/environments.md`](../../../docs/environments.md) §4——上传路径不做「本地存文件系统」的分支。
+
+第 4 步**只检查，不自动执行迁移**。理由见 [`docs/deployment.md`](../../../docs/deployment.md)：多副本时会并发迁移，而那种故障发生在启动瞬间，最难排查。
 
 ## 4. 默认模型配置可以全空
 

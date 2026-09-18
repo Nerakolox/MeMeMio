@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -25,9 +26,14 @@ import { log } from '../logger.js'
 /** 预签名 PUT 的有效期。太短会让大图传到一半失效，太长等于给了个长期上传口子。 */
 const UPLOAD_URL_TTL_SECONDS = 15 * 60
 
+/** 启动探活的超时。网络不通时进程要起不来，但不能吊死在启动上。 */
+const STARTUP_PROBE_TIMEOUT_MS = 8_000
+
+const R2_ENDPOINT = `https://${env.r2.accountId}.r2.cloudflarestorage.com`
+
 const client = new S3Client({
   region: 'auto',
-  endpoint: `https://${env.r2.accountId}.r2.cloudflarestorage.com`,
+  endpoint: R2_ENDPOINT,
   credentials: {
     accessKeyId: env.r2.accessKeyId,
     secretAccessKey: env.r2.secretAccessKey,
@@ -163,4 +169,56 @@ export async function deleteObject(objectKey: string): Promise<void> {
  */
 export function publicUrlFor(objectKey: string): string {
   return `${env.r2PublicBaseUrl}/${key(objectKey)}`
+}
+
+/**
+ * 启动时对 bucket 做一次轻量探活，不通就拒绝启动（agents/rules/env-validation.md §3）。
+ *
+ * 2026-09-18 第一次接真实 R2，配错了**全程没有任何一处报错**：`env` 只校验变量填没填，
+ * 预签名是纯本地 HMAC——凭证是假的照样签出格式完美的 URL，`POST /imports` 返回 200，
+ * 错误最终只以浏览器的 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` 现身，离根因隔了整条链路。
+ * 那一天昂贵的不是少拼一段前缀，是这个。态度同 `lib/env.ts` 对 `CONFIG_ENC_KEY` 的：
+ * **宁可现在起不来**，错误现场就是根因。
+ *
+ * 用 `ListObjectsV2` 而不是 `HeadBucket`：Head 响应没有 body，鉴权失败时拿不到
+ * 错误码，只能看到一个光秃秃的 403，而「凭证错」和「令牌没授权到这个 bucket」
+ * 是两种要分开查的事。`MaxKeys: 1` 让它和桶里有多少对象无关。
+ *
+ * ⚠️ 错误信息只带 endpoint / bucket / 前缀，**绝不带凭证**（硬边界，SPEC §5.3）。
+ *    S3 的鉴权错误体会把 AccessKeyId 回显出来，所以这里只取 `error.name`，
+ *    不取 `message`、不取原始错误体。
+ */
+export async function assertR2Reachable(): Promise<void> {
+  // 单测把 SDK 的 send 换成了内存替身（tests/helpers/r2-memory.ts），探活在那里既没有
+  // 意义又会让整套测试变成要联网
+  if (env.nodeEnv === 'test') return
+
+  try {
+    await client.send(
+      new ListObjectsV2Command({
+        Bucket: env.r2.bucket,
+        Prefix: env.r2.keyPrefix,
+        MaxKeys: 1,
+      }),
+      // 没有超时的话，DNS 或 TLS 层卡住时进程会停在启动上不动，
+      // 那比起不来更难看出发生了什么
+      { abortSignal: AbortSignal.timeout(STARTUP_PROBE_TIMEOUT_MS) },
+    )
+  } catch (error) {
+    // 超时会以 AbortError 现身，直译出去会让人以为是谁主动取消了
+    const name = error instanceof Error ? error.name : 'UnknownError'
+    const reason = name === 'AbortError' ? `超时 ${STARTUP_PROBE_TIMEOUT_MS}ms` : name
+    throw new Error(
+      `R2 探活失败（${reason}）：endpoint=${R2_ENDPOINT} bucket=${env.r2.bucket} `
+        + `keyPrefix=${env.r2.keyPrefix}\n`
+        + '常见原因：R2_ACCOUNT_ID 粘成了整条 endpoint URL、令牌不是 R2 的 S3 凭证、'
+        + 'bucket 名拼错、令牌没授权到这个 bucket。\n'
+        + '完整步骤见 docs/deployment.md §8。',
+    )
+  }
+
+  log.info(
+    { endpoint: R2_ENDPOINT, bucket: env.r2.bucket, keyPrefix: env.r2.keyPrefix },
+    'R2 已连通',
+  )
 }
