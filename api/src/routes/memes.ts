@@ -26,6 +26,9 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    *
    * 参数见 SPEC §6.3.2。tagStatus 仅本人或 admin 可用（§3.3），否则抛 FORBIDDEN。
    * 软删记录由数据层统一过滤（§3.4）。
+   *
+   * `random=true` 时改为在**筛选之后**做全库随机抽样，`nextCursor` 恒为 `null`；
+   * 抽样怎么实现是数据层的事，本层只负责参数解析与互斥校验。
    */
   .get('/', async (c) => {
     const actor = c.get('currentUser')
@@ -58,6 +61,16 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
 
     const cursor = c.req.query('cursor') ?? undefined
 
+    // 非 `true` 一律当 false，与 isAnimated / favorited 同一个口径。
+    const random = c.req.query('random') === 'true'
+
+    // `random` 与 `cursor` 互斥（SPEC §6.3.2）。**不静默忽略其中一个**：
+    // 忽略 cursor 会悄悄回到第一页，忽略 random 会把一次随机抽样当成可翻页的列表
+    // 的第一页——两种都让客户端看不出自己传错了。
+    if (random && cursor !== undefined) {
+      throw new AppError('VALIDATION_FAILED', 'random 与 cursor 不能同时使用')
+    }
+
     const limitRaw = c.req.query('limit')
     let limit: number | undefined
     if (limitRaw !== undefined) {
@@ -68,7 +81,7 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     }
 
     const { items, nextCursor } = await listMemes(
-      { emotions, scenes, tags, isAnimated, favorited, uploader, tagStatus, cursor, limit },
+      { emotions, scenes, tags, isAnimated, favorited, uploader, tagStatus, cursor, limit, random },
       actor?.id ?? null,
     )
 

@@ -4,11 +4,13 @@ import {
   ApiError,
   MATCHED_BY_LABELS,
   fetchSearch,
+  toStateError,
   toggleFavorite,
   type Meme,
   type SearchResult,
 } from '../lib/api'
 import { MemeCard } from '../components/MemeCard'
+import { DiscoverWall } from '../features/discover/DiscoverWall'
 
 type SearchState =
   | { kind: 'idle' }
@@ -287,21 +289,18 @@ export function HomePage() {
         </>
       )}
 
+      {/*
+        没有提交搜索词时，下半屏是随机图墙（SPEC §6.3.2 的 random）——
+        「不知道要找什么」是最常见的开场，之前这个页面在这种时候只有一句提示。
+        提交了搜索词就换成结果：两个列表不同时堆在一页上，否则没人知道该看哪个。
+      */}
       {state.kind === 'idle' && (
-        <p className="search__hint">
-          {trimmedDraft ? '按回车搜索' : '输入一句话，用自然语言找图'}
-        </p>
+        <>
+          {/* 输入了但还没提交（还没回车、也没失焦）时才提示，正常情况下用户看的是图 */}
+          {trimmedDraft && <p className="search__hint">按回车搜索</p>}
+          <DiscoverWall />
+        </>
       )}
     </section>
   )
-}
-
-/** 不是 ApiError 的失败（断网、代理挂了）也要给出能读的状态，不能白屏（http.md §4）。 */
-function toStateError(err: unknown): ApiError {
-  if (err instanceof ApiError) return err
-  return new ApiError(0, {
-    code: 'NETWORK',
-    message: '连不上服务端，确认 api 是否已启动',
-    requestId: '无',
-  })
 }

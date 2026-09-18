@@ -79,7 +79,7 @@ magic bytes 探测真实格式（不信扩展名）
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/search` | 主入口，三路融合 |
-| GET | `/memes` | 按条件浏览，游标分页 |
+| GET | `/memes` | 按条件浏览，游标分页；`random=true` 时改为随机抽样 |
 | GET | `/memes/{id}` | 单条 |
 
 ### §6.3.1 搜索
@@ -123,8 +123,34 @@ GET /memes?emotions=无语&tags=猫&isAnimated=true&favorited=true&uploader=me&c
 | `favorited` | `true` 时只返回当前用户收藏的 |
 | `uploader` | `me` 或用户 id |
 | `tagStatus` | 仅本人或 admin 可用，用于「待处理」列表（[§6.6.2](#662-待处理列表)） |
+| `limit` | 单页条数，默认 40、最大 100。`random=true` 时它同时是**抽样条数** |
+| `random` | `true` 时随机抽样，见下 |
 
 **`uploader` 和 `favorited` 是筛选项，不是安全边界。** 不传就是全库，这是设计本身，见 [§0.1](00-overview.md)。
+
+#### `random=true`：随机抽样
+
+> **状态：`accepted`**（2026-09-19 新增并转正）。兼容性新增能力，两端已确认。见[首页随机图墙](../joint-tasks/2026-09-19-home-random-grid.md)。
+>
+> 它**已经是线上行为**（两端已实现并在真库上跑通），但还没进 `stable`——`stable` 要等联合验收归档时由总管转，见 [§8.1](08-collaboration.md)。
+
+```
+GET /memes?random=true&limit=10
+```
+
+```
+{ items: [ ...Meme ], nextCursor: null }
+```
+
+首页要有一屏「随便看看」，**它在全库里抽**，不是「最新的 N 张里抽几张」。这个区别是本节存在的理由：只在新图里随机的话，库用上三个月之后，用户按一百次刷新也见不到那张三个月前的图，而「把老图重新翻出来」正是这个入口唯一的用途。
+
+- **抽样发生在所有筛选之后。** `emotions` / `scenes` / `tags` / `isAnimated` / `favorited` / `uploader` / `tagStatus` 照常生效，软删记录照常排除（[§3.4](03-auth-permission.md)）。**随机不绕过任何过滤**——这是实现时最容易出错的地方：`order by random()` 写起来太顺手，条件漏掉也不会报错，只会让别人的图或已删的图出现在首页。
+- **`nextCursor` 恒为 `null`。** 随机序没有「下一页」这个概念，给出游标只会让客户端把「随机的第二页」接在「随机的第一页」后面，而那看起来像正常翻页。
+- **与 `cursor` 互斥**：同时传返回 `VALIDATION_FAILED`。不静默忽略其中一个——忽略哪个都是客户端看不出错的错误结果。
+- 返回顺序由抽样决定，**客户端不应假设任何顺序**（不保证与 `created_at` 有关）。
+- `random` 是**兼容性新增**（[§8.3](08-collaboration.md)）：不传时行为与本节此前完全一致。
+
+抽样怎么实现（`order by random()` 的扫描代价、什么规模要换方案）是 `api` 的实现约束，不在本规范定义，见 `api/agents/rules/database.md`。
 
 ## §6.4 管理
 

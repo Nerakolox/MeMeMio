@@ -55,6 +55,22 @@ export async function toApiError(res: Response): Promise<ApiError> {
 }
 
 /**
+ * 把 `catch` 到的任何东西收敛成一个能渲染的 `ApiError`。
+ *
+ * 断网、代理挂了、`fetch` 抛的 `TypeError` 都不是 `ApiError`，而错误态必须能读出
+ * 「连不上服务端」而不是白屏（http.md §4）。**每个拉数据的界面都要这一层**，
+ * 所以放在这里，不要各写各的。
+ */
+export function toStateError(err: unknown): ApiError {
+  if (err instanceof ApiError) return err
+  return new ApiError(0, {
+    code: 'NETWORK',
+    message: '连不上服务端，确认 api 是否已启动',
+    requestId: '无',
+  })
+}
+
+/**
  * SPEC §5.2.6 对外表示。storageKey、contentHash、phash、embedding 不在响应里。
  *
  * **从 api 派生，不手写。** 手写一份意味着接口加了字段这边不会有编译错误，
@@ -75,6 +91,15 @@ export type FetchMemesParams = {
   tagStatus?: string
   cursor?: string
   limit?: number
+  /**
+   * 在筛选之后做全库随机抽样（SPEC §6.3.2）。
+   *
+   * ⚠️ 三件事不在类型里，用的时候要记得：
+   *   - 随机序**没有下一页**，这一路返回的 `nextCursor` 恒为 `null`；
+   *   - **不要和 `cursor` 一起传**，服务端返回 `VALIDATION_FAILED`；
+   *   - 它是**全库**抽样，不是「最新一批里抽几张」——首页靠它把老图翻出来。
+   */
+  random?: boolean
 }
 
 export async function fetchMemes(
@@ -90,6 +115,7 @@ export async function fetchMemes(
   if (params.tagStatus) qs.set('tagStatus', params.tagStatus)
   if (params.cursor) qs.set('cursor', params.cursor)
   if (params.limit !== undefined) qs.set('limit', String(params.limit))
+  if (params.random) qs.set('random', 'true')
 
   const res = await fetch(`/api/v1/memes?${qs.toString()}`)
   if (!res.ok) throw await toApiError(res)

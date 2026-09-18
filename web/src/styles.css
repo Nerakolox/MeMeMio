@@ -381,6 +381,67 @@ body {
   }
 }
 
+/* ---- 首页随机图墙（/ 的「随便看看」） ---- */
+
+.discover {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* 与搜索框拉开：上面是「找」的动作，下面是「翻」的动作 */
+  margin-top: 24px;
+}
+
+.discover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.discover__refresh {
+  min-height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.discover__grid {
+  display: grid;
+  /*
+    桌面固定 5 列 × 2 行 = 10 张，不是 auto-fill：用户的预期是「一屏 10 张」，
+    auto-fill 会随窗口宽度忽多忽少，而张数由 WALL_SIZE 定死。
+  */
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 900px) {
+  .discover__grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .discover__grid {
+    /*
+      手机 2 列。这里是**降列数、不降张数**：5 列在 390px 上是 70px 一张，
+      既看不清也点不准（styling.md：触摸目标是 44×44px 起）。
+      手机是这个产品的主场，不为塞满一屏牺牲可点性。
+    */
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.discover__empty,
+.discover__error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.discover__request-id {
+  margin: 0;
+}
+
 /* Responsive: collapse sidebar on narrow viewports */
 @media (max-width: 640px) {
   .browse {

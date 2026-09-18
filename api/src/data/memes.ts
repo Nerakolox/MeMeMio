@@ -432,6 +432,13 @@ export type ListMemesParams = {
   tagStatus?: string
   cursor?: string
   limit?: number
+  /**
+   * 在筛选之后做全库随机抽样。SPEC §6.3.2
+   *
+   * ⚠️ **它不是「排个随机序然后照常分页」**——随机序没有下一页，所以这条路径不吃
+   * `cursor`、`nextCursor` 恒为 `null`。handler 负责挡住 `random` + `cursor` 的组合。
+   */
+  random?: boolean
 }
 
 /**
@@ -508,7 +515,10 @@ export async function listMemes(
   }
 
   // 游标分页：按 created_at desc, id desc；游标取「上一页最后一条」之后
-  if (params.cursor) {
+  //
+  // 随机路径**不吃游标**：随机序没有「下一页」（SPEC §6.3.2）。handler 已经把
+  // `random` + `cursor` 的组合挡成了 VALIDATION_FAILED，这里是第二道。
+  if (params.cursor && params.random !== true) {
     const decoded = decodeCursor(params.cursor)
     if (decoded) {
       // (created_at < cursor_ts) OR (created_at = cursor_ts AND id < cursor_id)
@@ -521,49 +531,68 @@ export async function listMemes(
     }
   }
 
-  // 收藏过滤必须 JOIN，放在最后减少其他 OR 的影响
-  if (params.favorited === true && actorId) {
-    const rows = await db
-      .select({
-        meme: memes,
-        uploaderName: users.name,
-        favoritedAt: userFavorites.createdAt,
-      })
-      .from(memes)
-      .innerJoin(users, eq(memes.uploaderId, users.id))
-      .innerJoin(
-        userFavorites,
-        and(eq(userFavorites.memeId, memes.id), eq(userFavorites.userId, actorId)),
-      )
-      .where(and(...conditions))
-      .orderBy(desc(memes.createdAt), desc(memes.id))
-      .limit(limit + 1)
+  // 收藏过滤走 INNER JOIN `user_favorites`（「只看收藏」就是要求那条关系存在）。
+  //
+  // ⚠️ **join 的选择只在这一处**，下面随机与分页两条路径共用它。分成两份的话，
+  //    必然有一份会先改——而 `favorited` 筛错的代价是一张不该出现的图出现在列表里，
+  //    不报错。这个 bug 形态和漏 `deleted_at` 是同一类。
+  const favoriteFilter = params.favorited === true && actorId !== null
+  /** 收藏关系的 join 条件。`actorId` 为 null 时根本不该构造它——见下面的三元。 */
+  const favoriteJoin = (userId: string) =>
+    and(eq(userFavorites.memeId, memes.id), eq(userFavorites.userId, userId))
 
-    const hasMore = rows.length > limit
-    const page = hasMore ? rows.slice(0, limit) : rows
-    const last = page[page.length - 1]
-    const nextCursor = hasMore && last ? encodeCursor(last.meme.createdAt, last.meme.id) : null
-    return {
-      items: page.map((r) => ({ ...r.meme, uploaderName: r.uploaderName, favorited: true })),
-      nextCursor,
-    }
+  const selected = {
+    meme: memes,
+    uploaderName: users.name,
+    favoritedAt: userFavorites.createdAt,
   }
-
-  // 通用路径：LEFT JOIN userFavorites 计算 favorited 字段
-  const rows = await db
-    .select({
-      meme: memes,
-      uploaderName: users.name,
-      favoritedAt: userFavorites.createdAt,
-    })
+  const base = db
+    .select(selected)
     .from(memes)
     .innerJoin(users, eq(memes.uploaderId, users.id))
-    .leftJoin(
-      userFavorites,
-      actorId
-        ? and(eq(userFavorites.memeId, memes.id), eq(userFavorites.userId, actorId))
-        : sql`false`,
-    )
+
+  // `favoriteFilter && actorId !== null` 里的第二个判断是为了让 TS 收窄 `actorId`；
+  // 语义上是冗余的（`favoriteFilter` 已蕴含它），类型系统看不见这层蕴含。
+  const joined =
+    favoriteFilter && actorId !== null
+      ? base.innerJoin(userFavorites, favoriteJoin(actorId))
+      : base.leftJoin(
+          userFavorites,
+          actorId !== null ? favoriteJoin(actorId) : sql`false`,
+        )
+
+  const toItems = (
+    rows: { meme: MemeRow; uploaderName: string; favoritedAt: Date | null }[],
+  ) =>
+    rows.map((r) => ({
+      ...r.meme,
+      uploaderName: r.uploaderName,
+      // INNER JOIN 那条路径上关系必然存在，不必再看 favoritedAt
+      favorited: favoriteFilter ? true : r.favoritedAt !== null,
+    }))
+
+  // ── 随机抽样（SPEC §6.3.2） ──────────────────────────────────────
+  //
+  // ⚠️ **`order by random()` 是全表扫描 + 排序**，不是索引扫描。几万行在毫秒级，
+  //    够首页用；**百万行量级它会是秒级**，届时换 `TABLESAMPLE` 或预生成随机序列。
+  //    现在不预先优化——扫的是几万行不是几百万行，与 `findNearestByPhash` 那条
+  //    「现在就上专用索引是提前优化」是同一个判断。到量了再换，别提前建索引。
+  //
+  // ⚠️ 这里**没有第二份 WHERE**：`conditions` 是上面逐条拼好的那一份，软删过滤、
+  //    多值 AND、`uploader`、`tagStatus` 全在里面。随机路径另写一份 WHERE 是本任务
+  //    最危险的写法——漏掉 `deleted_at is null` 的表现是「已删的图出现在首页」，
+  //    不报错、不崩溃。见 SPEC §6.3.2 与 database.md §1.1。
+  if (params.random === true) {
+    const rows = await joined
+      .where(and(...conditions))
+      .orderBy(sql`random()`)
+      .limit(limit)
+
+    // 抽样没有下一页：给一个游标只会让客户端把「随机的第二页」接在第一页后面。
+    return { items: toItems(rows), nextCursor: null }
+  }
+
+  const rows = await joined
     .where(and(...conditions))
     .orderBy(desc(memes.createdAt), desc(memes.id))
     .limit(limit + 1)
@@ -573,14 +602,7 @@ export async function listMemes(
   const last = page[page.length - 1]
   const nextCursor = hasMore && last ? encodeCursor(last.meme.createdAt, last.meme.id) : null
 
-  return {
-    items: page.map((r) => ({
-      ...r.meme,
-      uploaderName: r.uploaderName,
-      favorited: r.favoritedAt !== null,
-    })),
-    nextCursor,
-  }
+  return { items: toItems(page), nextCursor }
 }
 
 // ── 打标状态汇总（SPEC §6.6.1） ────────────────────────────────────

@@ -24,6 +24,8 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
+| [首页随机图墙](2026-09-19-home-random-grid.md) | `done` | **跨端**——首页现在是纯搜索框，没有「翻」的入口；`GET /memes` 加 `random=true` 在全库抽样（SPEC §6.3.2，已转 `accepted`） |
+| [打标状态界面](2026-09-19-tagging-status.md) | `planning` | **跨端**——打标跑起来了但界面上看不见，兑现 §5.2.3 / `styling.md` / `settings-ux.md §9` 三处已写下的承诺；新增 `GET /memes/tag-status`（SPEC §6.6，`proposed`） |
 | [三个管理页并入设置页](2026-09-18-settings-merge.md) | `in_progress` | **web 单端**——`/admin/*` 三页都是设置项；带出两处 SPEC 措辞偏差待总管裁定 |
 | [R2 公开 URL 丢了键前缀](2026-09-18-r2-public-url-prefix.md) | `in_progress` | **api 单端，挡着用**——首次接真实 R2 就全站裂图；派生 URL 有两份实现，都没加 `R2_KEY_PREFIX` |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
@@ -33,7 +35,9 @@
 
 **已归档**：骨架、认证、Admin 邀请码与用户管理、浏览页、搜索页、导入、打标队列消费者（含收藏端点）、api 收尾三件、模型配置与测试连接，见 [`_archive/joint-tasks/`](../_archive/joint-tasks/)。
 
-**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口、设置页与管理页的统计面板（`settings-ux.md §9`）、`queue.md §6` 的五个定时清理任务、web 侧 `tagStatus` 徽标直出英文枚举、部署、**`web/` 的常驻 e2e**。
+**还没有任务、但已知缺口**：SPEC §6.4 的编辑/软删/restore/retag/查重接口（**`needs_manual` 的图要能补标，等的就是这一批**）、`queue.md §6` 的五个定时清理任务、设置页与管理页的统计面板（`settings-ux.md §9`，接口随[打标状态界面](2026-09-19-tagging-status.md)一起做，界面没做）、部署、**`web/` 的常驻 e2e**。
+
+> ~~web 侧 `tagStatus` 徽标直出英文枚举~~ —— 已并入[打标状态界面](2026-09-19-tagging-status.md)（2026-09-19）。
 
 > 最后一条有明确排期：**排在 §6.4 和部署之后**（测试设施不阻塞核心功能）。`web/package.json` 至今只有 `dev` / `build` / `preview` / `typecheck`，没有任何测试框架——已经是第四个用一次性脚本跑几十条断言、跑完即删的任务了，代价是每轮重写驱动、归档里的数字全不可复现。
 >
@@ -96,6 +100,18 @@
 | HyDE 走部署方 `env.defaultVision`，未按搜索者自己的视觉通道解析——**与 SPEC §6.3.1 的已知偏差** | ✅ api 端已修（2026-09-18，`81e1aeb`）：`rewriteQuery` 收 `actorId`，登录用户走本人通道，匿名落部署方默认 |
 | `resolveEmbedConfig()` 只读环境变量，`embed_config` 表无读写路径 | ✅ api 端已修（2026-09-18，`81e1aeb`）：配置表优先、环境变量兜底，只认 `verified_at` 非空的行 |
 | `rrf.ts` 依赖「`data/` 每路返回的 id 不重复」，上游 join 出重复行会静默翻倍 | 改 `api/src/data/search.ts` 的 join 时回看 |
+
+
+## 首页随机图墙转出的遗留项
+
+出处见[该任务](2026-09-19-home-random-grid.md)的两端验收。
+
+| 遗留项 | 归属 |
+|---|---|
+| **手机端首页会自动聚焦搜索框 → 弹键盘 → 盖住刚做好的随机图墙。** `routes/home.tsx` 的 `autoFocus` 是本任务之前就有的（为了「打开就能打字搜」），图墙出现之前它没坏处；现在它对手机——也就是 `styling.md` 说的「这个产品体验最好的一端」——把整块新内容挡住了。**改它要动搜索路径的行为，而弹不弹键盘、盖住多少只有真机能回答**，所以没在这次版式改动里顺手改 | web 本端，**需要真机**。下次上真机时先看一眼这个 |
+| 图墙的空库态与请求失败态**没有真实场景验证**（本地库有图、api 正常），走的是代码路径 | 部署后联合回归，与「真 api × 真浏览器联调」那批一起 |
+| 随机卡片上**没有复制 / 发送入口**，只有收藏。有意留的：复制现在是一段临时实现，真流程（`clipboard-share.md`）要求桌面 + 真机各测一遍 | `clipboard-share.md` 的三条路径落地那次，两处一起接 |
+| `order by random()` 是全表扫描。几万行毫秒级，**百万行会是秒级**。触发条件已写进 `data/memes.ts` 的注释 | 到量了再换，不提前优化。改 `listMemes` 时回看 |
 
 
 ## 写任务的要求
