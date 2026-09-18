@@ -40,7 +40,7 @@
 
 未注明状态的章节为 `accepted`——它们来自已对齐的设计文档，但**本项目当前没有任何 `stable` 条目**，因为还没有实现和验证。
 
-明确标记 `proposed` 的：桌面端拖拽发送路径（[§9.2](09-decisions.md)）、各供应商的 `dimensions` 与 `json_object` 实际支持情况（[§9.7](09-decisions.md)）、词表 v0.1 的具体词条（[§4.2](04-vocabulary.md)）。这些依赖 [供应商探测任务](../joint-tasks/2026-09-13-provider-spikes.md) 和 [评测集任务](../joint-tasks/2026-09-13-eval-set.md) 的结果。
+明确标记 `proposed` 的：桌面端拖拽发送路径（[§9.2](09-decisions.md)）、各供应商的 `dimensions` 与 `json_object` 实际支持情况（[§9.7](09-decisions.md)）、词表 v0.1 的具体词条（[§4.2](04-vocabulary.md)）、打标状态接口（[§6.6](06-endpoints.md)，2026-09-19 新增，待两端确认）。前几项依赖 [供应商探测任务](../joint-tasks/2026-09-13-provider-spikes.md) 和 [评测集任务](../joint-tasks/2026-09-13-eval-set.md) 的结果。
 
 ## §0.4 基线与兼容
 

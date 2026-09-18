@@ -122,7 +122,7 @@ GET /memes?emotions=无语&tags=猫&isAnimated=true&favorited=true&uploader=me&c
 | `isAnimated` | 布尔 |
 | `favorited` | `true` 时只返回当前用户收藏的 |
 | `uploader` | `me` 或用户 id |
-| `tagStatus` | 仅本人或 admin 可用，用于「待处理」列表 |
+| `tagStatus` | 仅本人或 admin 可用，用于「待处理」列表（[§6.6.2](#662-待处理列表)） |
 
 **`uploader` 和 `favorited` 是筛选项，不是安全边界。** 不传就是全库，这是设计本身，见 [§0.1](00-overview.md)。
 
@@ -258,3 +258,67 @@ Embedding 实测维度 < 1024 直接拒绝保存，返回 `EMBED_DIM_TOO_SMALL`�
 进度必须来自库里的真实计数，**不能是进程内存里的计数器**——重启后内存计数归零，进度条会从头开始，那是假的。失败的条目留在队列里不做断点续传（[queue.md §7](../api/agents/rules/queue.md)），`stale` 长时间不降就是出了问题。
 
 `running` 为真时搜索必须返回 `degraded: true`（[§6.3.1](06-endpoints.md)），因为此时库里的向量一部分属于旧模型，向量路的结果不可信。判断这一条的查询会落在每个搜索请求上，必须是索引命中的存在性查询或带短期缓存，不能是全表 count。
+
+## §6.6 打标状态
+
+> **状态：`proposed`**（2026-09-19）。新增能力，两端确认后转 `accepted`。见[打标状态界面](../joint-tasks/2026-09-19-tagging-status.md)。
+
+导入的终点是 `tag_status = pending`（[§6.2.2](#622-服务端处理顺序)），打标在后台队列里跑。**在补上本节之前，这件事对用户没有任何反馈**——打完了不知道，打失败了也不知道。
+
+这不是新需求，是三处已经写下的承诺一直没有落点：[§5.2.3](05-data-models.md) 说 `needs_manual` 的图「在待处理列表里」，[§6.3.2](#632-浏览) 的 `tagStatus` 参数写着「用于「待处理」列表」，[styling.md](../web/agents/rules/styling.md) 说这类图「角标「需人工」，可点进去补」。**注意「列表」是有的（`GET /memes` 能按 `tagStatus` 筛），缺的是计数和入口**——没人知道有 7 张图卡着，自然也不会去看那个列表。
+
+### §6.6.1 汇总
+
+| 方法 | 路径 | 权限 |
+|---|---|---|
+| GET | `/memes/tag-status` | 本人；`admin` 可带 `scope=all` |
+
+```
+GET /api/v1/memes/tag-status
+```
+
+```
+{
+  scope: "mine",
+  visionConfigured: true,
+  counts: { ok: 982, pending: 120, refused: 0, needsManual: 7 },
+  running: 2,
+  failures: [ { reason: "unreachable", count: 4 }, { reason: "refused", count: 3 } ]
+}
+```
+
+| 字段 | 含义 |
+|---|---|
+| `scope` | 回显生效范围，`mine`（缺省）或 `all` |
+| `visionConfigured` | 当前生效的视觉通道是否可用。`mine` 看调用者自己的（含部署方默认兜底），`all` 看全站是否有任一可用通道 |
+| `counts` | 按 `tag_status` 分组的条数，四个取值全给，没有的写 `0` |
+| `running` | 此刻库里 `status = running` 的打标任务数 |
+| `failures` | 终局失败的任务按原因分组的条数，降序 |
+
+**`counts.pending` 必须和 `visionConfigured` 一起看才有意义。** 前者是「多少张还没标」，后者回答「它们会不会自己好」——通道不可用时任务不消费、也不计失败重试（[§2.4](02-errors.md) 的 `AI_NOT_CONFIGURED`），**配好之后自动补打标，用户不需要做任何操作**。界面必须把这句话说出来，否则一大批 `pending` 看起来就是卡死了。
+
+**计数口径**：`counts` 只统计 `deleted_at is null` 的记录（[§3.4](03-auth-permission.md)），`scope=all` 同理。同一批图必须和 `GET /memes?uploader=me&tagStatus=X` 的筛选结果一致——两处对不上就是有一个漏了软删过滤。
+
+`failures[].reason` 是**失败类别**，只有 `unreachable` / `refused` / `invalid_output` / `unsupported` / `embed_failed` 五个取值，不是给用户看的文案——中文文案由客户端映射。
+
+**只返回类别，不返回 `tag_jobs.last_error` 原文。** 原文是给日志看的诊断串：格式随时会变，而且随着供应商适配的深入迟早会把上游返回的内容带进来。**类别是契约，诊断串不是**——把诊断串发出去，等于让前端依赖一个从没承诺过的字符串格式，这和 [§2.1](02-errors.md) 不把底层 message 回显给用户是同一条理由。
+
+> ⚠️ **`failures` 里会有 `tag_status = ok` 的图。** `embed_failed` 是「打标成功、向量没算出来」（[§5.2.3](05-data-models.md)），它**不落在 `counts.needsManual` 里**。所以 `sum(failures) ≠ counts.needsManual` 是正常的，不要试图让它们对上，也不要为了对上把它排除——那正是「这张图能被文字搜到、只是进不了向量路」这个状态唯一会被看见的地方。
+
+`running` 取库里的真实值，不是进程内存计数：多副本下它合计所有副本在跑的任务。被 SIGKILL 卡住的 `running` 要到下次进程启动回收（`requeueStaleRunningJobs`）才降下来，在此之前这个数会偏大——这是可接受的近似，**不要为了它去加一个实时对账任务**。
+
+`scope=all` 仅 `admin` 可用，其他角色传它返回 `FORBIDDEN`；缺省是 `mine`，不传参数的普通用户行为与显式传 `mine` 完全一致。
+
+### §6.6.2 待处理列表
+
+**列表复用 [§6.3.2](#632-浏览) 的 `GET /memes`，不新增端点。**
+
+```
+GET /api/v1/memes?uploader=me&tagStatus=needs_manual&limit=50
+```
+
+`tagStatus` 的参数语义、单值约束与权限在 §6.3.2 / §3.3 已定，本节不重复。视图按状态分开请求（一个 `tagStatus` 一次），因为参数是单值的。
+
+`refused` 当前**不可达**：它要求主副通道都被拒绝，而副通道尚未接入（[§9.5](09-decisions.md) 仍是 `proposed`），所有终局失败都落 `needs_manual`。界面按四个取值全量映射文案，但不为 `refused` 单独做交互。
+
+**`needs_manual` 的图这一版只能看，不能改。** [§6.4](#64-管理) 的 `PATCH /memes/{id}` 与 `POST /memes/retag` 都还没实现，所以「人工补」这一步没有落点。本节只保证这些图**可见、且能看出是什么原因失败的**，补标动作随 §6.4 一起做——不要在 §6.4 之外另造一个「重试」端点，那会让同一个语义有两条实现。

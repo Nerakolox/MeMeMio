@@ -81,3 +81,5 @@ await tx(async (t) => {
 不是。`tag_jobs` 有自己的访问方法，**不走 `data/memes.ts`**。
 
 但入队时拿到的 `memeId` 必须来自 `data/memes.ts` 的查询结果——**不要为了省一次查询直接在队列表上 join `memes`**，那会绕过 `deleted_at is null`，表现是给已删除的图打标。
+
+**这条管的是写路径（入队）。** 读路径上反过来的 join 是允许的、有时还是必须的：只有 join 才能在队列表的行上**应用**软删过滤，不 join 反而会把已删除的图算进去。判据是 join 有没有带 `deleted_at is null` 这个条件，不是有没有 join。走这条路的查询要在注释里写明方向，别让人以为是照抄本节抄错了——[§6.6](../../../spec/06-endpoints.md) 的 `failures` 计数就是这么做的。
