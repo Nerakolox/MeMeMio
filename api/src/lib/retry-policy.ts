@@ -15,18 +15,23 @@
  */
 
 /**
- * 一次打标尝试的失败原因。
+ * 一次打标尝试的失败原因。**运行时也导出**，因为它是契约里的一份清单：
+ * `GET /memes/tag-status` 的 `failures[].reason` 只允许这五个取值（SPEC §6.6.1），
+ * 归类时按这个数组读，两端不会各自维护一份枚举。
  *
  * `embed_failed` 不是打标失败：打标已经成功写库了，只是向量没算出来。
  * 它单独成一支是因为 **embedding 失败不回滚打标**（SPEC §5.2.3 / 本任务验收）——
  * 那张图此时已经能被 OCR/trgm 搜到，退回 `pending` 反而让它连文字都搜不到。
  */
-export type TagJobFailure =
-  | 'unreachable'
-  | 'refused'
-  | 'invalid_output'
-  | 'unsupported'
-  | 'embed_failed'
+export const TAG_JOB_FAILURES = [
+  'unreachable',
+  'refused',
+  'invalid_output',
+  'unsupported',
+  'embed_failed',
+] as const
+
+export type TagJobFailure = (typeof TAG_JOB_FAILURES)[number]
 
 /** `AI_UNREACHABLE` 的重试上限。queue.md §3 写死 5 次。 */
 export const MAX_UNREACHABLE_ATTEMPTS = 5

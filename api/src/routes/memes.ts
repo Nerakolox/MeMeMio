@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { AppError } from '../lib/app-error.js'
 import { optionalAuth, type OptionalAuthVariables } from '../middleware/auth.js'
 import { addFavorite, listMemes, getMemeById, removeFavorite } from '../data/memes.js'
+import { getTagStatusSummary } from '../services/tag-status.js'
 import { serializeMeme } from '../serialize/meme.js'
 
 // 序列化器搬到了 `serialize/meme.ts`：搜索接口要输出同一批字段，
@@ -72,6 +73,35 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     )
 
     return c.json({ items: items.map(serializeMeme), nextCursor })
+  })
+
+  /**
+   * GET /api/v1/memes/tag-status —— 打标状态汇总。SPEC §6.6.1
+   *
+   * ⚠️ **必须注册在 `/:id` 之前。** Hono 按注册顺序匹配，`tag-status` 会先被
+   *    `/:id` 吃掉，表现是这个接口永远返回 NOT_FOUND——**不报错、不告警**，
+   *    只是「卡着的图有多少张」永远查不到。同一个坑 `GET /imports/reviews`
+   *    已经踩过并解决了（routes/imports.ts），照那条的写法来。
+   *
+   * 只读。列表那一半复用 `GET /memes?tagStatus=`，本接口不做列表（§6.6.2）。
+   */
+  .get('/tag-status', async (c) => {
+    const actor = c.get('currentUser')
+    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+
+    // ⚠️ **取值必须在下面那个判断之前挡掉。** 漏了校验的话 `scope=foo` 会掉进
+    //    「不是 mine」那一支，等于给非管理员开了 `all` 的口子——静默越权。
+    const rawScope = c.req.query('scope')
+    if (rawScope !== undefined && rawScope !== 'mine' && rawScope !== 'all') {
+      throw new AppError('VALIDATION_FAILED', 'scope 只能是 mine 或 all')
+    }
+    const scope = rawScope ?? 'mine'
+
+    if (scope === 'all' && actor.role !== 'admin') {
+      throw new AppError('FORBIDDEN', 'scope=all 仅管理员可用')
+    }
+
+    return c.json(await getTagStatusSummary(scope, actor.id))
   })
 
   /**

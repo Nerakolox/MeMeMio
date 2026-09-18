@@ -1,6 +1,7 @@
-import { and, eq, inArray, lt, not, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt, not, sql } from 'drizzle-orm'
+import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
-import { tagJobs } from './schema.js'
+import { memes, tagJobs } from './schema.js'
 
 /**
  * `tag_jobs` 的访问方法。
@@ -9,6 +10,12 @@ import { tagJobs } from './schema.js'
  * 但反过来有一条硬要求：入队时传进来的 `memeId` / `userId` 必须来自 `data/memes.ts`
  * 的查询结果。不要为了省一次查询在这里 join `memes` —— 那会绕过 `deleted_at is null`，
  * 表现是给已经删掉的图打标，不报错。
+ *
+ * ⚠️ **上面那条管的是写路径（入队）。读路径反过来的 join 是允许的，判据是 join 有没有
+ *    带 `deleted_at is null`**（queue.md §8 在 2026-09-19 收紧成这个措辞）：
+ *    只有 join 才能在队列表的行上**应用**软删过滤，不 join 反而会把已删除的图算进去。
+ *    本文件的 `countFailedTagJobsByReason` 就是这条路——别当成照抄 §8 抄错了，
+ *    形状和 `data/imports.ts` 的待确认队列 join 一样。
  *
  * 这一层只写 SQL，不做判断。重试几次、退避多久由 `lib/retry-policy.ts` 决定，
  * 什么时候取任务由 `queue/worker.ts` 决定（project-structure.md：`queue/` 只负责调度）。
@@ -167,4 +174,84 @@ export async function requeueStaleRunningJobs(
     )
     .returning({ id: tagJobs.id })
   return rows.length
+}
+
+// ── 打标状态汇总里的两个数（SPEC §6.6.1） ──────────────────────────
+//
+// `GET /memes/tag-status` 的 `running` 与 `failures`。它们以 `tag_jobs` 为驱动，
+// 所以在这一个文件里；`counts` 只碰 `memes`，在 `data/memes.ts`。
+
+/**
+ * 此刻 `status = 'running'` 的任务数。
+ *
+ * **这是库里的真实计数，不是进程内存计数器**（SPEC §6.6.1）：多副本下它合计所有副本
+ * 在跑的任务，而内存计数重启就归零。被 SIGKILL 卡住的任务要到下次进程启动
+ * （`requeueStaleRunningJobs`）才降下来，在此之前这个数偏大——可接受的近似，
+ * **不要为了它去加实时对账**。
+ *
+ * 不 join `memes`：契约只说「在跑的任务数」。跑到一半图被删掉的那些很快会判 `gone`，
+ * 不值得为它多一次 join（queue.md §8 的方向判据在这里用不上，这里根本没有 join）。
+ *
+ * @param userId null 表示全站（`scope=all`）
+ */
+export async function countRunningTagJobs(
+  userId: string | null,
+  db: Db = defaultDb,
+): Promise<number> {
+  const conditions: SQL[] = [eq(tagJobs.status, 'running')]
+  if (userId !== null) conditions.push(eq(tagJobs.userId, userId))
+
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tagJobs)
+    .where(and(...conditions))
+  return row?.count ?? 0
+}
+
+/** 一个失败类别（原样取自 `last_error` 的前缀，**没有校验是不是契约里的五个取值**）。 */
+export type TagFailureGroup = { reason: string; count: number }
+
+/**
+ * 终局失败的任务按 `last_error` 的类别前缀分组计数。
+ *
+ * ⚠️ **这条查询 join 了 `memes`，方向是「在队列表的行上应用软删过滤」**
+ * （文件头那段说的读路径）：不 join 的话，已经删掉的图会一直算在失败分布里，
+ * 而它根本不出现在待处理列表里，用户看到的数字和列表对不上。
+ * 所以 `deleted_at is null` 是这条 join 的**目的**，不是顺带加的。
+ *
+ * 归属按 `memes.uploader_id` 过滤，和 `counts` 的口径对齐（图是谁的），
+ * **不是** `tag_jobs.user_id`（任务为谁跑）——两者由 `enqueueTagJob` 保证相等，
+ * 但契约里的「同一批图」指的是前者。
+ *
+ * 类别取第一个冒号之前那段：写入格式固定是 `` `${failure}: ${detail}` ``
+ * （`queue/worker.ts` 的 `applyFailure`）。**`detail` 一律不带出去**——
+ * 它来自供应商响应，格式随时会变（SPEC §6.6.1）。
+ *
+ * 返回的是原样的分组，**不折成契约的五个取值**：那是响应形状，属于服务层
+ * （`services/tag-status.ts`）。
+ *
+ * @param uploaderId null 表示全站（`scope=all`）
+ */
+export async function countFailedTagJobsByReason(
+  uploaderId: string | null,
+  db: Db = defaultDb,
+): Promise<TagFailureGroup[]> {
+  const reason = sql<string>`split_part(${tagJobs.lastError}, ':', 1)`
+
+  const conditions: SQL[] = [
+    eq(tagJobs.status, 'failed'),
+    // 没有 last_error 的失败任务没有类别可报，别让它在分组里多出一个 null 桶
+    isNotNull(tagJobs.lastError),
+    isNull(memes.deletedAt),
+  ]
+  if (uploaderId !== null) conditions.push(eq(memes.uploaderId, uploaderId))
+
+  const rows = await db
+    .select({ reason, count: sql<number>`count(*)::int` })
+    .from(tagJobs)
+    .innerJoin(memes, eq(memes.id, tagJobs.memeId))
+    .where(and(...conditions))
+    .groupBy(reason)
+
+  return rows.map((row) => ({ reason: row.reason, count: row.count }))
 }

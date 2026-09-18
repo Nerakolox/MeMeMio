@@ -583,6 +583,57 @@ export async function listMemes(
   }
 }
 
+// ── 打标状态汇总（SPEC §6.6.1） ────────────────────────────────────
+//
+// `GET /memes/tag-status` 的 `counts`。**只有这一条查询在本文件里**：它只碰 `memes`。
+// 同一个接口的 `running` / `failures` 是以 `tag_jobs` 为驱动的聚合，在 `data/tag-jobs.ts`。
+
+export type TagStatusCounts = {
+  ok: number
+  pending: number
+  refused: number
+  needsManual: number
+}
+
+/**
+ * 按 `tag_status` 分组的条数。
+ *
+ * ⚠️ **`deleted_at is null` 是硬条件**（SPEC §3.4、§6.6.1 的计数口径），
+ * 而且口径必须和 `listMemes({ uploader, tagStatus })` 逐字一致——同一批图在两处
+ * 条数对不上，说明其中一处漏了软删过滤，表现是数字多出来几个，**不报错**。
+ * 测试里有一条专门拿这两个数字对账。
+ *
+ * 契约要的是**四个取值全给**，所以下面的返回值是四个键摆好再填，不是「查到什么给什么」：
+ * 缺的那个必须是 0，前端不处理「这个键不存在」。
+ *
+ * @param uploaderId null 表示全站（`scope=all`，仅管理员，见服务层的口径判断）
+ */
+export async function countMemesByTagStatus(
+  uploaderId: string | null,
+  db: Db = defaultDb,
+): Promise<TagStatusCounts> {
+  const conditions: SQL[] = [isNull(memes.deletedAt)]
+  if (uploaderId !== null) conditions.push(eq(memes.uploaderId, uploaderId))
+
+  const rows = await db
+    .select({ tagStatus: memes.tagStatus, count: sql<number>`count(*)::int` })
+    .from(memes)
+    .where(and(...conditions))
+    .groupBy(memes.tagStatus)
+
+  // 库里出现第五种取值只可能是有人绕过了状态机，那它就不会被读出来——
+  // 契约里的四个取值之外，前端没有对应文案可写。
+  const byStatus = new Map<string, number>(
+    rows.map((row): [string, number] => [row.tagStatus, row.count]),
+  )
+  return {
+    ok: byStatus.get('ok') ?? 0,
+    pending: byStatus.get('pending') ?? 0,
+    refused: byStatus.get('refused') ?? 0,
+    needsManual: byStatus.get('needs_manual') ?? 0,
+  }
+}
+
 /**
  * 单条浏览，含 favorited 字段。软删记录返回 null（调用方抛 NOT_FOUND）。SPEC §6.3.2
  */
