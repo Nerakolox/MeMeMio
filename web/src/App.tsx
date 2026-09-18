@@ -8,6 +8,8 @@ import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
 import { AdminInvitesPage } from './routes/admin-invites'
 import { AdminUsersPage } from './routes/admin-users'
+import { AdminEmbeddingPage } from './routes/admin-embedding'
+import { SettingsPage } from './routes/settings'
 import { NotFoundPage } from './routes/not-found'
 import { postLogout } from './lib/api'
 import { useNavigate } from 'react-router-dom'
@@ -68,7 +70,9 @@ function AppShell() {
           <Link to="/">Mememio</Link>
           <Link to="/browse">浏览</Link>
           {user && <ImportNavLink />}
+          {user && <Link to="/settings">设置</Link>}
           {user?.role === 'admin' && <Link to="/admin/invites">管理</Link>}
+          {user?.role === 'admin' && <Link to="/admin/embedding">Embedding</Link>}
         </nav>
         {user && (
           <button className="app__logout" onClick={handleLogout}>
@@ -106,6 +110,14 @@ function AppShell() {
             }
           />
           <Route
+            path="/settings"
+            element={
+              <RequireAuth>
+                <SettingsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/admin/invites"
             element={
               <RequireAdmin>
@@ -118,6 +130,14 @@ function AppShell() {
             element={
               <RequireAdmin>
                 <AdminUsersPage />
+              </RequireAdmin>
+            }
+          />
+          <Route
+            path="/admin/embedding"
+            element={
+              <RequireAdmin>
+                <AdminEmbeddingPage />
               </RequireAdmin>
             }
           />

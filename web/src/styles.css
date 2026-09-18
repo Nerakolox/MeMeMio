@@ -719,3 +719,201 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Settings / Embedding 管理页 ---- */
+/* 只写布局：flex / grid、尺寸、间距、折叠区的 display。视觉风格未定稿（web/AGENTS.md §5）。 */
+
+.settings-page {
+  max-width: 800px;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.settings-section h2 {
+  margin: 0;
+}
+
+.settings-section__source,
+.settings-section__verified,
+.settings-section__hint {
+  margin: 0;
+}
+
+.settings-section__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 触摸目标至少 44×44px：折叠开关在手机上是主要点击目标（styling.md） */
+.settings-section__advanced > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.settings-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-section__actions button {
+  min-height: 44px;
+  min-width: 88px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+/* 契约文案（settings-ux.md §4）：缩进和分行是它的结构，用 pre-wrap 保住，窄屏也不横向撑破 */
+.settings-notice {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+}
+
+.config-fields__row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-fields__row input {
+  min-height: 44px;
+  padding: 0 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.config-fields__key-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.config-fields__key-state button {
+  min-height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.test-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.test-result__verdict {
+  margin: 0;
+}
+
+.test-result__probes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.test-result__probe {
+  overflow-wrap: anywhere;
+}
+
+.test-result__raw > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.test-result__raw-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.test-result__raw-actions button {
+  min-height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+/*
+ * 原始返回：**内容不截断**（settings-ux.md §5）。限高只是给它一个滚动区，
+ * 免得几百行返回把整页顶走；全文都在 DOM 里，复制按钮拿到的也是全文。
+ */
+.test-result__raw-text {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.settings-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.settings-confirm p {
+  margin: 0;
+}
+
+.settings-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-confirm__actions button {
+  min-height: 44px;
+  min-width: 88px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.reindex__state,
+.reindex__hint,
+.reindex__failed {
+  margin: 0;
+}
+
+.reindex__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0;
+}
+
+.reindex__count {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reindex__count dt,
+.reindex__count dd {
+  margin: 0;
+}
+
+.test-result__note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
