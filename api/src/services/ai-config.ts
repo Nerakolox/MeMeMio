@@ -188,8 +188,13 @@ export async function resolveEmbedKey(submitted: string): Promise<string> {
 export type SaveEmbedOutcome = {
   /** 这次保存换了模型。换了就意味着全站向量作废。 */
   modelChanged: boolean
-  /** 顺带排进队列的重算任务数。没换模型时为 0。 */
-  enqueued: number
+  /**
+   * 顺带排进队列的重算任务数。没换模型时为 0。
+   *
+   * **名字必须带 `Count`**（SPEC §6.5.3）：它是条数不是布尔，叫 `...Enqueued`
+   * 会让客户端顺手写成 `=== true`，那样不报错也不告警，只是保存完不跳进度条。
+   */
+  reindexEnqueuedCount: number
 }
 
 /**
@@ -238,14 +243,17 @@ export async function saveEmbedConfigChecked(
   await saveEmbedConfig(input)
   log.info({ baseUrl: input.baseUrl, model: input.model, modelChanged }, '保存 embedding 配置')
 
-  if (!modelChanged) return { modelChanged: false, enqueued: 0 }
+  if (!modelChanged) return { modelChanged: false, reindexEnqueuedCount: 0 }
 
   // 换模型 = 开启新一轮重建。上一轮遗留的 failed 行在这里清掉，
   // 它们记的是**旧模型**下的失败，留着会让新一轮的 `failed` 数从一开始就不对
   const cleared = await clearFailedReindexJobs()
-  const enqueued = await enqueueAllStale()
-  log.info({ model: input.model, cleared, enqueued }, '换 embedding 模型，全站重建索引入队')
-  return { modelChanged: true, enqueued }
+  const reindexEnqueuedCount = await enqueueAllStale()
+  log.info(
+    { model: input.model, cleared, reindexEnqueuedCount },
+    '换 embedding 模型，全站重建索引入队',
+  )
+  return { modelChanged: true, reindexEnqueuedCount }
 }
 
 // ── 重建索引（SPEC §6.5.4） ────────────────────────────────────────

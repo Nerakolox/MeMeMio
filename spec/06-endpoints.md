@@ -234,6 +234,13 @@ Embedding 实测维度 < 1024 直接拒绝保存，返回 `EMBED_DIM_TOO_SMALL`�
 
 `POST /admin/reindex` 把所有向量过期的记录排进重算队列，**幂等**——重复调用不会让同一条记录重算两遍。换模型时由 `PUT /config/embed` 自动触发，这个端点是管理员手动补触发用的（[queue.md §6](../api/agents/rules/queue.md) 的「重算过期向量」）。
 
+它的响应体是 `{ enqueuedCount, ...status }`——`enqueuedCount` 是**这一次点击**排进队列的条数，
+其余字段与 `GET` 的状态同形，省掉前端触发完再拉一次。`enqueuedCount: 0` 不是错误，
+它的意思是「该排的都已经排上了」，幂等本来就该这样。
+
+名字带 `Count` 的理由同 [§6.5.3](#653-配置的对外表示)：这个仓里已经因为一个叫得像布尔的数字
+返回过一次契约偏差，同一个概念在两个端点上不能有两个名字。
+
 **重算只重算 embedding。** 从 `search_text` 重新生成向量，不重新调视觉模型、不改 AI 产出字段——换 embedding 模型不影响打标结果，重跑视觉是白花钱。
 
 `GET /admin/reindex/status`：

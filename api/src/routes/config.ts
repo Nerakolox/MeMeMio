@@ -147,7 +147,7 @@ export const embedConfigRoutes = new Hono<{ Variables: AuthVariables }>()
       verifiedAt: toIsoSecondsOrNull(config.verifiedAt),
       // 换了模型才有意义的两个字段。前端据此决定要不要把管理员送去看重建进度
       reindexTriggered: outcome.modelChanged,
-      reindexEnqueued: outcome.enqueued,
+      reindexEnqueuedCount: outcome.reindexEnqueuedCount,
     })
   })
 

@@ -345,7 +345,7 @@ describe('PUT /config/embed 的三道闸门', () => {
       nativeDim: 1024,
       dimParamWorks: true,
       reindexTriggered: false,
-      reindexEnqueued: 0,
+      reindexEnqueuedCount: 0,
     })
   })
 
@@ -370,11 +370,40 @@ describe('PUT /config/embed 的三道闸门', () => {
     const confirmed = await call('PUT', '/config/embed', admin, { ...next, confirmReindex: true })
     expect(confirmed.status).toBe(200)
     const body = await readJsonNoKeys(confirmed)
-    expect(body).toMatchObject({ model: 'site-embed-b', reindexTriggered: true, reindexEnqueued: 1 })
+    expect(body).toMatchObject({
+      model: 'site-embed-b',
+      reindexTriggered: true,
+      reindexEnqueuedCount: 1,
+    })
 
     const jobs = await db.select().from(reindexJobs).where(eq(reindexJobs.memeId, meme.id))
     expect(jobs).toHaveLength(1)
     expect(jobs[0]?.status).toBe('pending')
+  })
+
+  it('回的是**条数**不是布尔：库里 3 条旧向量 → reindexEnqueuedCount === 3', async () => {
+    const admin = await signIn('admin')
+    await call('POST', '/config/embed/test', admin, EMBED_INPUT)
+    await call('PUT', '/config/embed', admin, EMBED_INPUT)
+
+    // **3 条而不是 1 条**：N=1 时「排了多少条」和「排没排」返回的是同一个值（`1`），
+    // 断言分不出两种实现，改回布尔照样全绿。N=3 才真的把「数」钉住（SPEC §6.5.3）
+    for (let i = 0; i < 3; i++) {
+      const meme = await makeMeme(db, { uploaderId: admin.id, searchText: `疲惫的猫 ${i}` })
+      await applyEmbedding(meme.id, unitVector(i), 'site-embed-a', db)
+    }
+
+    const next = { ...EMBED_INPUT, model: 'site-embed-b' }
+    await call('POST', '/config/embed/test', admin, next)
+
+    const body = await readJsonNoKeys(
+      await call('PUT', '/config/embed', admin, { ...next, confirmReindex: true }),
+    )
+
+    const jobs = await db.select().from(reindexJobs)
+    expect(jobs).toHaveLength(3)
+    // 这个数必须和队列里实际多出来的行数对得上，而不只是「大于 0」
+    expect(body['reindexEnqueuedCount']).toBe(jobs.length)
   })
 
   it('库里没有任何向量时换模型不拦——没有东西需要重算', async () => {

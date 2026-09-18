@@ -24,7 +24,7 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
-| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——两端已真对接（真 api + 真 Postgres + 真 Chromium，2026-09-18），**只剩 api 一次收尾**：`reindexEnqueued` → `reindexEnqueuedCount`（SPEC §6.5.3 已改，见第二轮联合验收的 §8.4 裁定） |
+| [模型配置与测试连接](2026-09-16-ai-config.md) | `in_progress` | **跨端**——只剩**两端各一行**（第三轮联合验收）：web 把 `EmbedSettings.tsx` 两处引用改成 `reindexEnqueuedCount`（闸门现在红 2 行，预期内）；api 把 `POST /admin/reindex` 的 `enqueued` 一并改成 `enqueuedCount`。两件互不依赖，可并行 |
 | [评测集](2026-09-13-eval-set.md) | `in_progress` | 持续优化——边用边跑；**已转入一项工具改造**：`eval.ts` 现在跑的是探测期提示词，不是上线那份 |
 | [词表 v1](2026-09-13-vocab-v1.md) | `in_progress` | 持续优化——`proposed` 版本直接落代码，跑出数据后迭代 |
 | [供应商探测](2026-09-13-provider-spikes.md) | `in_progress` | 持续优化——先选一个能用的，探测结果随用随补 |
