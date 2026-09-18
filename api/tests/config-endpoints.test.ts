@@ -442,12 +442,12 @@ describe('/admin/reindex', () => {
     const { admin, memeId } = await seedAdminWithStale()
 
     const first = await readJsonNoKeys(await call('POST', '/admin/reindex', admin))
-    expect(first['enqueued']).toBe(1)
+    expect(first['enqueuedCount']).toBe(1)
 
     // 入队并不会让这条记录不再「过期」（`embed_model` 没变），所以幂等靠的是
     // 队列表上的唯一索引，不是靠 stale 变空
     const second = await readJsonNoKeys(await call('POST', '/admin/reindex', admin))
-    expect(second['enqueued']).toBe(0)
+    expect(second['enqueuedCount']).toBe(0)
 
     const jobs = await db.select().from(reindexJobs).where(eq(reindexJobs.memeId, memeId))
     expect(jobs).toHaveLength(1)
@@ -470,6 +470,29 @@ describe('/admin/reindex', () => {
     const admin = await signIn('admin')
 
     const res = await readJsonNoKeys(await call('POST', '/admin/reindex', admin))
-    expect(res['enqueued']).toBe(0)
+    expect(res['enqueuedCount']).toBe(0)
+  })
+
+  it('回的是**条数**不是布尔：3 条过期 → enqueuedCount === 3', async () => {
+    const actor = await signIn('admin')
+    await call('POST', '/config/embed/test', actor, EMBED_INPUT)
+    await call('PUT', '/config/embed', actor, EMBED_INPUT)
+
+    // **3 条而不是 1 条**：N=1 时「排了多少条」和「排没排」的返回值撞在同一个 `1` 上，
+    // 断言分不出两种实现，退回布尔照样全绿。N=3 才真的把「数」钉住（SPEC §6.5.4）
+    for (let i = 0; i < 3; i++) {
+      const meme = await makeMeme(db, { uploaderId: actor.id, searchText: `疲惫的猫 ${i}` })
+      await applyEmbedding(meme.id, unitVector(i), 'old-model', db)
+    }
+
+    const body = await readJsonNoKeys(await call('POST', '/admin/reindex', actor))
+
+    const jobs = await db.select().from(reindexJobs)
+    expect(jobs).toHaveLength(3)
+    // 这个数必须和队列里实际多出来的行数对得上，而不只是「大于 0」
+    expect(body['enqueuedCount']).toBe(jobs.length)
+    // 状态照旧跟在同一个响应里（`{ enqueuedCount, ...status }`）。`stale` 是此刻全局
+    // 待重算量，和「这一次排了多少」是两个数，改名不能把 spread 碰掉
+    expect(body).toMatchObject({ running: true, total: 3, done: 0, stale: 3, failed: 0 })
   })
 })
