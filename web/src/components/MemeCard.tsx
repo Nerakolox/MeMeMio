@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { Meme } from '../lib/api'
 import { tagStatusLabel } from '../lib/tag-status'
 
@@ -9,6 +10,7 @@ export function MemeCard({
   meme,
   matchedBy,
   selected = false,
+  actions,
   onFavorite,
 }: {
   meme: Meme
@@ -16,13 +18,26 @@ export function MemeCard({
   matchedBy?: string[]
   /** 键盘选中态。搜索结果支持 ↑↓ 选择（clipboard-share.md §7）。 */
   selected?: boolean
+  /**
+   * 右上角的操作入口（「⋯」按钮与它的弹层），只由浏览页传。
+   *
+   * 做成插槽而不是在这里直接渲染，是因为**入口归哪个页面是页面的事**：
+   * 搜索页与首页图墙暂时不放这个入口（见任务的「明确不做」），
+   * 而卡片本身要在三个地方复用。
+   */
+  actions?: ReactNode
   onFavorite: (meme: Meme) => void
 }) {
   return (
     <div
-      className={`meme-card${selected ? ' meme-card--selected' : ''}`}
+      className={`meme-card${selected ? ' meme-card--selected' : ''}${
+        actions ? ' meme-card--with-actions' : ''
+      }`}
       data-selected={selected || undefined}
     >
+      {/* 不套额外的 div：卡片是 flex 容器，多一层就会多出一个占位的 flex item。
+          入口自己用 position: absolute 脱出文档流（见 styles.css 的 .meme-card__actions）。 */}
+      {actions}
       <img
         className="meme-card__img"
         src={meme.thumbUrl ?? meme.url}

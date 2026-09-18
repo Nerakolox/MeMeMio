@@ -20,7 +20,8 @@ src/features/
 
 > 「待处理列表」原本挂在 `manage/` 下（2026-09-19 改）。挪进 `tagging/` 是因为它读的是打标状态
 > （[SPEC §6.6](../../../spec/06-endpoints.md)），和「打标进度」是同一份数据、同一个页面；
-> `manage/` 留给 SPEC §6.4 的编辑与删除——那些是**写**操作，还没实现。
+> `manage/` 留给 SPEC §6.4 的编辑与删除——那些是**写**操作，见
+> [浏览页图片操作](../../../joint-tasks/2026-09-19-browse-meme-actions.md)。
 
 每个 feature 内部自己分文件，**不建全局的 `components/Button`、`hooks/`、`types/` 这种按类型切的目录**——那会让「改搜索」变成在四个目录之间来回跳。
 

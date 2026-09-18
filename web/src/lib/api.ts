@@ -70,6 +70,10 @@ export function toStateError(err: unknown): ApiError {
   })
 }
 
+// 路径段带连字符，只能走下标访问；而 `typeof x['a'].b` 这种混写不合法，
+// 所以先把客户端类型取出来再下两层——两行是为了过语法，不是为了绕类型检查。
+type MemesClient = typeof api.api.v1.memes
+
 /**
  * SPEC §5.2.6 对外表示。storageKey、contentHash、phash、embedding 不在响应里。
  *
@@ -80,6 +84,37 @@ export function toStateError(err: unknown): ApiError {
  *   - `sizeBytes` 是**字符串**（bigint 走 JSON 会丢精度，服务端 toString 了）
  */
 export type Meme = InferResponseType<typeof api.api.v1.memes.$get>['items'][number]
+
+/**
+ * 单条的对外表示（`GET /memes/{id}`）。与列表项**同形**——服务端是同一个 `serializeMeme`——
+ * 但仍然单独推导一次：`PATCH /memes/{id}` 的响应就是它（SPEC §6.4.1）。
+ */
+export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
+
+/**
+ * `PATCH /memes/{id}` 的请求体，**只认这四个字段**（SPEC §6.4.1）。
+ *
+ * 三种传法含义不同，调用点别混：
+ *   - 字段不出现 → 不改这个字段（所以只发改过的那些）
+ *   - `description: null` → 清空描述
+ *   - `tags: []` → 清空这个维度的标签
+ *
+ * ⚠️ **这份类型是手写的，因为它推不出来。** `PATCH /memes/{id}` 的 handler 直接
+ * `c.req.json()`、没有挂请求体校验器，所以 Hono RPC 给出的输入类型只有
+ * `{ param: { id: string } }`——**`json` 那一段根本不存在**。
+ *
+ * 于是这里有一个真实的缺口：**请求体的形状没有类型同步**。改字段名（比如
+ * `emotions` → `emotionsV2`）服务端会拒，但前端编译期不会报错，只会在运行时收到
+ * 一个 `VALIDATION_FAILED`。补法是 api 端给这条路由挂一个校验器让 RPC 能推导，
+ * 那是 api 的实现约束（见 api/agents/rules/database.md 一类的本端规则），
+ * 不是这一端能决定的——已回报总管，见 joint-tasks/2026-09-19-browse-meme-actions.md。
+ */
+export type MemePatch = {
+  description?: string | null
+  emotions?: string[]
+  scenes?: string[]
+  tags?: string[]
+}
 
 export type FetchMemesParams = {
   emotions?: string[]
@@ -130,9 +165,6 @@ export async function fetchMemes(
  *   - `failures` 里会有 `tag_status = ok` 的图（`embed_failed`），
  *     所以 `sum(failures)` 与 `counts.needsManual` **不相等是对的**。
  */
-// 路径段带连字符，只能走下标访问；而 `typeof x['a'].b` 这种混写不合法，
-// 所以先把客户端类型取出来再下两层——两行是为了过语法，不是为了绕类型检查。
-type MemesClient = typeof api.api.v1.memes
 export type TagStatusSummary = InferResponseType<MemesClient['tag-status']['$get']>
 
 /** 本人的打标汇总。`scope=all` 是管理员那一段的事，界面还没接（任务里明确不做）。 */
@@ -181,6 +213,44 @@ export async function toggleFavorite(memeId: string, favorited: boolean): Promis
     method: favorited ? 'PUT' : 'DELETE',
   })
   if (!res.ok && res.status !== 204) throw await toApiError(res)
+}
+
+/**
+ * `PATCH /memes/{id}` —— 人工改标签与描述（SPEC §6.4.1）。**权限是所有人**：
+ * 共享库里谁发现标错了都能顺手改掉（§9.1），前端不要自己加归属判断。
+ *
+ * 返回**更新后的完整 Meme**，调用点据此就地更新列表，不再拉一次（§6.4.1）。
+ * 并发编辑是最后写入者赢，不做冲突检测、不做 ETag——所以前端**不能维护影子副本**
+ * （state-navigation.md §2）。
+ *
+ * 用 fetch 而不是 RPC 客户端方法，和 fetchMemes / fetchSearch 同一个理由：
+ * RPC 客户端把非 2xx 直接当异常抛，拿不到 SPEC §2.1 的错误信封，
+ * 而 `VALIDATION_FAILED`（词表外标签）恰恰是要把 message 展示给用户的。
+ */
+export async function patchMeme(id: string, patch: MemePatch): Promise<MemeDetail> {
+  const res = await fetch(`/api/v1/memes/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<MemeDetail>
+}
+
+/**
+ * `DELETE /memes/{id}` —— 软删，204（SPEC §6.4.2）。上传者或 admin，其余 `FORBIDDEN`。
+ *
+ * **404 当成功处理。** 这张图本来就要从列表里消失，而 404 同时是「别人已经删了」和
+ * 「你删过了」的同一个答案——删除**不幂等**是有意的：删除不做乐观更新
+ * （state-navigation.md §8），客户端不会在没看到结果的情况下再发一次。
+ *
+ * 这个判断放在这里而不是调用点：漏掉它的表现只是一句莫名其妙的错误提示，
+ * 每个调用点都得记一次，迟早会忘。
+ */
+export async function deleteMeme(id: string): Promise<void> {
+  const res = await fetch(`/api/v1/memes/${id}`, { method: 'DELETE' })
+  if (res.ok || res.status === 404) return
+  throw await toApiError(res)
 }
 
 export async function fetchHealth() {

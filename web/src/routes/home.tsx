@@ -11,6 +11,7 @@ import {
 } from '../lib/api'
 import { MemeCard } from '../components/MemeCard'
 import { DiscoverWall } from '../features/discover/DiscoverWall'
+import { SEND_LABELS, detectSendPath, sendMeme, sendNote } from '../lib/clipboard'
 
 type SearchState =
   | { kind: 'idle' }
@@ -127,18 +128,19 @@ export function HomePage() {
     }
   }
 
+  /**
+   * 发送选中的那张图。路径与文案都由 `lib/clipboard.ts` 决定——**不再有一份自己的实现**。
+   *
+   * 这里曾经复制的是图片地址（临时实现），而用户点这个按钮的意图是**发图**，
+   * 拿到的却是一段 URL。同一个动作两套行为是本端最不能犯的错（clipboard-share.md §3）。
+   *
+   * ⚠️ 由点击 / 按键事件直接调起，中间不要先 await 别的请求：剪贴板写入要落在
+   * 用户手势的同步调用栈里（§4.1）。
+   */
   async function handleActivate(meme: SearchResult) {
     setCopyNote(null)
-    try {
-      // ⚠️ 临时路径：剪贴板分流尚未实现。动图永远不能走图片写入（SPEC §9.2），
-      //    但静图的「fetch 原图 → 转 PNG Blob → ClipboardItem」也还没写，
-      //    所以现在两种格式都只复制图片地址，按钮文案如实写「复制地址」。
-      //    真正的实现落在 lib/clipboard.ts，见 agents/rules/clipboard-share.md。
-      await navigator.clipboard.writeText(meme.url)
-      setCopyNote(meme.isAnimated ? '已复制图片地址（动图需下载后发送）' : '已复制图片地址')
-    } catch {
-      setCopyNote('复制失败，浏览器拒绝了剪贴板写入，可以右键另存')
-    }
+    const text = sendNote(await sendMeme(meme))
+    if (text !== null) setCopyNote(text)
   }
 
   /** ↑↓ 选择、Enter 复制、Esc 取消选择（clipboard-share.md §7）。 */
@@ -269,12 +271,16 @@ export function HomePage() {
                     selected={index === selectedIndex}
                     onFavorite={handleFavorite}
                   />
-                  {/* 点击卡片与 Enter 同一条路径，行为一致（clipboard-share.md §7） */}
+                  {/*
+                    点击卡片与 Enter 同一条路径，行为一致（clipboard-share.md §7）：
+                    静图是「复制」，动图是「下载」——**文案在渲染时就分开**，
+                    不能让用户点了 GIF 之后发现没反应（§3）。
+                  */}
                   <button
                     className="search__card-action"
                     onClick={() => void handleActivate(meme)}
                   >
-                    复制地址
+                    {SEND_LABELS[detectSendPath(meme.isAnimated)]}
                   </button>
                 </div>
               ))}

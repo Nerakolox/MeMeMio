@@ -121,10 +121,11 @@ export function DiscoverWall() {
 
       {state.kind === 'ok' && state.items.length > 0 && (
         <div className="discover__grid">
-          {/* 只有收藏一个动作：复制 / 下载 / 分享的分流还没实现，这一屏挂一个临时版
-              「复制地址」等于把临时路径铺到第二个地方（现在只有搜索结果那一处，
-              见 routes/home.tsx 的 ⚠️ 注释）。真流程见 agents/rules/clipboard-share.md，
-              那一次两处一起接——而它要求真机实测（§8），不该混在版式改动里做。 */}
+          {/* 这一屏只有收藏一个动作，**没有复制 / 下载 / 分享**，是有意的：
+              发送路径的入口这次只做到搜索结果与浏览页（见
+              joint-tasks/2026-09-19-browse-meme-actions.md 的「明确不做」——
+              图墙卡片上那片位置留给后续的「复制 / 发送」）。
+              真流程在 src/lib/clipboard.ts，接的时候直接用它，别在这里另写一份。 */}
           {state.items.map((meme) => (
             <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
           ))}
