@@ -18,12 +18,16 @@ export function createTestDb() {
 /**
  * 每个用例自己清理，不靠用例之间的执行顺序（testing.md §2）。
  * 不加 RESTART IDENTITY 是因为主键是 uuid。
+ *
+ * ⚠️ **新建表必须加进这张清单。** 漏了不会报错——只是上一个用例的残留数据会漏到
+ *    下一个用例里，表现为「单独跑绿、整批跑红」这种最难查的失败。
+ *    `embed_config` 是全站单例表，残留一行就会让下一个用例以为 embedding 已经配好了。
  */
 export async function truncateAll(sql: ReturnType<typeof createTestDb>['sql']): Promise<void> {
   await sql`
     truncate table
-      tag_jobs, import_items, import_batches, sessions, user_favorites,
-      user_ai_configs, invite_codes, memes, users
+      tag_jobs, reindex_jobs, import_items, import_batches, sessions, user_favorites,
+      user_ai_configs, config_tests, embed_config, invite_codes, memes, users
     cascade
   `
 }

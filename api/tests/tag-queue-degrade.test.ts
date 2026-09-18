@@ -3,9 +3,9 @@ import { beforeEach, afterAll, afterEach, describe, expect, it, vi } from 'vites
 /**
  * 降帧梯子：**图片数超限时先降帧，不降通道**（ai-providers.md §4 / SPEC §2.4）。
  *
- * 单开一个文件是因为这条路径在**生产环境里今天走不到**：`resolveVisionConfig()` 固定
- * 返回 `multiImage: null`（没有测试连接记录时按最保守路径走），于是动图的 plan 永远
- * 是单级的拼图，10 帧那一级排不出来。等 SPEC §6.5 的配置任务把探测结果存下来之后，
+ * 单开一个文件是因为这条路径在**生产环境里今天走不到**：没有测试连接记录时
+ * `resolveVisionConfig()` 返回 `multiImage: null`（按最保守路径走），于是动图的 plan 永远
+ * 是单级的拼图，10 帧那一级排不出来。用户在设置页测出 `multiImage: true` 之后，
  * 这条梯子就会在真实流量里被走到——所以它现在必须有测试，而不是等那天再补。
  *
  * ⚠️ 这里 mock 的**只有 `resolveVisionConfig` 一个函数**，`callVision`、提示词、
@@ -30,8 +30,8 @@ vi.mock('../src/ai/vision.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/ai/vision.js')>()
   return {
     ...actual,
-    resolveVisionConfig: () => {
-      const config = actual.resolveVisionConfig()
+    resolveVisionConfig: async (userId: string) => {
+      const config = await actual.resolveVisionConfig(userId)
       return config === null ? null : { ...config, multiImage: true }
     },
   }

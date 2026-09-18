@@ -70,8 +70,11 @@ async function seedPendingJob(): Promise<string> {
 }
 
 describe('AI_NOT_CONFIGURED', () => {
-  it('配置为空时 isVisionConfigured() 为假', () => {
-    expect(isVisionConfigured()).toBe(false)
+  it('环境变量和配置表都为空时 isVisionConfigured() 为假', async () => {
+    // 现在它是「部署方配了 **或** 有任何一个用户配了」（任务 E 项）。
+    // 这个用例里环境变量是空的，`user_ai_configs` 也被 truncateAll 清空了，
+    // 所以两条都不成立——断言的含义和改之前一样
+    expect(await isVisionConfigured()).toBe(false)
   })
 
   it('worker 起着但不消费：任务留在 pending，attempts 不涨', async () => {
