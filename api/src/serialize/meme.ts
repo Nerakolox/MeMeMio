@@ -1,5 +1,4 @@
-import { env } from '../env.js'
-import { thumbKeyFor } from '../storage/r2.js'
+import { publicUrlFor, thumbKeyFor } from '../storage/r2.js'
 
 /**
  * `memes` 行的对外序列化。**浏览和搜索共用同一个函数** —— 两条路径各写一份的话，
@@ -24,15 +23,18 @@ export function toIsoSecondsOrNull(date: Date | null): string | null {
 /**
  * storageKey → 公开访问 URL。图片地址由 storageKey 派生，不返回 storageKey 本身（SPEC §5.2.6）。
  *
- * thumbUrl 走 `thumbKeyFor`，**与写缩略图的路径共用同一个函数**。这里曾经自己推过一套
- * `/thumb/<storageKey>`，与 `storage/r2.ts` 的 `thumbs/<...>.webp` 对不上，
- * 且对不上时不报错，只是图片 404。
+ * **两段推导各自只有一份实现**，这里一份都不重写：
+ * 路径经 `thumbKeyFor`（与写缩略图共用），URL 经 `publicUrlFor`（与待确认队列的
+ * `tempUrl` 共用，前缀在那里加）。
+ *
+ * 两份实现的代价这个函数付过两次：先是自己推过一套 `/thumb/<storageKey>`，与
+ * `storage/r2.ts` 的 `thumbs/<...>.webp` 对不上；修掉之后路径统一了、URL 拼接没统一，
+ * 于是又自己拼了一遍 base + key，漏掉 `R2_KEY_PREFIX`。**两次的表现都是不报错、只是图片 404。**
  */
 function storageKeyToUrls(storageKey: string): { url: string; thumbUrl: string } {
-  const base = env.r2PublicBaseUrl
   return {
-    url: `${base}/${storageKey}`,
-    thumbUrl: `${base}/${thumbKeyFor(storageKey)}`,
+    url: publicUrlFor(storageKey),
+    thumbUrl: publicUrlFor(thumbKeyFor(storageKey)),
   }
 }
 

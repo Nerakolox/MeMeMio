@@ -20,12 +20,25 @@ process.env['DEFAULT_VISION_BASE_URL'] = ''
 process.env['DEFAULT_VISION_API_KEY'] = ''
 process.env['DEFAULT_VISION_MODEL'] = ''
 
-const { installR2Memory, resetR2, seedObject, hasObject } = await import('./helpers/r2-memory.js')
+/**
+ * ⚠️ **前缀在这里定死成非空，不用 `.env` 里填的那个。**
+ *
+ * 这个文件是三个公开地址（`tempUrl` / `existing.url` / `existing.thumbUrl`）唯一
+ * 同时出现的地方，也就是「派生 URL 时漏了 `R2_KEY_PREFIX`」的回归位置。而前缀为空时
+ * 带不带前缀拼出来是同一个字符串——用空前缀跑的断言全都照过，等于没断言。
+ * `.env` 里填什么不由这里控制，所以自己定一个。
+ */
+process.env['R2_KEY_PREFIX'] = 'reviews-test/'
+
+const { installR2Memory, resetR2, seedObject, hasObject, objectKeys } = await import(
+  './helpers/r2-memory.js'
+)
 installR2Memory()
 
 const { createTestDb, truncateAll } = await import('./helpers/test-db.js')
 const { createUser } = await import('./helpers/factories.js')
 const { createSession } = await import('../src/data/auth.js')
+const { env } = await import('../src/env.js')
 const { onError, onNotFound } = await import('../src/middleware/error.js')
 const { requestId } = await import('../src/middleware/request-id.js')
 const { importRoutes } = await import('../src/routes/imports.js')
@@ -91,7 +104,7 @@ type ReviewEntry = {
   width: number | null
   height: number | null
   distance: number | null
-  existing: { id: string; originalFilename: string | null; url: string } | null
+  existing: { id: string; originalFilename: string | null; url: string; thumbUrl: string } | null
 }
 
 async function runImport(
@@ -163,6 +176,19 @@ async function jobCount(): Promise<number> {
   return rows.length
 }
 
+/**
+ * 公开 URL → R2 上的**完整键**（带部署前缀）。
+ *
+ * 用它而不是 `toContain('temp/...')`：子串断言在漏了前缀时照样过，而漏前缀正是
+ * 2026-09-18 那次事故的全部内容。反推出键再和桶里真实存在的键比，测的是
+ * 「这个地址真能打开」——那个 bug 唯一的表现就是不报错、只是 404。
+ */
+function fullKeyOf(url: string): string {
+  const base = `${env.r2PublicBaseUrl}/`
+  expect(url.startsWith(base)).toBe(true)
+  return url.slice(base.length)
+}
+
 // ── 列表 ──────────────────────────────────────────────────────────
 
 describe('待确认队列（GET /reviews）', () => {
@@ -196,6 +222,35 @@ describe('待确认队列（GET /reviews）', () => {
     expect(entry.width).toBeNull()
     expect(entry.height).toBeNull()
     expect(entry.sizeBytes).not.toBeNull()
+  })
+
+  /**
+   * 回归锚点：joint-tasks/2026-09-18-r2-public-url-prefix.md。
+   *
+   * 三个地址曾经全都少了 `R2_KEY_PREFIX`——对象在 `mememio/thumbs/x.webp`，
+   * 响应里给的是 `/thumbs/x.webp`。入库成功、接口 200、日志干净，只有浏览器裂图。
+   */
+  it('tempUrl / existing.url / existing.thumbUrl 都指向桶里真实存在的对象', async () => {
+    const alice = await signIn()
+    const { batchId, fileName } = await makeReviewItem(alice)
+
+    // 这条断言的前提。前缀为空时下面几条全都会通过，但什么也没测到
+    expect(env.r2.keyPrefix).not.toBe('')
+
+    const entry = (await listReviews(alice))[0]!
+    const existing = entry.existing!
+
+    // objectKeys() 给的是桶里的完整键，与写入侧经 key() 拼出来的是同一个字符串
+    const inBucket = objectKeys()
+    expect(inBucket).toContain(fullKeyOf(entry.tempUrl!))
+    expect(inBucket).toContain(fullKeyOf(existing.url))
+    expect(inBucket).toContain(fullKeyOf(existing.thumbUrl))
+
+    // 前缀的位置也钉住：在 base 之后、业务键之前，而不是塞进 R2_PUBLIC_BASE_URL
+    expect(fullKeyOf(entry.tempUrl!)).toBe(`${env.r2.keyPrefix}temp/${batchId}/${fileName}`)
+    expect(fullKeyOf(existing.thumbUrl)).toMatch(
+      new RegExp(`^${env.r2.keyPrefix}thumbs/[0-9a-f-]+\\.webp$`),
+    )
   })
 
   it('跨批次汇总，并且只列自己的', async () => {

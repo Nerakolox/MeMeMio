@@ -37,6 +37,11 @@ const client = new S3Client({
 /**
  * 拼一个完整的对象键。**前缀必须带**（`R2_KEY_PREFIX` 以 / 结尾，env 校验保证），
  * 否则与同机其他项目共用 bucket 时对象会互相覆盖。
+ *
+ * ⚠️ **这是本项目唯一的前缀入口**，读、写、派生公开 URL 全走它。库里的 `storageKey`
+ * 和各处的 `tempKey` 都是**不带前缀的相对键**，任何把它们当成 R2 上真实键的地方
+ * 都必须先过这里。少一次的表现不是报错，是图片 404——而且 `R2_KEY_PREFIX` 为空时
+ * 完全不可见（见 `publicUrlFor` 的注释）。
  */
 function key(path: string): string {
   return `${env.r2.keyPrefix}${path}`
@@ -145,7 +150,17 @@ export async function deleteObject(objectKey: string): Promise<void> {
   }
 }
 
-/** 公开访问地址。图片由 CDN 直出，api 不做图片代理。SPEC §5.2.6 */
+/**
+ * 公开访问地址。图片由 CDN 直出，api 不做图片代理。SPEC §5.2.6
+ *
+ * **必须经 `key()`**：入参是不带前缀的相对键，R2 上的对象带前缀，少了它给出的地址
+ * 指向一个不存在的对象。2026-09-18 首次接真实 R2 时整页裂图就是这条——
+ * 对象在 `mememio/thumbs/x.webp`，响应里给的是 `/thumbs/x.webp`。
+ *
+ * ⚠️ 这个 bug 在 `R2_KEY_PREFIX` 为空时**完全不可见**，所以钉它的测试必须用非空前缀
+ * （见 r2.test.ts）。也**不要**改成把前缀塞进 `R2_PUBLIC_BASE_URL`：那样前缀在两个
+ * 环境变量里各写一份，两边不一致时同样不报错。
+ */
 export function publicUrlFor(objectKey: string): string {
-  return `${env.r2PublicBaseUrl}/${objectKey}`
+  return `${env.r2PublicBaseUrl}/${key(objectKey)}`
 }
