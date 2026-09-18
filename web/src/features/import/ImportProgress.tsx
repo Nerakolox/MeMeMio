@@ -19,11 +19,13 @@ export function ImportProgress({
   queue,
   onReset,
   onOpenReview,
+  onOpenTagging,
   needsReviewCount,
 }: {
   queue: ImportQueue
   onReset: () => void
   onOpenReview: () => void
+  onOpenTagging: () => void
   /** 队列里累计的总数（跨批次），不是本批的——入口给的是队列，不是这次导入。 */
   needsReviewCount: number
 }) {
@@ -146,7 +148,7 @@ export function ImportProgress({
 
           {done.imported > 0 && (
             <p className="import__summary-note">
-              已入库的图<strong>尚未打标</strong>（队列消费者是独立任务），当前状态为 pending。
+              已入库的图会在后台依次打标，进度和失败情况在「打标」页签里。
               打标结果会进入公共库——想先确认配置可以到设置页。
             </p>
           )}
@@ -155,6 +157,12 @@ export function ImportProgress({
             {needsReviewCount > 0 && (
               <button type="button" className="import__review-link" onClick={onOpenReview}>
                 查看待确认（{needsReviewCount}）
+              </button>
+            )}
+            {/* 打标是异步的：导入结束时这些图大多还没标完，入口比数字有用（SPEC §6.6） */}
+            {done.imported > 0 && (
+              <button type="button" onClick={onOpenTagging}>
+                查看打标状态
               </button>
             )}
             <button type="button" onClick={onReset}>

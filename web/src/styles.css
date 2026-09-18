@@ -730,6 +730,125 @@ body {
   }
 }
 
+/* ---- 打标页签 (/import?tab=tag) ---- */
+/* 只写布局：视觉风格未定稿（web/AGENTS.md §5）。 */
+
+.tagging {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 汇总：四个状态的合计 + 正在打标。与导入进度同一套结构（dt/dd 横排） */
+.tagging__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tagging__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0;
+}
+
+.tagging__count {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tagging__count dt {
+  font-size: 0.8em;
+}
+
+.tagging__count dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.tagging__summary-error,
+.tagging__failures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tagging__summary-error p,
+.tagging__failures p {
+  margin: 0;
+}
+
+.tagging__summary-error {
+  align-items: flex-start;
+}
+
+.tagging__failure-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85em;
+}
+
+.tagging__subfilter {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 触摸目标至少 44×44px（styling.md） */
+.tagging__subfilter-btn {
+  min-height: 44px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.tagging__subfilter-btn--active {
+  font-weight: 600;
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}
+
+.tagging__note {
+  margin: 0;
+  font-size: 0.85em;
+}
+
+.tagging__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.tagging__more {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+.tagging__empty,
+.tagging__error p {
+  margin: 0;
+}
+
+.tagging__error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.tagging__request-id {
+  margin: 0;
+  font-size: 0.8em;
+  font-family: monospace;
+}
+
 /* ---- Settings page (/settings) ---- */
 /* 只写布局：flex / grid、尺寸、间距、折叠区的 display。视觉风格未定稿（web/AGENTS.md §5）。 */
 

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { type Meme, type FetchMemesParams, fetchMemes, toggleFavorite, ApiError } from '../lib/api'
 import { useAuth } from '../contexts/auth'
 import { MemeCard } from '../components/MemeCard'
+import { TAG_STATUS_LABELS } from '../lib/tag-status'
 import { emotionOptions, sceneOptions, tagOptions } from '../lib/vocab'
 
 /** 把当前 URL query string 解析为接口参数，游标在外部传入，不放 URL（SPEC §6.3.2）。 */
@@ -184,10 +185,13 @@ export function BrowsePage() {
                 onChange={(e) => setStringParam('tagStatus', e.target.value || null)}
               >
                 <option value="">全部</option>
-                <option value="pending">pending</option>
-                <option value="ok">ok</option>
-                <option value="refused">refused</option>
-                <option value="needs_manual">needs_manual</option>
+                {/* 值与文案都取自 tag-status.ts 那一份表：选项顺序就是表里的顺序。
+                    枚举直出英文会让用户对着一堆 tag_status 猜自己该选哪个。 */}
+                {Object.entries(TAG_STATUS_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </div>
           )}

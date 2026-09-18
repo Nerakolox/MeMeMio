@@ -97,6 +97,26 @@ export async function fetchMemes(
 }
 
 /**
+ * `GET /memes/tag-status` 的汇总（SPEC §6.6.1）。**从 api 派生，不手写。**
+ *
+ * 两处含义不在类型里，读的时候要记得（web/AGENTS.md §4）：
+ *   - `counts` 只统计未软删的记录，口径与 `fetchMemes({ uploader:'me', tagStatus })` 一致；
+ *   - `failures` 里会有 `tag_status = ok` 的图（`embed_failed`），
+ *     所以 `sum(failures)` 与 `counts.needsManual` **不相等是对的**。
+ */
+// 路径段带连字符，只能走下标访问；而 `typeof x['a'].b` 这种混写不合法，
+// 所以先把客户端类型取出来再下两层——两行是为了过语法，不是为了绕类型检查。
+type MemesClient = typeof api.api.v1.memes
+export type TagStatusSummary = InferResponseType<MemesClient['tag-status']['$get']>
+
+/** 本人的打标汇总。`scope=all` 是管理员那一段的事，界面还没接（任务里明确不做）。 */
+export async function fetchTagStatus(): Promise<TagStatusSummary> {
+  const res = await fetch('/api/v1/memes/tag-status')
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<TagStatusSummary>
+}
+
+/**
  * 检索通路标识。**只用于展示，不参与排序**——顺序由服务端 RRF 融合决定（SPEC §6.3.1）。
  * 服务端可能新增通路，所以用 Record<string, string> 查表并保留原值兜底，不做穷举联合。
  */

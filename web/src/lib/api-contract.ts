@@ -1,5 +1,5 @@
 import type { InferResponseType } from 'hono/client'
-import { api } from './api'
+import { api, type TagStatusSummary } from './api'
 
 /**
  * 骨架任务的**验证点 1**，留在仓库里当编译期断言：
@@ -65,3 +65,25 @@ const _searchShape: SearchResponse = {
 }
 
 void _searchShape
+
+/**
+ * 打标汇总的编译期断言（SPEC §6.6.1）。
+ *
+ * `counts` 四个取值**全给、没有的写 0**，`failures[].reason` 只有五个类别——
+ * 这两条是契约的一部分，字段名或取值集合变了这里先炸。
+ *
+ * ⚠️ 类型管不到的那两条仍然要靠测试和联合验收（web/AGENTS.md §4）：
+ *    `counts` 只算未软删的记录；`failures` 里会有 `tag_status = ok` 的图。
+ */
+const _tagStatusShape: TagStatusSummary = {
+  scope: 'mine',
+  visionConfigured: false,
+  counts: { ok: 982, pending: 120, refused: 0, needsManual: 7 },
+  running: 2,
+  failures: [
+    { reason: 'unreachable', count: 4 },
+    { reason: 'embed_failed', count: 1 },
+  ],
+}
+
+void _tagStatusShape
