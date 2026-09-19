@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { Masonry, type RenderComponentProps } from 'masonic'
 import {
   type Meme,
   type FetchMemesParams,
@@ -58,6 +59,14 @@ export function BrowsePage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [note, setNote] = useState<Note | null>(null)
+
+  /**
+   * 瀑布流的「重挂代际」。删除会让 `items` 缩短，而 masonic 按 index 缓存位置，
+   * items 缩短会错位甚至越界抛错，所以删除成功后 bump 一次、换 key 强制重挂，
+   * 位置器从零重建。筛选切换走的是 `items → [] → 新 items`，中间那次空态已经把
+   * `<Masonry>` 整个卸载了，不需要这里参与。
+   */
+  const [masonryEpoch, setMasonryEpoch] = useState(0)
 
   const editingMeme = editingId === null ? null : (items.find((m) => m.id === editingId) ?? null)
 
@@ -203,6 +212,7 @@ export function BrowsePage() {
       setItems((prev) => prev.filter((m) => m.id !== meme.id))
       if (editingId === meme.id) setEditingId(null)
       setNote({ text: '已删除' })
+      setMasonryEpoch((e) => e + 1)
     } catch (err) {
       // 服务端仍是唯一权威：前端禁用只是体验，403 / FORBIDDEN 要能显示出来（SPEC §6.4.2）
       const apiErr = err instanceof ApiError ? err : null
@@ -335,28 +345,26 @@ export function BrowsePage() {
         )}
 
         {items.length > 0 && (
-          <div className="browse__grid">
-            {items.map((meme) => (
-              <MemeCard
-                key={meme.id}
-                meme={meme}
-                onFavorite={handleFavorite}
-                actions={
-                  <MemeActions
-                    target={meme}
-                    // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
-                    // 前端判断只是体验，服务端仍会独立判一次。
-                    canDelete={user?.role === 'admin' || meme.uploaderId === user?.id}
-                    deleteDeniedReason="只有上传这张图的人或管理员可以删除"
-                    busy={deletingId === meme.id}
-                    onSend={(t) => void handleSend(t)}
-                    onEdit={() => setEditingId(meme.id)}
-                    onDelete={() => void handleDelete(meme)}
-                  />
-                }
-              />
-            ))}
-          </div>
+          <Masonry
+            key={masonryEpoch}
+            items={items.map((meme) => ({
+              meme,
+              favorite: () => handleFavorite(meme),
+              send: (t: SendTarget) => void handleSend(t),
+              edit: () => setEditingId(meme.id),
+              remove: () => void handleDelete(meme),
+              // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
+              // 前端判断只是体验，服务端仍会独立判一次。
+              canDelete: user?.role === 'admin' || meme.uploaderId === user?.id,
+              busy: deletingId === meme.id,
+            }))}
+            columnWidth={160}
+            columnGutter={12}
+            overscanBy={3}
+            itemHeightEstimate={220}
+            itemKey={(item) => item.meme.id}
+            render={BrowseMasonryCell}
+          />
         )}
 
         {/* sentinel — observed for infinite scroll */}
@@ -385,6 +393,46 @@ export function BrowsePage() {
 }
 
 // ---- sub-components ----
+
+/**
+ * 瀑布流单元格的载体：一条 meme + 页面注入的回调。
+ *
+ * 回调要跟着数据走，是因为 masonic 的 `render` 组件必须是**稳定引用**（模块级）——
+ * 如果每次渲染都现写一个箭头函数，masonic 会把「render prop 换了新函数」当成换组件，
+ * 所有可见卡片重挂，收藏、删除、编辑弹层这些交互的本地状态全被打断。
+ * 所以把会变的回调放进 `data`（每帧重算没关系，key 是 meme.id，React 不会重挂）。
+ */
+type BrowseMasonryItem = {
+  meme: Meme
+  favorite: () => void
+  send: (target: SendTarget) => void
+  edit: () => void
+  remove: () => void
+  canDelete: boolean
+  busy: boolean
+}
+
+function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
+  const { meme } = data
+  return (
+    <MemeCard
+      meme={meme}
+      variant="natural"
+      onFavorite={data.favorite}
+      actions={
+        <MemeActions
+          target={meme}
+          canDelete={data.canDelete}
+          deleteDeniedReason="只有上传这张图的人或管理员可以删除"
+          busy={data.busy}
+          onSend={(t) => void data.send(t)}
+          onEdit={data.edit}
+          onDelete={() => void data.remove()}
+        />
+      }
+    />
+  )
+}
 
 function FilterGroup({
   title,
