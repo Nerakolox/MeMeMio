@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { MoreHorizontal } from 'lucide-react'
 import { SEND_LABELS, detectSendPath, type SendTarget } from '../../lib/clipboard'
 
 /**
@@ -103,17 +104,17 @@ export function MemeActions({
       <button
         ref={triggerRef}
         type="button"
-        className="meme-card__actions-btn"
+        className="meme-card__actions-btn flex h-9 w-9 items-center justify-center rounded-full border bg-card text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
         aria-haspopup="true"
         aria-expanded={open}
         aria-label={open ? '收起图片操作' : '图片操作'}
         onClick={() => (open ? close(false) : setOpen(true))}
       >
-        ⋯
+        <MoreHorizontal className="h-4 w-4" />
       </button>
 
       {open && (
-        <div className="manage-popover">
+        <div className="manage-popover rounded-md border bg-popover text-popover-foreground shadow-md">
           {confirming ? (
             // 确认框里默认聚焦「取消」：删除不可逆，一次误触的回车不该把图删掉。
             <>
@@ -124,14 +125,14 @@ export function MemeActions({
                 <button
                   ref={cancelRef}
                   type="button"
-                  className="manage-popover__item"
+                  className="manage-popover__item rounded-sm hover:bg-muted"
                   onClick={() => setConfirming(false)}
                 >
                   取消
                 </button>
                 <button
                   type="button"
-                  className="manage-popover__item manage-popover__item--danger"
+                  className="manage-popover__item manage-popover__item--danger rounded-sm text-destructive hover:bg-destructive/10"
                   disabled={busy}
                   onClick={() => run(onDelete, false)}
                 >
@@ -144,7 +145,7 @@ export function MemeActions({
               <button
                 ref={firstItemRef}
                 type="button"
-                className="manage-popover__item"
+                className="manage-popover__item rounded-sm hover:bg-muted"
                 onClick={() => run(() => onSend(target), true)}
               >
                 {SEND_LABELS[path]}
@@ -152,7 +153,7 @@ export function MemeActions({
 
               <button
                 type="button"
-                className="manage-popover__item"
+                className="manage-popover__item rounded-sm hover:bg-muted"
                 onClick={() => run(onEdit, false)}
               >
                 编辑
@@ -165,7 +166,7 @@ export function MemeActions({
               */}
               <button
                 type="button"
-                className="manage-popover__item"
+                className="manage-popover__item rounded-sm hover:bg-muted"
                 disabled={!canDelete || busy}
                 aria-describedby={canDelete ? undefined : hintId}
                 onClick={() => setConfirming(true)}

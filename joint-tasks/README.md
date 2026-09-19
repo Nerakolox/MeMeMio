@@ -25,6 +25,8 @@
 | 任务 | 状态 | 性质 |
 |---|---|---|
 | [浏览页图片操作](2026-09-19-browse-meme-actions.md) | `in_progress` | **跨端**——SPEC §6.4 的 `PATCH` / `DELETE` 写在契约里很久但一行没实现，打标失败的图至今没有出路；卡片「⋯」入口给复制 / 编辑 / 删除，编辑开侧边栏。顺带把首页那段临时的「复制地址」换成 `clipboard-share.md` 的真流程 |
+| [浏览页改瀑布流](2026-09-19-browse-masonry.md) | `done` | **web 单端**——浏览页方形网格改瀑布流，按自然宽高比整张展示（不再裁方）；`width/height` 已在响应里、缩略图保比例，故不动 api/SPEC；分页形态已定：保留无限滚动，引 masonry 库（推荐 `masonic`） |
+| [图片承载组件](2026-09-19-meme-image-host.md) | `done` | **web 单端**——`MemeCard` 的裸 `<img>` 抽成 `MemeImage`：按比例占位 / 加载骨架 / 失败兜底文件名 / 深色底 / 动图 hover·点按播放，四页共用；关键事实是缩略图本就是静态首帧，「不自动播放」天然满足 |
 | [首页随机图墙](2026-09-19-home-random-grid.md) | `done` | **跨端**——首页现在是纯搜索框，没有「翻」的入口；`GET /memes` 加 `random=true` 在全库抽样（SPEC §6.3.2，已转 `accepted`） |
 | [打标状态界面](2026-09-19-tagging-status.md) | `planning` | **跨端**——打标跑起来了但界面上看不见，兑现 §5.2.3 / `styling.md` / `settings-ux.md §9` 三处已写下的承诺；新增 `GET /memes/tag-status`（SPEC §6.6，`proposed`） |
 | [三个管理页并入设置页](2026-09-18-settings-merge.md) | `in_progress` | **web 单端**——`/admin/*` 三页都是设置项；带出两处 SPEC 措辞偏差待总管裁定 |
