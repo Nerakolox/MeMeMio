@@ -7,6 +7,7 @@ import { ImportPage } from './routes/import'
 import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
 import { SettingsPage } from './routes/settings'
+import { UiPage } from './routes/ui'
 import { NotFoundPage } from './routes/not-found'
 import { postLogout } from './lib/api'
 import { useNavigate } from 'react-router-dom'
@@ -58,6 +59,7 @@ function AppShell() {
           <Link to="/browse">浏览</Link>
           {user && <ImportNavLink />}
           {user && <Link to="/settings">设置</Link>}
+          <Link to="/ui">组件</Link>
         </nav>
         {user && (
           <button className="app__logout" onClick={handleLogout}>
@@ -102,6 +104,7 @@ function AppShell() {
               </RequireAuth>
             }
           />
+          <Route path="/ui" element={<UiPage />} />
           {/*
             三个管理页并进了 /settings（见 routes/settings.tsx）。旧地址保留成重定向而不是
             直接删掉：管理员的书签和文档里的链接都指着它们，404 比多留三行路由贵。

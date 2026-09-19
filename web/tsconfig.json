@@ -27,7 +27,9 @@
       // 只允许 import type —— 这些 import 在编译后会被完全擦除，api 的运行时代码不会进 bundle。
       "@api/*": ["../api/src/*"],
       // 词表主源，两端读同一份文件
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["../shared/*"],
+      // shadcn/ui 约定别名：components.json 的 aliases 指向这里
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src", "vite.config.ts"]

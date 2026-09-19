@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
 const shared = fileURLToPath(new URL('../shared', import.meta.url))
+const src = fileURLToPath(new URL('./src', import.meta.url))
 
 export default defineConfig({
   plugins: [react()],
@@ -11,6 +12,8 @@ export default defineConfig({
       // 词表主源在仓库根的 shared/，web 在**编译期**把它打进产物。
       // 不维护第二份标签列表 —— 见 web/agents/rules/project-structure.md
       '@shared': shared,
+      // shadcn/ui 的 `@/*` 别名（components.json）
+      '@': src,
     },
   },
   server: {
