@@ -38,18 +38,17 @@ Hono RPC 直接消费 `api` 导出的类型，**没有代码生成步骤，不�
 
 但**类型只保证形状，SPEC 保证含义**。`tagStatus: string` 编译得过，它必须是 [SPEC §5.2.3](../spec/05-data-models.md) 那四个值之一；`degraded`、`matchedBy`、软删语义都不在类型里。类型检查通过不等于契约遵守。
 
-## 5. 样式约束
+## 5. 样式
 
-**当前阶段只做布局样式，不做视觉装饰样式。**
+**组件库：shadcn/ui（new-york + zinc），样式载体：Tailwind**（2026-09-19 定稿）。
+「只做布局、不做视觉装饰」的阶段约束随这次定稿结束，视觉风格跟 shadcn 默认主题落地。
 
-| 可以做 | 不做 |
-|---|---|
-| flex / grid 布局、尺寸、间距 | 颜色、背景色、渐变 |
-| position、z-index、overflow | 字体族、字重、字号 |
-| display、visibility | 阴影、边框装饰 |
-| 响应式断点与容器查询 | 圆角、动效、过渡 |
-
-原因：视觉风格尚未定稿，先把结构跑通，避免后期大规模返工。风格定稿后会单独出任务补装饰样式。
+- 新组件从 shadcn 拉，落在 `src/components/ui/`，底层是 Radix 原语；颜色/圆角/阴影
+  走 `src/index.css` 的 CSS 变量 token，只引用语义 token、不写死 HEX。
+- 移动优先、44×44 触摸目标、图片不裁剪、动图不自动播放、深色走 `prefers-color-scheme`
+  —— 这些写在 [styling.md](agents/rules/styling.md)，**不因换组件库而放松**。
+- 现有页面的 BEM 样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前并存；新增代码
+  一律 Tailwind + shadcn。迁移是单独任务，不在引入 shadcn 这一次里做。
 
 ## 6. 交付
 

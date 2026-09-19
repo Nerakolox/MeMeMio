@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bubble Pop · 产品色彩规范</title>
+<style>
+  :root{
+    --ink:#1f2430; --sub:#6b7280; --line:#e5e7eb; --page:#fafafa; --card:#fff;
+    --th:#f4f4f5; --hl:#f8f8f9; --code:#181b22;
+  }
+  :root[data-theme="dark"]{
+    --ink:#e8ebf0; --sub:#98a2b3; --line:#2a3140; --page:#12151c; --card:#181b22;
+    --th:#1e222b; --hl:#22262f; --code:#0e1015;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ink:#e8ebf0; --sub:#98a2b3; --line:#2a3140; --page:#12151c; --card:#181b22;
+      --th:#1e222b; --hl:#22262f; --code:#0e1015;
+    }
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{
+    background:var(--page);color:var(--ink);
+    font-family:-apple-system,'PingFang SC','Helvetica Neue','Microsoft YaHei',Arial,sans-serif;
+    font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;
+    transition:background .15s,color .15s;
+  }
+  .mono{font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;font-size:12.5px;}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 32px;}
+  /* header */
+  header{border-bottom:1px solid var(--line);background:var(--card);}
+  .head-in{display:flex;justify-content:space-between;align-items:center;height:56px;gap:16px;}
+  .brand{font-weight:600;font-size:14px;letter-spacing:.02em;}
+  .brand span{color:var(--sub);font-weight:400;}
+  .meta{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:14px;}
+  .meta b{font-weight:600;color:var(--ink);}
+  .theme-sw{display:inline-flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
+  .theme-sw button{
+    font:inherit;font-size:11.5px;font-weight:600;padding:4px 11px;cursor:pointer;
+    border:0;background:transparent;color:var(--sub);
+  }
+  .theme-sw button[aria-pressed="true"]{background:var(--ink);color:var(--card);}
+  /* page title */
+  .title-block{padding:44px 0 8px;}
+  .title-block h1{font-size:26px;font-weight:600;letter-spacing:-.01em;}
+  .title-block p{color:var(--sub);margin-top:8px;max-width:680px;font-size:13.5px;}
+  /* section */
+  section{padding:36px 0 8px;}
+  .sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:4px;}
+  .sec-head h2{font-size:17px;font-weight:600;}
+  .sec-head .no{font-size:12px;color:var(--sub);font-family:ui-monospace,Menlo,monospace;}
+  .sec-desc{color:var(--sub);font-size:13px;margin-bottom:18px;max-width:760px;}
+  /* generic table */
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+  th{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);background:var(--th);text-align:left;}
+  th,td{padding:11px 16px;border-bottom:1px solid var(--line);vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  td{font-size:13px;}
+  .chip{width:34px;height:22px;border-radius:5px;display:inline-block;vertical-align:middle;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
+  .token{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--th);border:1px solid var(--line);padding:2px 8px;border-radius:5px;white-space:nowrap;}
+  .copyable{cursor:pointer;}
+  .copyable:hover td{background:var(--hl);}
+  .dim{color:var(--sub);font-size:12.5px;}
+  .tag{
+    display:inline-block;font-size:10.5px;font-weight:600;padding:1px 7px;border-radius:4px;
+    background:var(--th);color:var(--sub);border:1px solid var(--line);margin-left:6px;
+  }
+  /* scale strip */
+  .scale{display:flex;border-radius:10px;overflow:hidden;border:1px solid var(--line);}
+  .scale .step{flex:1;height:84px;position:relative;cursor:pointer;transition:flex .25s;}
+  .scale .step:hover{flex:1.6;}
+  .scale .step .lbl{
+    position:absolute;left:0;right:0;bottom:0;padding:5px 8px;font-size:10.5px;
+    font-family:ui-monospace,Menlo,monospace;display:flex;flex-direction:column;line-height:1.4;
+  }
+  .scale-name{font-size:12.5px;font-weight:600;margin:22px 0 8px;color:var(--ink);}
+  .scale-name span{color:var(--sub);font-weight:400;}
+  /* badges */
+  .badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;white-space:nowrap;}
+  .b-aaa{background:#e7f6ec;color:#177245;}
+  .b-aa{background:#e7f0fe;color:#1d5fd1;}
+  .b-aa18{background:#fdf3e3;color:#8f5f00;}
+  .b-fail{background:#fdeaea;color:#c03636;}
+  /* contrast matrix */
+  .matrix td,.matrix th{text-align:center;}
+  .matrix th:first-child,.matrix td:first-child{text-align:left;}
+  .m-cell{display:flex;flex-direction:column;gap:3px;align-items:center;}
+  .m-demo{font-size:12px;font-weight:600;padding:3px 12px;border-radius:5px;box-shadow:inset 0 0 0 1px rgba(128,128,128,.3);}
+  /* rules */
+  .rules{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .rule-card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;}
+  .rule-card h3{font-size:13.5px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px;}
+  .rule-card h3::before{content:"";width:8px;height:8px;border-radius:2px;}
+  .rule-do h3::before{background:#22a06b;}
+  .rule-dont h3::before{background:#e5484d;}
+  .rule-card ul{list-style:none;}
+  .rule-card li{font-size:13px;color:var(--sub);padding:5px 0 5px 18px;position:relative;}
+  .rule-card li b{color:var(--ink);font-weight:600;}
+  .rule-card li::before{content:"";position:absolute;left:2px;top:12px;width:6px;height:1.5px;background:var(--sub);opacity:.55;}
+  .rule-card code{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--th);padding:1px 5px;border-radius:4px;}
+  /* callout */
+  .note{
+    background:var(--card);border:1px solid var(--line);border-left:3px solid #6BA8FF;
+    border-radius:8px;padding:13px 16px;font-size:13px;color:var(--sub);margin:14px 0 0;
+  }
+  .note b{color:var(--ink);}
+  /* ratio */
+  .ratio-bar{display:flex;height:44px;border-radius:8px;overflow:hidden;border:1px solid var(--line);}
+  .ratio-bar div{display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:600;font-family:ui-monospace,Menlo,monospace;}
+  .ratio-legend{display:flex;gap:20px;flex-wrap:wrap;margin-top:10px;font-size:12.5px;color:var(--sub);}
+  .ratio-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px;box-shadow:inset 0 0 0 1px rgba(128,128,128,.35);}
+  /* code */
+  .code-panel{background:var(--code);border-radius:10px;position:relative;margin-top:4px;}
+  .code-panel pre{
+    padding:20px 22px;font-family:ui-monospace,'SF Mono',Menlo,monospace;
+    font-size:12.5px;line-height:1.9;color:#d5dae3;overflow-x:auto;white-space:pre;
+  }
+  .code-panel .cm{color:#6b7383;}
+  .code-panel .vr{color:#7db3ff;}
+  .code-panel .vl{color:#ff9db8;}
+  .code-panel .at{color:#8fd694;}
+  .copy-btn{
+    position:absolute;top:12px;right:12px;font-size:11.5px;font-weight:600;font-family:inherit;
+    background:rgba(255,255,255,.09);color:#e8ebf0;border:1px solid rgba(255,255,255,.14);
+    border-radius:6px;padding:5px 13px;cursor:pointer;transition:background .15s;
+  }
+  .copy-btn:hover{background:rgba(255,255,255,.18);}
+  .tabs{display:flex;gap:6px;margin-bottom:10px;}
+  .tab{
+    font-size:12px;font-weight:600;padding:5px 14px;border-radius:6px;cursor:pointer;
+    border:1px solid var(--line);background:var(--card);color:var(--sub);font-family:inherit;
+  }
+  .tab.active{background:var(--ink);color:var(--card);border-color:var(--ink);}
+  footer{padding:40px 0 56px;color:var(--sub);font-size:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+  .toast{
+    position:fixed;left:50%;bottom:30px;transform:translate(-50%,16px);
+    background:#1f2430;color:#fff;font-size:12.5px;padding:9px 18px;border-radius:8px;
+    opacity:0;pointer-events:none;transition:all .3s ease;z-index:50;
+    box-shadow:0 10px 28px -8px rgba(0,0,0,.4);
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0);}
+  @media (max-width:820px){
+    .wrap{padding:0 18px;}
+    .rules{grid-template-columns:1fr;}
+    .scale .step .lbl{font-size:9px;padding:4px 5px;}
+    .head-in{height:auto;padding:10px 0;flex-wrap:wrap;}
+  }
+</style>
+</head>
+<body>
+
+<!--
+  归档件，2026-09-19。不再修改。
+
+  这份是 Bubble Pop 色卡的**推导过程**，不是现行依据。现行依据是：
+    · 取值     → web/src/tokens.css（本页 CSS 导出的落地）
+    · 规则     → web/agents/rules/styling.md「取值：token 层」
+    · 视觉方向 → 已成定稿，记录在 web/AGENTS.md §5
+
+  留着它的理由：三个月后再有人提「换个更亮的蓝」时，答案在这里——每一条对比度是怎么量出来的、
+  哪几个值试过并且为什么不成立（深色混 white 会退化成纯灰、accent-600 在页面底上只有 4.29）。
+-->
+
+<style>
+  .archive-banner{
+    position:sticky;top:0;z-index:99;background:#8F5F00;color:#fff;
+    font:600 12.5px/1.5 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+    padding:9px 32px;text-align:center;
+  }
+</style>
+<div class="archive-banner">
+  已归档 · 这份是推导过程，不是现行依据 —— 取值见 web/src/tokens.css，规则见 web/agents/rules/styling.md
+</div>
+
+<header>
+  <div class="wrap head-in">
+    <div class="brand">Bubble Pop <span>/ Design Tokens · Color</span></div>
+    <div class="meta">
+      <span>版本 <b>v1.3</b> · <b>Stable</b> · 2026-09-19</span>
+      <span class="theme-sw" role="group" aria-label="预览主题">
+        <button id="thLight" type="button">浅色</button>
+        <button id="thDark" type="button">深色</button>
+      </span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="title-block">
+    <h1>产品色彩规范</h1>
+    <p>核心色板、色阶、语义化 Token、深浅双模式、可访问性对比度与使用规则。所有色值可直接点击复制。本页右上角可切换预览主题，仅用于审阅深色取值，<b>产品本身不做手动切换开关</b>（跟随 <span class="mono">prefers-color-scheme</span>）。</p>
+  </div>
+
+  <!-- 01 core palette -->
+  <section>
+    <div class="sec-head"><span class="no">01</span><h2>核心色板</h2></div>
+    <div class="sec-desc">五个品牌色 + 三个非品牌基础色。所有语义 Token 的取值都追溯回这张表——要么引用，要么由它算出，不出现表外色值。</div>
+    <table id="coreTable">
+      <thead><tr><th style="width:56px">色样</th><th>Token</th><th>名称</th><th>HEX</th><th>RGB</th><th>HSL</th><th>角色</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="note">
+      <b>后三个不是品牌色。</b><span class="mono">bp-white</span> 就是纯白——卡片底、图片容器底、反白文字都用它，不写成字面量。
+      <span class="mono">bp-night</span> 与 <span class="mono">bp-night-accent</span> 是色阶的机械种子，不是设计色：前者同时兼任深色模式页面底，后者是点缀色的加深方向——
+      点缀色若用中性锚点加深会发灰紫，所以单独给一个带红相的深端。<b>语义层里不存在凭空写下的色值——要么引用上面两表，要么写成算式由它们算出来。</b>
+    </div>
+  </section>
+
+  <!-- 02 scales -->
+  <section>
+    <div class="sec-head"><span class="no">02</span><h2>色阶</h2></div>
+    <div class="sec-desc">三条 10 级色阶（50 最浅 → 900 最深）。50–400 向白混合，600–900 向锚点混合，500 为基准色本身。点击任意一级复制 HEX。</div>
+    <div id="scales"></div>
+    <div class="note">
+      <b>600 级是校准值。</b>浅色模式下承载白字的按钮底从 600 起（4.66），500 只做品牌图形。
+      400 级的白混比例从 0.28 收到 <b>0.20</b>——原来的值让 <span class="mono">neutral-400</span> 停在 3.72，占位文字够不到 4.5，而上一档 500 直接跳到 7.72。<b>这是色阶缺了一档，不是选错档。</b>
+    </div>
+  </section>
+
+  <!-- 03 semantic tokens -->
+  <section>
+    <div class="sec-head"><span class="no">03</span><h2>语义化 Token</h2></div>
+    <div class="sec-desc">界面开发只引用语义层，不直接使用基础色值。浅色列为默认取值，深色列在 <span class="mono">@media (prefers-color-scheme: dark)</span> 中覆写。<span class="mono">dk-N</span> 是深色中性色的推导写法，导出时展开成 <span class="mono">color-mix()</span>，不是烤死的 HEX。</div>
+    <table id="semTable">
+      <thead><tr><th style="width:96px">色样</th><th>语义 Token</th><th style="width:200px">浅色</th><th style="width:200px">深色</th><th>用途</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <!-- 04 ratio -->
+  <section>
+    <div class="sec-head"><span class="no">04</span><h2>用量配比</h2></div>
+    <div class="sec-desc">单屏推荐占比 60 / 25 / 10 / 5，点缀色不得超过 5%。<b>只统计界面 chrome，不统计图片内容。</b></div>
+    <div class="ratio-bar" id="ratioBar"></div>
+    <div class="ratio-legend" id="ratioLegend"></div>
+    <div class="note">
+      原先写作「单屏占比」没有主语，在这个产品里无法验收——一屏四十张缩略图，<b>图片本身占的视觉面积远超 60%，而它们不在色卡里</b>。
+      把统计范围限定在 chrome 之后这条规则才可执行。
+    </div>
+  </section>
+
+  <!-- 05 contrast -->
+  <section>
+    <div class="sec-head"><span class="no">05</span><h2>对比度矩阵</h2></div>
+    <div class="sec-desc">前景 × 背景的 WCAG 2.1 对比度。AAA ≥ 7.0，AA ≥ 4.5，AA（大字）≥ 3.0，低于 3.0 仅可用于装饰。随预览主题切换。</div>
+    <table class="matrix" id="matrix"></table>
+  </section>
+
+  <!-- 06 rules -->
+  <section>
+    <div class="sec-head"><span class="no">06</span><h2>使用规则</h2></div>
+    <div class="rules">
+      <div class="rule-card rule-do">
+        <h3>推荐</h3>
+        <ul>
+          <li><b>按钮与链接用不同的 token。</b><code>color-action</code> 是色作底、白字在上；<code>color-link</code> 是色作字、页面底在下——<b>两个测试互不覆盖</b>，600 过前者不过后者（4.66 / 4.36）</li>
+          <li><b>比较基准取页面底，不取卡片底。</b>卡片比页面亮，拿卡片量会虚高：accent-600 对卡片 4.58 过关、对页面只有 4.29。<b>载体不定的组件（徽标、角标）一律按页面底量</b>，所以 <code>color-accent-strong</code> 取 700 而不是 600</li>
+          <li>浅色模式：承载文字的组件从 600 级起，载体不定时取 700；<b>深色模式反过来从 400 级起</b>（亮色压在深底上）</li>
+          <li>500 级只做品牌图形、插画、大面积铺陈，<b>不承载文字</b></li>
+          <li>点缀色单屏最多出现一次，用于运营标记、徽标、关键数据</li>
+          <li>文字用 Ink 及其色阶分级，不用纯黑</li>
+          <li>浅色底上的次级信息用 Support 色块承载，而非灰</li>
+          <li>状态色（成功 / 警告 / 危险 / 信息）各自成套，色块与文字成对使用</li>
+          <li><b>深色中性色不另设一套色阶。</b>面与框从 <code>bp-night</code> 混 <code>bp-support</code>（4 / 7 / 10 / 12 / 42 / 57%）；文字直接用中性色阶浅端（<code>bp-neutral-50</code> / <code>bp-neutral-300</code>）——色阶由 Ink 派生、自带蓝调，浅端本来就是为深底准备的</li>
+        </ul>
+      </div>
+      <div class="rule-card rule-dont">
+        <h3>禁止</h3>
+        <ul>
+          <li>禁止用 Primary 500 / Accent 500 承载文字（白字 2.42 / 2.14）</li>
+          <li><b>禁止在深色模式下沿用浅色模式文字色。</b>Ink 在 <code>bp-night</code> 上只有 <b>2.08</b>，完全不可读；深色文字必须整条换掉</li>
+          <li><b>禁止假设深色的边框可以沿用。</b>常规深色描边对页面底只有 1.4 上下，UI 边界需 ≥3.0；深色描边一律由 <code>bp-night</code> 混 <code>bp-support</code> 算出，<code>--color-border-strong</code> 取 42%</li>
+          <li><b>禁止把 <code>pending</code> / <code>needs_manual</code> 做成危险色。</b>它们是正常中间态，不是故障；用错误色会让用户以为自己做错了什么</li>
+          <li>禁止主色与点缀色直接相邻放置且无分隔</li>
+          <li><b>禁止手工调明度创造"中间色"。</b>色阶里有的从色阶取；色阶没有的（只有深色模式的面与框）写成算式从 <code>bp-night</code> 混出，<b>不烤死 HEX</b></li>
+          <li>禁止在 Background 之外自创页面底色</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 07 export -->
+  <section>
+    <div class="sec-head"><span class="no">07</span><h2>导出</h2></div>
+    <div class="sec-desc">包含基础色、色阶锚点、三条色阶、语义层与深色覆写，可直接接入工程。</div>
+    <div class="tabs">
+      <button class="tab active" data-fmt="css">CSS Variables</button>
+      <button class="tab" data-fmt="json">JSON Tokens</button>
+      <button class="tab" data-fmt="scss">SCSS</button>
+    </div>
+    <div class="code-panel">
+      <button class="copy-btn" id="copyCode">复制</button>
+      <pre id="code"></pre>
+    </div>
+  </section>
+
+  <footer>
+    <span>Bubble Pop · Product Color Spec v1.3</span>
+    <span>WCAG 2.1 · 浅色 + 深色双模式</span>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============ 基础数据 ============ */
+/* 五个品牌色 */
+const BRAND = [
+  {key:'background', token:'bp-background', name:'Background / 汽水冰雾', hex:'#F3F8FF', role:'页面与空间底色'},
+  {key:'primary',    token:'bp-primary',    name:'Primary / 泡泡蓝',     hex:'#6BA8FF', role:'品牌识别 · 行动点'},
+  {key:'support',    token:'bp-support',    name:'Support / 冰川蓝',     hex:'#CBE0FF', role:'次级色块 · 过渡'},
+  {key:'accent',     token:'bp-accent',     name:'Accent / 软糖粉',      hex:'#FF8FB1', role:'点缀 · 运营标记'},
+  {key:'ink',        token:'bp-ink',        name:'Ink / 深海蓝',         hex:'#3A4E7A', role:'文字 · 图标'},
+];
+/* 非品牌基础色：纯白 + 两个色阶锚点。
+   锚点不是设计色，是色阶的机械种子（bp-night 兼任深色页面底）。 */
+const PRIMITIVE = [
+  {key:'white',       token:'bp-white',        name:'Base / 纯白',     hex:'#FFFFFF', role:'卡片与图片容器底 · 反白文字', kind:'基础'},
+  {key:'night',       token:'bp-night',        name:'Anchor / 夜蓝',   hex:'#141B2E', role:'色阶加深锚点 · 深色页面底',  kind:'锚点'},
+  {key:'nightAccent', token:'bp-night-accent', name:'Anchor / 夜梅',   hex:'#2E141B', role:'点缀色的加深锚点',           kind:'锚点'},
+];
+const BASE = BRAND.concat(PRIMITIVE);
+const C = {}; BASE.forEach(c=>C[c.key]=c.hex);
+
+/* ============ 工具 ============ */
+function hexToRgb(hex){const n=parseInt(hex.slice(1),16);return[n>>16&255,n>>8&255,n&255];}
+function rgbToHex(r,g,b){return '#'+[r,g,b].map(v=>Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0')).join('').toUpperCase();}
+function rgbToHsl([r,g,b]){
+  r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;let h=0;
+  const l=(mx+mn)/2,s=d===0?0:d/(1-Math.abs(2*l-1));
+  if(d){if(mx===r)h=((g-b)/d)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360;}
+  return [Math.round(h),Math.round(s*100),Math.round(l*100)];
+}
+function mix(hex,target,t){const a=hexToRgb(hex),b=hexToRgb(target);return rgbToHex(a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t);}
+function lum(hex){const[r,g,b]=hexToRgb(hex).map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);});return 0.2126*r+0.7152*g+0.0722*b;}
+function contrast(a,b){const[x,y]=[lum(a),lum(b)].sort((m,n)=>n-m);return(x+0.05)/(y+0.05);}
+const toast=document.getElementById('toast');let tt;
+function showToast(m){toast.textContent=m;toast.classList.add('show');clearTimeout(tt);tt=setTimeout(()=>toast.classList.remove('show'),1500);}
+function copyText(t,m){(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).catch(()=>{const x=document.createElement('textarea');x.value=t;document.body.appendChild(x);x.select();document.execCommand('copy');x.remove();}).finally(()=>showToast(m||('已复制 '+t)));}
+const isLight=h=>lum(h)>0.35;
+
+/* ============ 01 核心色板 ============ */
+const coreBody=document.querySelector('#coreTable tbody');
+BASE.forEach(c=>{
+  const rgb=hexToRgb(c.hex),hsl=rgbToHsl(rgb);
+  const kind=c.kind||'';
+  const tr=document.createElement('tr');tr.className='copyable';
+  tr.innerHTML=`<td><span class="chip" style="background:${c.hex}"></span></td>
+    <td><span class="token">--${c.token}</span></td>
+    <td>${c.name}${kind?`<span class="tag">${kind}</span>`:''}</td>
+    <td class="mono">${c.hex}</td>
+    <td class="mono dim">${rgb.join(', ')}</td>
+    <td class="mono dim">${hsl[0]}° ${hsl[1]}% ${hsl[2]}%</td>
+    <td class="dim">${c.role}</td>`;
+  tr.title='点击复制 HEX';
+  tr.addEventListener('click',()=>copyText(c.hex,`已复制 ${c.hex}（${c.token}）`));
+  coreBody.appendChild(tr);
+});
+
+/* ============ 02 色阶 ============ */
+/* 500 为基准色；50–400 向白混合，600–900 向锚点混合。
+   TINT[400] 从 0.28 收到 0.20：原值让 neutral-400 停在 3.72，
+   占位文字够不到 4.5，而上一档 500 直跳 7.72 —— 是色阶缺档，不是选错档。
+   SHADE 600 起为可访问性校准值：浅色模式白字压 600 需 >= 4.5。 */
+const SCALE_STEPS=[50,100,200,300,400,500,600,700,800,900];
+const TINT={50:.92,100:.82,200:.68,300:.5,400:.20,500:0};
+const SHADE={600:.36,700:.50,800:.63,900:.75};
+const SHADE_ACCENT={600:.40,700:.58,800:.70,900:.80};
+function makeScale(hex,dark,shadeMap){
+  return SCALE_STEPS.map(s=>{
+    if(TINT[s]!=null)return mix(hex,'#FFFFFF',TINT[s]);
+    return mix(hex,dark,shadeMap[s]);
+  });
+}
+const SCALES=[
+  {name:'Primary Scale',sub:'主色阶 · 基准 500 = #6BA8FF（品牌色，不承载文字）',token:'bp-primary',hex:C.primary,dark:C.night,shade:SHADE},
+  {name:'Accent Scale',sub:'点缀色阶 · 基准 500 = #FF8FB1（装饰色，不承载文字）',token:'bp-accent',hex:C.accent,dark:C.nightAccent,shade:SHADE_ACCENT},
+  {name:'Neutral Scale',sub:'中性色阶 · 由 Ink 派生（偏蓝，非真灰）',token:'bp-neutral',hex:C.ink,dark:C.night,shade:SHADE},
+];
+const scaleData={};
+const scalesEl=document.getElementById('scales');
+SCALES.forEach(sc=>{
+  const colors=makeScale(sc.hex,sc.dark,sc.shade);scaleData[sc.token]=colors;
+  const title=document.createElement('div');title.className='scale-name';
+  title.innerHTML=`${sc.name} <span>· ${sc.sub}</span>`;scalesEl.appendChild(title);
+  const strip=document.createElement('div');strip.className='scale';
+  colors.forEach((hex,i)=>{
+    const step=document.createElement('div');step.className='step';step.style.background=hex;
+    step.title=`${sc.token}-${SCALE_STEPS[i]}  ${hex} — 点击复制`;
+    step.innerHTML=`<span class="lbl" style="color:${isLight(hex)?'#1f2430b3':'#ffffffcc'}"><b>${SCALE_STEPS[i]}</b>${hex}</span>`;
+    step.addEventListener('click',()=>copyText(hex,`已复制 ${hex}（${sc.token}-${SCALE_STEPS[i]}）`));
+    strip.appendChild(step);
+  });
+  scalesEl.appendChild(strip);
+});
+const P=scaleData['bp-primary'],A=scaleData['bp-accent'],N=scaleData['bp-neutral'];
+const at=(arr,s)=>arr[SCALE_STEPS.indexOf(s)];
+
+/* ============ 状态色 ============ */
+/* 状态色自带色相，无法从品牌五色派生——绿/红/琥珀与蓝粉不同相，
+   数学上推不出来。这是语义层里唯一一类无法从品牌五色派生的值，故单列一表。 */
+const STATE=[
+  {name:'success', light:['#177245','#E7F6EC'], dark:['#5FD39A','#12301F'], use:'成功、已入库、测试通过'},
+  {name:'warning', light:['#8F5F00','#FDF3E3'], dark:['#E0A33A','#33260C'], use:'需人工、降级提示、待确认'},
+  {name:'danger',  light:['#C03636','#FDEAEA'], dark:['#FF8A8A','#3A1717'], use:'失败、错误、删除确认'},
+  {name:'info',    light:['#1D5FD1','#E7F0FE'], dark:['#7DB3FF','#132743'], use:'中性提示、待打标（不做危险色）'},
+];
+
+/* ============ 03 语义化 Token ============ */
+/* 深色中性色的来源分两类，各取各的：
+   ① 面与框 —— 中性色阶没有深色档位（它是为浅色底建的），由 bp-night 混向 bp-support 算出。
+      比例按对比度反解，量度基准取「卡片底」而不是页面底：文字与描边实际坐在卡上，
+      卡比页面亮，是最严格的那个底。
+      混向 support 而非 white 是为了保住蓝调 —— 混 white 会退化成纯灰，浅端饱和度掉到 7%。
+   ② 文字 —— 直接引用色阶浅端。色阶由 Ink 派生、自带蓝调（S≈19–20%），
+      浅端本来就是为深色底准备的，不需要再算；且混色只会把饱和度洗掉。 */
+const DK=(p)=>`color-mix(in srgb, var(--bp-night) ${100-p}%, var(--bp-support) ${p}%)`;
+const DK_HEX=(p)=>mix(C.night,C.support,p/100);
+
+/* [token, 浅色取值, 深色取值, 用途]
+   取值三种写法：bp-* 引用基础色或色阶 · dk-N 深色推导（N = 混入 bp-support 的百分比）· # 字面量 */
+const SEM=[
+  ['color-bg-page','bp-background','bp-night','页面背景'],
+  ['color-bg-surface','bp-white','dk-4','卡片 / 弹窗 / 输入框底色'],
+  ['color-bg-subtle','bp-support','dk-7','次级信息区、标签底色'],
+  ['color-bg-disabled','bp-neutral-100','dk-10','禁用态背景'],
+  ['color-media-surface','bp-white','bp-white','图片容器底：两种模式都是浅底'],
+  ['color-brand','bp-primary-500','bp-primary-500','品牌图形 / 插画，不承载文字'],
+  ['color-action','bp-primary-600','bp-primary-500','主按钮底（白字 4.66 / 深字 7.07）'],
+  ['color-action-hover','bp-primary-700','bp-primary-400','主按钮 hover'],
+  ['color-action-active','bp-primary-800','bp-primary-300','主按钮 active'],
+  ['color-on-action','bp-white','bp-night','按钮上的文字'],
+  ['color-link','bp-primary-700','bp-primary-400','链接文字（4.36 → 5.77 / 9.17）'],
+  ['color-accent','bp-accent-500','bp-accent-500','装饰点缀 / 图形标记，不承载文字'],
+  ['color-accent-strong','bp-accent-700','bp-accent-400','承载文字的徽标 / 关键数据，单屏一处（浅色 6.37）'],
+  ['color-text-primary','bp-ink','bp-neutral-50','标题与正文（深色 15.14）'],
+  ['color-text-secondary','bp-neutral-700','bp-neutral-300','辅助说明文字（深色 6.49）'],
+  ['color-text-placeholder','bp-neutral-400','dk-57','占位与禁用文字（深色 4.55）'],
+  ['color-border','bp-neutral-200','dk-12','分割线（装饰性，不要求 3:1）'],
+  ['color-border-strong','bp-neutral-400','dk-42','输入框 / 按钮描边（UI 边界 ≥ 3:1，深色 3.05）'],
+  ['color-focus-ring','bp-primary-700','bp-primary-400','键盘聚焦环（实色，需 ≥ 3:1）'],
+];
+STATE.forEach(s=>{
+  SEM.push([`color-${s.name}`,s.light[0],s.dark[0],s.use]);
+  SEM.push([`color-${s.name}-surface`,s.light[1],s.dark[1],`${s.use} —— 色块`]);
+});
+
+/* 把取值解析成 HEX */
+function resolve(ref){
+  if(ref.startsWith('#'))return ref;
+  const d=ref.match(/^dk-(\d+)$/);
+  if(d)return DK_HEX(+d[1]);
+  const m=ref.match(/^bp-(primary|accent|neutral)-(\d+)$/);
+  if(m)return scaleData['bp-'+m[1]][SCALE_STEPS.indexOf(+m[2])];
+  const b=BASE.find(x=>x.token===ref);
+  return b?b.hex:'#000000';
+}
+const semBody=document.querySelector('#semTable tbody');
+SEM.forEach(([tk,lref,dref,use])=>{
+  const lh=resolve(lref),dh=resolve(dref);
+  const tr=document.createElement('tr');tr.className='copyable';
+  tr.innerHTML=`<td><span class="chip" style="background:${lh}"></span><span class="chip" style="background:${dh};margin-left:4px"></span></td>
+    <td><span class="token">--${tk}</span></td>
+    <td class="mono">${lref} <span class="dim">${lh}</span></td>
+    <td class="mono">${dref} <span class="dim">${dh}</span></td>
+    <td class="dim">${use}</td>`;
+  tr.title='点击复制浅色值';
+  tr.addEventListener('click',()=>copyText(lh,`已复制 ${lh}（${tk} 浅色）`));
+  semBody.appendChild(tr);
+});
+
+/* ============ 04 配比 ============ */
+const RATIO=[['Background','background',60],['Support','support',25],['Primary','primary',10],['Accent','accent',5]];
+const rb=document.getElementById('ratioBar'),rl=document.getElementById('ratioLegend');
+RATIO.forEach(([label,k,v])=>{
+  const seg=document.createElement('div');
+  seg.style.flex=v;seg.style.background=C[k];
+  seg.style.color=isLight(C[k])?'#1f2430aa':'#fff';
+  seg.textContent=v+'%';rb.appendChild(seg);
+  rl.innerHTML+=`<span><i style="background:${C[k]}"></i>${label} ${v}%</span>`;
+});
+
+/* ============ 05 对比度矩阵 ============ */
+function level(r){
+  if(r>=7)return['AAA','b-aaa'];
+  if(r>=4.5)return['AA','b-aa'];
+  if(r>=3)return['AA 大字','b-aa18'];
+  return['装饰','b-fail'];
+}
+/* 矩阵里的取值同样全部来自上面几张表，不另写字面量 */
+const ST=n=>STATE.find(s=>s.name===n);
+const MATRIX={
+  light:{
+    fg:[['Ink 正文',C.ink],['Primary 700 链接',at(P,700)],['Accent 700 徽标',at(A,700)],
+        ['Danger 危险',ST('danger').light[0]],['White 按钮字',C.white]],
+    bg:[['Background 页面',C.background],['Surface 卡片',C.white],['Support 次级',C.support],
+        ['Primary 600 主按钮',at(P,600)],['Ink 反白',C.ink]]
+  },
+  dark:{
+    fg:[['正文 neutral-50',at(N,50)],['链接 Primary 400',at(P,400)],['点缀 Accent 400',at(A,400)],
+        ['Danger 危险',ST('danger').dark[0]],['按钮字 bp-night',C.night]],
+    bg:[['页面 bp-night',C.night],['卡片底 dk-4',DK_HEX(4)],['次级 dk-7',DK_HEX(7)],
+        ['主按钮 Primary 500',C.primary],['浅色反白 neutral-50',at(N,50)]]
+  }
+};
+const mt=document.getElementById('matrix');
+function renderMatrix(theme){
+  const M=MATRIX[theme];
+  const thead='<thead><tr><th>前景 \\ 背景</th>'+M.bg.map(([n])=>`<th>${n}</th>`).join('')+'</tr></thead>';
+  let tbody='<tbody>';
+  M.fg.forEach(([fn,fh])=>{
+    tbody+=`<tr><td>${fn}</td>`+M.bg.map(([gn,bh])=>{
+      const r=contrast(fh,bh),[lv,cls]=level(r);
+      return`<td><div class="m-cell"><span class="m-demo" style="background:${bh};color:${fh}">Aa</span><span class="mono dim">${r.toFixed(2)}</span><span class="badge ${cls}">${lv}</span></div></td>`;
+    }).join('')+'</tr>';
+  });
+  mt.innerHTML=thead+tbody+'</tbody>';
+}
+
+/* ============ 06 主题切换（仅审阅用） ============ */
+function currentTheme(){
+  const attr=document.documentElement.getAttribute('data-theme');
+  if(attr)return attr;
+  return matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+}
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme',t);
+  document.getElementById('thLight').setAttribute('aria-pressed',String(t==='light'));
+  document.getElementById('thDark').setAttribute('aria-pressed',String(t==='dark'));
+  renderMatrix(t);
+}
+document.getElementById('thLight').addEventListener('click',()=>applyTheme('light'));
+document.getElementById('thDark').addEventListener('click',()=>applyTheme('dark'));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{
+  if(!document.documentElement.getAttribute('data-theme'))applyTheme(currentTheme());
+});
+
+/* ============ 07 导出 ============ */
+/* 语义值导出成 CSS：字面量原样输出，dk-N 展开成 color-mix()，bp-* 引变量。
+   dk-N 展开成算式而不是烤死的 HEX —— 改 bp-night / bp-support 时深色整条跟着走。 */
+function semLine(ref){
+  if(ref.startsWith('#'))return ref;
+  const d=ref.match(/^dk-(\d+)$/);
+  if(d)return DK(+d[1]);
+  return `var(--${ref})`;
+}
+function buildCSS(){
+  let s='/* Bubble Pop Color Tokens v1.3 */\n\n:root {\n';
+  s+='  /* Base —— 品牌五色 */\n';
+  BRAND.forEach(c=>s+=`  --${c.token}: ${c.hex};\n`);
+  s+='\n  /* Base —— 非品牌基础色 */\n';
+  PRIMITIVE.forEach(c=>s+=`  --${c.token}: ${c.hex};\n`);
+  s+='\n  /* Scales */\n';
+  ['bp-primary','bp-accent','bp-neutral'].forEach(tk=>{
+    scaleData[tk].forEach((hex,i)=>s+=`  --${tk}-${SCALE_STEPS[i]}: ${hex};\n`);
+    s+='\n';
+  });
+  s+='  /* Semantic —— 浅色（默认） */\n';
+  SEM.forEach(([tk,lref])=>s+=`  --${tk}: ${semLine(lref)};\n`);
+  s+='}\n\n';
+  s+='/* Semantic —— 深色覆写 */\n';
+  s+='@media (prefers-color-scheme: dark) {\n  :root {\n';
+  SEM.forEach(([tk,lref,dref])=>{
+    const l=semLine(lref),d=semLine(dref);
+    if(l!==d)s+=`    --${tk}: ${d};\n`;
+  });
+  s+='  }\n}\n';
+  return s;
+}
+function buildJSON(){
+  const o={base:{},primitive:{},scales:{},semantic:{},state:{}};
+  BRAND.forEach(c=>o.base[c.token]=c.hex);
+  PRIMITIVE.forEach(c=>o.primitive[c.token]=c.hex);
+  ['bp-primary','bp-accent','bp-neutral'].forEach(tk=>{
+    o.scales[tk]={};scaleData[tk].forEach((hex,i)=>o.scales[tk][SCALE_STEPS[i]]=hex);
+  });
+  SEM.forEach(([tk,lref,dref])=>{o.semantic[tk]={light:semLine(lref),dark:semLine(dref)};});
+  STATE.forEach(s=>{o.state['color-'+s.name]={light:s.light[0],dark:s.dark[0],surface:{light:s.light[1],dark:s.dark[1]}};});
+  return JSON.stringify(o,null,2);
+}
+function buildSCSS(){
+  let s='// Bubble Pop Color Tokens v1.3\n';
+  BRAND.forEach(c=>s+=`$${c.token}: ${c.hex};\n`);
+  s+='\n';
+  PRIMITIVE.forEach(c=>s+=`$${c.token}: ${c.hex};\n`);
+  s+='\n';
+  ['bp-primary','bp-accent','bp-neutral'].forEach(tk=>{
+    scaleData[tk].forEach((hex,i)=>s+=`$${tk}-${SCALE_STEPS[i]}: ${hex};\n`);
+    s+='\n';
+  });
+  s+='// 语义层浅色\n';
+  SEM.forEach(([tk,lref])=>s+=`$color-${tk.replace(/^color-/,'')}: ${lref.startsWith('#')?lref:'$'+lref};\n`);
+  return s;
+}
+const FMT={css:buildCSS,json:buildJSON,scss:buildSCSS};
+const codeEl=document.getElementById('code');
+let curFmt='css';
+function renderCode(){
+  const raw=FMT[curFmt]();
+  if(curFmt==='json'){codeEl.textContent=raw;return;}
+  codeEl.innerHTML=raw
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/(\/\*[\s\S]*?\*\/|\/\/[^\n]*)/g,'<span class="cm">$1</span>')
+    .replace(/(@media[^{]*)/g,'<span class="at">$1</span>')
+    .replace(/(--[\w-]+|\$[\w-]+)/g,'<span class="vr">$1</span>')
+    .replace(/(#[0-9A-Fa-f]{6})/g,'<span class="vl">$1</span>');
+}
+renderCode();
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');curFmt=t.dataset.fmt;renderCode();
+  });
+});
+document.getElementById('copyCode').addEventListener('click',()=>copyText(FMT[curFmt](),'已复制到剪贴板'));
+
+/* 初始渲染 */
+applyTheme(currentTheme());
+</script>
+</body>
+</html>

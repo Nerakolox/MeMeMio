@@ -2,9 +2,15 @@
 
 ## 方案
 
-CSS Modules 或 Tailwind 二选一，**选定后不混用**。混用的结果是同一个组件的样式一半在 class 一半在文件里，改的时候两边都要找。
+**样式载体：Tailwind，组件库：shadcn/ui**（2026-09-19 定稿，取代早先「不引入组件库」的决定）。
 
-不引入组件库。这个应用只有六个页面，引一整套设计系统换来的一致性不值那点体积和定制成本。
+- 组件从 shadcn 拉进仓库，落在 `src/components/ui/`，底层原语是 Radix。新组件用
+  `npx shadcn add` 拿，再按项目约定改，不把它当黑盒依赖。
+- 主题是 new-york + zinc，颜色/圆角/阴影全部走 `src/index.css` 里的 CSS 变量 token
+  （`--primary` 等 HSL 三元组），**组件与页面只引用语义 token，不写死 HEX**。
+- 不混用：现有页面的 BEM 全局样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前
+  允许并存，但**新增代码一律写 Tailwind utility + shadcn 组件**，不再往 `styles.css`
+  追加新的手写装饰。迁移是单独任务，不在引入 shadcn 这一次里做。
 
 ## 移动端不是适配，是主场
 
