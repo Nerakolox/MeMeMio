@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, type KeyboardEvent } from 'react'
 import { ImageOff } from 'lucide-react'
 import type { Meme } from '../lib/api'
+import { useImageViewer } from './ImageViewer'
 import { Skeleton } from './ui/skeleton'
 
 /**
@@ -32,19 +33,36 @@ export type ImageShape = 'square' | 'natural'
  * 那两个 token 在深色下是深色，压在强制白底上就是白底上的浅字。这里用固定的
  * `zinc` 深浅值——它们跟的是**这个框**，不是主题。
  *
- * ## 动图：静态首帧 + hover / 点按播放，**不自动播放**
+ * ## 动图：静态首帧 + hover 播放，**不自动播放**
  *
  * 一屏几十个 GIF 同时播放会让手机发烫、滚动掉帧（styling.md「动图」）。缩略图本身就是
  * 静态首帧（服务端转的 webp），所以「不自动播放」是天然满足的，播放是**主动换 `src`**。
  *
- * 播放的触发方式按输入设备分，不是按屏幕宽度：能 hover 就 hover 播放（桌面），
- * 否则点按播放（手机）。判据是 `(hover: hover)` 这个平台能力查询——与
+ * 播放只在能 hover 的设备上发生，判据是 `(hover: hover)` 这个平台能力查询——与
  * `lib/clipboard.ts` 的 `pointer: coarse` 是同一类做法，不是 UA 判断。
+ *
+ * **触摸设备上没有「就地播放」这一档**（2026-09-21 起）：点按开全屏，动图在全屏里播。
+ * 同一个手势不做两件事——在此之前点按是就地播放，而手机上一格只有 140px，播了也看不清
+ * （styling.md「动图」那条已按此改写）。
+ *
+ * ## 点按 / 左键开全屏阅览
+ *
+ * 帧是一个 `<button>`，点它把这张图交给 `components/ImageViewer.tsx` 的全屏阅览器。
+ * 用真按钮而不是挂 `role` 的 div：图本来就该键盘可达，而 `Enter` 那条路有个静默的坑，
+ * 见 `handleFrameKeyDown`。
+ *
+ * ⚠️ **`frameClass()` 里的 `block` 不能省**：`<button>` 的 UA 默认是 `inline-block`，
+ * 它会变成一个行内级子元素、撑出行盒，而这个帧自带 `overflow-hidden`（基线因此取下外边距
+ * 边缘），父元素被多顶出约 7px。四处页面的网格与瀑布流会一起漂，**而且不报错**。
  */
 export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: ImageShape }) {
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const openImage = useImageViewer()
+
+  /** `alt` 与按钮的可读名共用一份。见 MemeCard 的注释：角标与操作器不在这里。 */
+  const label = meme.description ?? meme.originalFilename ?? meme.id
 
   const thumb = meme.thumbUrl ?? meme.url
   // 动图且已经切到原图时才播。用 thumbSrc ?? url 兜底：没有缩略图的动图，
@@ -68,6 +86,8 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
   }
 
   if (failed) {
+    // **不包按钮**：图都没出来，进去只会看到一张破图，而这里能给的（是哪个文件坏了）
+    // 才是那一步该看的信息。失败态是这一帧唯一的出口，没有别的动作可给。
     return (
       <div className={frameClass(shape)} style={shape === 'natural' ? { aspectRatio: ratio } : undefined}>
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center">
@@ -81,7 +101,18 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
   }
 
   return (
-    <div className={frameClass(shape)} style={shape === 'natural' ? { aspectRatio: ratio } : undefined}>
+    <button
+      type="button"
+      onClick={() => openImage(meme)}
+      onKeyDown={handleFrameKeyDown}
+      // 压在 `alt` 之上：`alt` 说的是「这是什么」，按钮的可读名要说「点它会怎样」。
+      aria-label={`全屏阅览：${label}`}
+      // `cursor-pointer` 得**自己写**：**Tailwind v4 起不再给 `<button>` 加
+      // `cursor: pointer`**（v3 加、v4 去掉，preflight 里也没有这条），不写的话
+      // 鼠标划到图上仍是箭头——「这里能点」只剩读屏和提示文案在说。
+      className={`${frameClass(shape)} cursor-pointer`}
+      style={shape === 'natural' ? { aspectRatio: ratio } : undefined}
+    >
       <img
         className={
           shape === 'natural'
@@ -89,20 +120,21 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
             : 'h-full w-full object-cover'
         }
         src={src}
-        alt={meme.description ?? meme.originalFilename ?? meme.id}
+        alt={label}
         loading="lazy"
         width={meme.width ?? undefined}
         height={meme.height ?? undefined}
         onLoad={() => setLoaded(true)}
         onError={handleError}
-        // 能 hover 就 hover 播放；hover 不可用（手机）时点按播放。
         // 两个 handler 都在 `playing` 已经是目标值时不做事，避免重复 setState。
+        //
+        // 点开后这份播放会自己停：指针被覆盖层挡住，浏览器给 `<img>` 发 `pointerleave`
+        // ——同一张动图不会在网格和全屏里同时解码。这条实测过，不是想当然。
         onPointerEnter={meme.isAnimated ? handlePointerEnter : undefined}
         onPointerLeave={meme.isAnimated ? handlePointerLeave : undefined}
-        onClick={meme.isAnimated ? handleClick : undefined}
       />
       {!loaded && <Skeleton className="absolute inset-0 rounded-2xl bg-zinc-200" />}
-    </div>
+    </button>
   )
 
   /**
@@ -124,9 +156,17 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
     setPlaying(false)
   }
 
-  function handleClick() {
-    if (hoverCapable()) return
-    setPlaying((p) => !p)
+  /**
+   * `Enter` 在 `<button>` 上会派发 `click`，**而这个 keydown 同时会冒到首页根 `<section>`
+   * 的 handler 上**（`features/search/use-search.ts` 的 `handleKeyDown`），那一条调的是
+   * `handleActivate(items[selectedIndex])`——**另一张卡**，`selectedIndex` 默认是 0。
+   * 表现是一条复制 / 下载被静默发起，而用户只是想看图。
+   *
+   * 只能 `stopPropagation`，**不能 `preventDefault`**：后者会把按钮自己那次 click
+   * 一起掐掉，阅览器就不开了。
+   */
+  function handleFrameKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
+    if (e.key === 'Enter') e.stopPropagation()
   }
 }
 
@@ -149,9 +189,16 @@ export const IMAGE_RADIUS = 'rounded-2xl'
  * 让白底卡片从背景上浮起来一点——瀑布流里几十张白图挨着排，没有它边界靠猜。
  * 量级与 `ui/sidebar.tsx` 的浮动侧边栏一致（那边也是 `shadow-sm`）。
  * 深色模式下这个影子看不出来，属正常（深色背景上的黑影子），没有另做 `dark:` 处理。
+ *
+ * ⚠️ **`block` 不是装饰**，两档都得有：帧现在是 `<button>`，UA 默认 `inline-block`，
+ * 会撑出行盒而父元素被多顶出约 7px（组件头部的注释有完整推导）。失败态那一支是 `<div>`
+ * ——两档共用这个函数，`block` 在那里同样是无害的默认值对齐。
+ *
+ * **这里没有 `cursor-pointer`，它在按钮那一支上单独写。** 光标是「点了会有事发生」的承诺，
+ * 而失败态的帧**不可点**（见上一条注释），给它一个指针就是空承诺。两档的类是共用一份，
+ * 但这一条故意不共用。
  */
 function frameClass(shape: ImageShape): string {
-  return shape === 'natural'
-    ? `relative w-full overflow-hidden ${IMAGE_RADIUS} bg-white shadow-sm`
-    : `relative aspect-square w-full overflow-hidden ${IMAGE_RADIUS} bg-white shadow-sm`
+  const base = `relative block w-full overflow-hidden ${IMAGE_RADIUS} bg-white shadow-sm`
+  return shape === 'natural' ? base : `${base} aspect-square`
 }

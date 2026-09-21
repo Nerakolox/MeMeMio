@@ -237,7 +237,61 @@ useEffect(() => {
 
 列表里的动图**默认不自动播放**，显示首帧 + 一个角标。一屏几十个 GIF 同时播放会让手机发烫、滚动掉帧。
 
-hover / 点击时再播。角标是必须的——用户要能一眼看出哪些是动图，因为[它们的发送路径不同](clipboard-share.md)。
+**在能 hover 的设备上 hover 播放，点按一律开全屏**（2026-09-21 改，见下）。
+角标是必须的——用户要能一眼看出哪些是动图，因为[它们的发送路径不同](clipboard-share.md)。
+
+触摸设备上**没有「就地播放」这一档**：同一个手势不做两件事，而手机上一格只有 140px，播了也看不清。
+播放靠把 `src` 从缩略图换成原图（缩略图是服务端转的静态首帧 WebP），全屏那张用的本来就是原图。
+
+## 全屏阅览
+
+点图片开全屏覆盖层（2026-09-21 加，`components/ImageViewer.tsx`）。**全应用只有一份**，
+挂在 `App.tsx` 的 `AppLayout` 里，四页共用。
+
+### 宿主的位置是功能的一部分，不是目录偏好
+
+**不能挂在卡片里。** React 的 portal 事件沿 **React 树**冒泡、不沿 DOM 树，所以阅览器就算
+portal 到 `document.body`，只要它的 React 父链经过首页，键盘事件照样冒到首页根 `<section>` 的
+`onKeyDown` 上：`Esc` 关不干净（背后的选中态被清掉）、`↑↓` 一边看图一边移动搜索结果、
+`Enter` 在阅览器里**发起一次复制 / 下载**。三件都不报错。
+
+挂在 `AppLayout` 里、摆在那条 `Outlet` 链的**祖先**上，`<Lightbox>` 的 React 祖先链就只有外壳。
+
+> 第二重保险是库自己给的：portal 会给 root 的**所有兄弟**挂 `inert` + `aria-hidden`。
+> root 是 `document.body` 时那就是 `#root`——整个应用在阅览器开着期间都是 inert。
+> **但这条依赖它真的拿到了焦点**，所以进不去就当没有，仍然靠上面那条结构上的隔离。
+
+### 库自带的 CSS 是无层的
+
+`yet-another-react-lightbox/styles.css` **无层**且颜色写死。无层声明压过 Tailwind 的
+`@layer utilities`，**在 `.yarl__*` 上写 Tailwind 类是静默失效**。要覆写走它自己的
+`--yarl__*` 变量或 `styles` 属性（内联样式赢过无层表），**不往 `styles.css` 追加**。
+
+- `import "yet-another-react-lightbox/styles.css"` 一行就够。**`plugins/zoom.css` 不存在**
+  （3.32.2 的 `exports` 只有 `styles` 与 captions / counter / thumbnails 四个），补一行会让构建失败。
+- 触摸目标**不用自己调**：关闭按钮 `padding: 8px` + `--yarl__icon_size: 32px` = 48px ≥ 44。
+  改它的时候别把图标缩到 28px 以下。
+- z-index 不用管：`--yarl__portal_zindex` 默认 9999，压过顶栏 `z-10` 与 Radix `z-50`。
+  本仓没有 z-index 总表，这条只记在 `ImageViewer.tsx` 的注释里。
+
+### 文案必须本地化，**插件的文案是插件自己那份**
+
+库默认全是英文，`labels` 逐个换掉。单张阅览用不到 `Previous` / `Next`（见下），
+但 `{index}` / `{total}` 是模板占位符，**不能翻译掉**。
+
+⚠️ **`Zoom` 插件的两个按钮读的是插件自己的 `labels`，不在顶层那一组里。**
+实测踩过：只改顶层的时候，读屏念的是「Zoom in」。**换插件时记得同一条。**
+
+⚠️ **单张阅览必须 `render={{ buttonPrev: () => null, buttonNext: () => null }}`。**
+库对这两个按钮**无条件渲染**，只有一张图时它们既不是 `disabled` 也没被藏起来——表现是
+全屏里左右各挂一个 64×80 的箭头，按下去什么都不发生；而且它们盖住的正好是**唯一能点到的背景**
+（左右两条整条占掉，「点背景关闭」几乎点不着）。哪天接了「←/→ 翻上下一张」，这两行要一起删。
+
+### 光标：`cursor-pointer` 得自己写
+
+**Tailwind v4 起不再给 `<button>` 加 `cursor: pointer`**（v3 加、v4 去掉了，preflight 里也没有）。
+图片帧现在是个按钮，不写的话鼠标划过去仍是箭头。可点的元素才给 pointer——**失败态的帧不可点，就不给**，
+光标是「点了会有事发生」的承诺。
 
 ## 状态的视觉表达
 

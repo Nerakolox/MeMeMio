@@ -38,6 +38,14 @@ src/features/
 > 针对的是 feature 之间的复用，外壳不在这个坐标系里；放回 `App.tsx` 会把那个文件顶过
 > [code-style.md](code-style.md) 的 150 行上限。`components/ui/` 是另一回事（shadcn 拉下来的原语）。
 
+> **同一条例外**：`components/ImageViewer.tsx`（全屏阅览，2026-09-21 加）。它被四个 feature
+> 用到（浏览 / 搜索 / 图墙 / 打标列表），本来也够得着「两个以上」那条；但真正的原因是
+> **全应用只能有这一份**——`Lightbox` 渲染成 `<button>` 帧的同一个 React 祖先链上，
+> 挂两份就是两套焦点陷阱。宿主的位置还有功能含义，见 [styling.md](styling.md)「全屏阅览」。
+> `MemeImage.tsx` 与它同层：前者是「一张图」，后者是「一个阅片器」。`MemeImage` 只
+> import 那个 `useImageViewer()` **hook**，不 import `<Lightbox>` 本体——**四处页面各带一份
+> 宿主就是四套焦点陷阱**。
+
 ## `src/lib/`
 
 | 文件 | 内容 |

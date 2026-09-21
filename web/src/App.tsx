@@ -2,6 +2,7 @@ import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router
 import { AuthProvider, useAuth } from './contexts/auth'
 import { ImportProvider, useImport } from './contexts/import'
 import { AppSidebar } from './components/AppSidebar'
+import { ImageViewerProvider } from './components/ImageViewer'
 import { Button } from './components/ui/button'
 import {
   SidebarInset,
@@ -74,22 +75,30 @@ function AppLayout() {
     // 里不含 Provider，这一步漏了整个应用白屏。
     <TooltipProvider>
       <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          <header className="sticky top-0 z-10 flex h-(--app-header-h) shrink-0 items-center gap-2 border-b bg-background px-4">
-            <SidebarTrigger className="size-11" />
-            {/*
-              进度放顶栏而不是侧边栏：手机端（<768px）整条导航收进抽屉，
-              侧边栏上的角标就看不见了，而 import-ux.md §9 要的是「切走再切回来还能看到」。
-              折叠成图标窄栏时侧边栏角标同样会隐藏，顶栏是唯一两个形态下都在的位置。
-            */}
-            <ImportProgressLink />
-          </header>
-          {/* `SidebarInset` 自己就是 `<main>`，这里不能再套一层，会出现两个 main 地标 */}
-          <div className="flex-1 p-6">
-            <Outlet />
-          </div>
-        </SidebarInset>
+        {/*
+          全屏阅览挂在**这一层**，不是挂在卡片里。位置是有讲究的：它包住 `SidebarInset`，
+          于是 `<Lightbox>` 的 React 祖先链只有外壳，**不经过任何页面**——否则首页那个挂在
+          根 `<section>` 上的键盘 handler 会连阅览器里的 Esc / ↑↓ / Enter 一起接走
+          （`components/ImageViewer.tsx` 头部有完整推导，那是本次最容易静默出错的一处）。
+        */}
+        <ImageViewerProvider>
+          <AppSidebar />
+          <SidebarInset>
+            <header className="sticky top-0 z-10 flex h-(--app-header-h) shrink-0 items-center gap-2 border-b bg-background px-4">
+              <SidebarTrigger className="size-11" />
+              {/*
+                进度放顶栏而不是侧边栏：手机端（<768px）整条导航收进抽屉，
+                侧边栏上的角标就看不见了，而 import-ux.md §9 要的是「切走再切回来还能看到」。
+                折叠成图标窄栏时侧边栏角标同样会隐藏，顶栏是唯一两个形态下都在的位置。
+              */}
+              <ImportProgressLink />
+            </header>
+            {/* `SidebarInset` 自己就是 `<main>`，这里不能再套一层，会出现两个 main 地标 */}
+            <div className="flex-1 p-6">
+              <Outlet />
+            </div>
+          </SidebarInset>
+        </ImageViewerProvider>
       </SidebarProvider>
     </TooltipProvider>
   )
