@@ -11,10 +11,10 @@ import {
 } from '../lib/api'
 import { sendMeme, sendNote, type SendTarget } from '../lib/clipboard'
 import { useAuth } from '../contexts/auth'
-import { Heart } from 'lucide-react'
+import { MemeCard } from '../components/MemeCard'
 import { MemeActions } from '../features/manage/MemeActions'
 import { MemeEditPanel } from '../features/manage/MemeEditPanel'
-import { TAG_STATUS_LABELS, tagStatusLabel } from '../lib/tag-status'
+import { TAG_STATUS_LABELS } from '../lib/tag-status'
 import { emotionOptions, sceneOptions, tagOptions } from '../lib/vocab'
 
 /** 操作反馈：复制/下载的结果、删除失败等。一条就够，不堆历史。 */
@@ -57,7 +57,6 @@ export function BrowsePage() {
    * （state-navigation.md §2「不维护第二份可编辑副本」）。
    */
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [note, setNote] = useState<Note | null>(null)
 
   /**
@@ -182,14 +181,28 @@ export function BrowsePage() {
     if (text !== null) setNote({ text })
   }
 
+  /**
+   * 关掉编辑侧边栏。
+   *
+   * ⚠️ **这里的焦点交回是必须的，Radix 不会代劳**：侧边栏是受控打开、没有
+   * `SheetTrigger`，而 `DialogContentModal` 的关闭逻辑是
+   * `triggerRef.current?.focus()`——没有触发器就是 null，什么都不会做，焦点会掉在 body 上。
+   * （`AlertDialog` 那条路同理，它的交回写在 `MemeActions` 自己里面。）
+   *
+   * 选择器带 `[data-actions-trigger]` 而不是随便挑一个 `button`：卡片上还有收藏按钮，
+   * 挑错了就把焦点交给收藏，用户按回车会莫名其妙地取消收藏。
+   *
+   * 它可靠的前提是**侧边栏是模态的**（打开期间页面滚不动），那个 meme 的格子不会被
+   * masonic 回收掉——格子还在，`querySelector` 才找得到。
+   */
   function closeEditor() {
     const id = editingId
     setEditingId(null)
-    // 面板是覆盖层，关掉之后焦点不能掉在地上（body），交回给打开它的那个「⋯」。
-    // 和搜索页用 [data-index] 找回卡片是同一种做法。
     if (id !== null) {
       requestAnimationFrame(() => {
-        document.querySelector<HTMLElement>(`[data-actions-for="${id}"] button`)?.focus()
+        document
+          .querySelector<HTMLElement>(`[data-actions-for="${id}"] [data-actions-trigger]`)
+          ?.focus()
       })
     }
   }
@@ -203,8 +216,14 @@ export function BrowsePage() {
     setNote({ text: '已保存' })
   }
 
+  /**
+   * 删除一张图。**「删除中」那段反馈现在归 `MemeActions` 自己管**（它的确认框要等这个
+   * Promise 落定才关），所以这里不再需要 `deletingId` 那种「告诉菜单谁在忙」的状态。
+   *
+   * 失败**不往外抛**：原因是页面顶部那条带 requestId 的提示（它得在图消失之后还看得见），
+   * 弹层只负责等它落定。
+   */
   async function handleDelete(meme: Meme) {
-    setDeletingId(meme.id)
     setNote(null)
     try {
       // 404 在 deleteMeme 里已经当成功处理（SPEC §6.4.2）：那张图本来就要消失
@@ -221,8 +240,6 @@ export function BrowsePage() {
         error: true,
         requestId: apiErr?.requestId ?? '未知',
       })
-    } finally {
-      setDeletingId(null)
     }
   }
 
@@ -356,11 +373,10 @@ export function BrowsePage() {
               favorite: () => handleFavorite(meme),
               send: (t: SendTarget) => void handleSend(t),
               edit: () => setEditingId(meme.id),
-              remove: () => void handleDelete(meme),
+              remove: () => handleDelete(meme),
               // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
               // 前端判断只是体验，服务端仍会独立判一次。
               canDelete: user?.role === 'admin' || meme.uploaderId === user?.id,
-              busy: deletingId === meme.id,
             }))}
             columnWidth={160}
             columnGutter={12}
@@ -405,80 +421,44 @@ export function BrowsePage() {
  * 如果每次渲染都现写一个箭头函数，masonic 会把「render prop 换了新函数」当成换组件，
  * 所有可见卡片重挂，收藏、删除、编辑弹层这些交互的本地状态全被打断。
  * 所以把会变的回调放进 `data`（每帧重算没关系，key 是 meme.id，React 不会重挂）。
+ *
+ * 卡片本身（图片承载、角标、收藏按钮、比例占位）全在 `components/MemeCard.tsx`，
+ * 四页共用；这一层只剩「瀑布流要的回调怎么接上去」。浏览页是四处里**唯一**带「⋯」的。
  */
 type BrowseMasonryItem = {
   meme: Meme
   favorite: () => void
   send: (target: SendTarget) => void
   edit: () => void
-  remove: () => void
+  remove: () => Promise<void>
   canDelete: boolean
-  busy: boolean
 }
 
 function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
   const { meme } = data
-  // 按 width/height 先占住高度：瀑布流的格子是绝对定位的，图片晚于布局到达，
-  // 不占位的话每张图 onLoad 都会把下面整列推乱。width/height 为 null（旧数据 / 探测失败）兜底 1/1。
-  // 整张展示、不裁方——表情包的信息常在边缘，裁掉之后用户认不出这是哪张（styling.md「图片网格」）。
-  const ratio =
-    meme.width != null && meme.height != null && meme.width > 0 && meme.height > 0
-      ? `${meme.width} / ${meme.height}`
-      : '1 / 1'
 
   return (
-    <div className="relative">
-      <img
-        className="w-full rounded-lg bg-muted object-contain"
-        style={{ aspectRatio: ratio }}
-        src={meme.thumbUrl ?? meme.url}
-        alt={meme.description ?? meme.originalFilename ?? meme.id}
-        loading="lazy"
-        width={meme.width ?? undefined}
-        height={meme.height ?? undefined}
-      />
-
-      {(meme.tagStatus !== 'ok' || meme.isAnimated) && (
-        <div className="pointer-events-none absolute left-1.5 right-12 top-1.5 z-10 flex flex-wrap gap-1">
-          {meme.tagStatus !== 'ok' && (
-            <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
-              {tagStatusLabel(meme.tagStatus)}
-            </span>
-          )}
-          {meme.isAnimated && (
-            <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold leading-none tracking-wide text-white backdrop-blur-sm">
-              GIF
-            </span>
-          )}
-        </div>
-      )}
-
-      {/*
-        「⋯」是浏览页唯一的删除 / 编辑 / 发送入口。它是绝对定位的浮层，不占布局，
-        弹层因此能探出图片边界——上一版卡片层要专门放开 overflow 才做得到，这里天然成立。
-      */}
-      <div className="absolute right-1.5 top-1.5 z-10">
+    <MemeCard
+      // natural：按 width/height 整张展示、不裁方——表情包的信息常在边缘，
+      // 裁掉之后用户认不出这是哪张（styling.md「图片网格」）。
+      shape="natural"
+      meme={meme}
+      actions={
+        /*
+          「⋯」是浏览页唯一的删除 / 编辑 / 发送入口。它是绝对定位的浮层，不占布局，
+          弹层因此能探出图片边界（菜单本身走 portal，更不受裁剪影响）。
+        */
         <MemeActions
           target={meme}
           canDelete={data.canDelete}
           deleteDeniedReason="只有上传这张图的人或管理员可以删除"
-          busy={data.busy}
           onSend={(t) => void data.send(t)}
           onEdit={data.edit}
-          onDelete={() => void data.remove()}
+          onDelete={data.remove}
         />
-      </div>
-
-      <button
-        type="button"
-        onClick={data.favorite}
-        aria-label={meme.favorited ? '取消收藏' : '收藏'}
-        aria-pressed={meme.favorited}
-        className="absolute bottom-1.5 right-1.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 max-sm:h-11 max-sm:w-11"
-      >
-        <Heart className="h-4 w-4" fill={meme.favorited ? 'currentColor' : 'none'} />
-      </button>
-    </div>
+      }
+      onFavorite={data.favorite}
+    />
   )
 }
 

@@ -182,7 +182,7 @@ body {
   font-family: monospace;
 }
 
-/* Meme card 的外形全部在 `components/MemeCard.tsx`（含 MemeActions 的入口按钮），无遗留类。 */
+/* 卡片的外形（含「⋯」入口）全在 components/MemeCard.tsx 与 ui/ 里，这边没有遗留类。 */
 
 /* ---- Search page (/) ---- */
 
@@ -248,12 +248,6 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
-}
-
-.search__result {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .search__card-action {
@@ -354,220 +348,6 @@ body {
   }
 }
 
-/* ---- 图片操作：卡片上的「⋯」与它的弹层 ---- */
-/* 入口的位置与显隐在 components/MemeCard.tsx（浮层那一层），这里只剩弹层本身。 */
-
-.manage-popover {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 180px;
-  padding: 4px;
-}
-
-.manage-popover__group {
-  display: flex;
-  flex-direction: column;
-}
-
-.manage-popover__row {
-  display: flex;
-  gap: 4px;
-}
-
-.manage-popover__row > * {
-  flex: 1 1 0;
-}
-
-.manage-popover__item {
-  display: flex;
-  align-items: center;
-  padding: 6px 10px;
-  min-height: 36px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.manage-popover__item:disabled {
-  cursor: not-allowed;
-}
-
-.manage-popover__confirm-text,
-.manage-popover__hint {
-  margin: 0;
-  padding: 4px 10px;
-  font-size: 0.85em;
-}
-
-/* ---- 编辑侧边栏 ---- */
-
-/*
- * 遮罩本身没有视觉，只有位置和点击面——着色留给视觉定稿那一次（web/AGENTS.md §5）。
- * 它存在的理由是结构性：面板是覆盖层，没有它就只能靠 Esc 退出。
- */
-.manage-panel__scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-}
-
-/*
- * 侧边栏在宽屏是右侧栏，窄屏是全屏抽屉（styling.md「移动端不是适配，是主场」）。
- * 用 fixed 而不是塞进网格：它要盖住内容，而不是把网格挤窄。
- */
-.manage-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 31;
-  width: min(420px, 100%);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.manage-panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-}
-
-.manage-panel__title {
-  margin: 0;
-  font-size: 1em;
-}
-
-.manage-panel__close {
-  padding: 4px 10px;
-  cursor: pointer;
-  line-height: 1;
-}
-
-/* 只让中间那段滚，头尾常驻——底部的「保存」在最长的字段清单下也要够得着 */
-.manage-panel__body {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 0 12px 12px;
-}
-
-.manage-panel__preview {
-  display: block;
-  width: 100%;
-  max-height: 240px;
-  object-fit: contain;
-}
-
-.manage-panel__fields {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  margin: 0;
-}
-
-.manage-panel__field {
-  display: contents;
-}
-
-.manage-panel__field-label {
-  min-width: 72px;
-}
-
-.manage-panel__field-value {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.manage-panel__mono {
-  font-family: monospace;
-  font-size: 0.85em;
-}
-
-.manage-panel__section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.manage-panel__section-title {
-  margin: 0;
-  font-size: 0.9em;
-}
-
-.manage-panel__ocr {
-  margin: 0;
-  max-height: 160px;
-  overflow-y: auto;
-  overflow-wrap: anywhere;
-}
-
-.manage-panel__description {
-  width: 100%;
-  box-sizing: border-box;
-  resize: vertical;
-}
-
-.manage-panel__hint {
-  margin: 0;
-  font-size: 0.8em;
-}
-
-.manage-panel__error {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.manage-panel__request-id {
-  margin: 0;
-  font-family: monospace;
-  font-size: 0.8em;
-}
-
-.manage-panel__footer {
-  display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-}
-
-/* ---- 词表选择控件 ---- */
-
-.vocab-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.vocab-picker__title {
-  padding: 0;
-  font-size: 0.9em;
-}
-
-.vocab-picker__options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.vocab-picker__option {
-  padding: 4px 10px;
-  font-size: 0.85em;
-  cursor: pointer;
-}
-
 /* ---- 操作反馈 ---- */
 
 .browse__note {
@@ -575,21 +355,6 @@ body {
   flex-direction: column;
   gap: 2px;
   margin: 0 0 12px;
-}
-
-/*
- * 窄屏：触摸目标是硬要求（styling.md「至少 44×44px」）。
- * 菜单项与关闭/操作按钮在手机上是主要点击目标，这里统一抬到 44。
- */
-@media (max-width: 640px) {
-  .manage-popover__item,
-  .manage-panel__close {
-    min-height: 44px;
-  }
-
-  .manage-panel {
-    width: 100%;
-  }
 }
 
 /* ---- Import page (/import) ---- */

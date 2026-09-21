@@ -10,6 +10,10 @@
  * 制造出模型永远不会产生的标签值。
  */
 
+import { Button } from './ui/button'
+import { cn } from '../lib/utils'
+import { TOUCH } from '../lib/touch'
+
 /**
  * 切换一个值，返回的词表项**按 `options` 的顺序排列**。
  *
@@ -29,6 +33,16 @@ function toggleValue(selected: string[], options: string[], value: string): stri
   ]
 }
 
+/**
+ * ## 2026-09-21：chip 从手写按钮换成 `Button`
+ *
+ * 换了皮、行为一个字没动（集合 toggle、按 `options` 序重排、词表外的旧值留在尾部）。
+ *
+ * 顺带修掉一个**一直存在的触摸目标违规**：上一版 chip 是 `padding: 4px 10px`（约 24px 高），
+ * 而 `styles.css` 里那条窄屏触摸规则只覆盖了菜单项和面板关闭按钮——手机上这一屏标签
+ * 全都低于 44（styling.md「至少 44×44px」，而且明写「没有例外」）。代价是三个分区变长，
+ * 面板本来就能滚，所以不亏。
+ */
 export function VocabPicker({
   title,
   options,
@@ -44,21 +58,28 @@ export function VocabPicker({
   disabled?: boolean
 }) {
   return (
-    <fieldset className="vocab-picker" disabled={disabled}>
-      <legend className="vocab-picker__title">{title}</legend>
-      <div className="vocab-picker__options">
+    // fieldset 的语义要留着：它把这组 chip 绑到一个 legend 上，读屏才会念出
+    // 「情绪，三选一」而不是一串没有标题的按钮。默认边框与缩进要显式清掉。
+    <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0" disabled={disabled}>
+      <legend className="p-0 text-sm font-medium">{title}</legend>
+      <div className="flex flex-wrap gap-1.5">
         {options.map((opt) => {
           const active = selected.includes(opt)
           return (
-            <button
+            <Button
               key={opt}
               type="button"
-              className={`vocab-picker__option${active ? ' vocab-picker__option--active' : ''}`}
+              size="sm"
+              variant={active ? 'secondary' : 'outline'}
               aria-pressed={active}
+              // fieldset 的 disabled 已经让这些按钮在功能上被禁用（`:disabled` 会匹配到），
+              // 这一个是为了让**视觉状态**不依赖那条容易忘的规则。
+              disabled={disabled}
+              className={cn(TOUCH, 'rounded-full px-3')}
               onClick={() => onChange(toggleValue(selected, options, opt))}
             >
               {opt}
-            </button>
+            </Button>
           )
         })}
       </div>

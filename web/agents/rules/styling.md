@@ -71,10 +71,63 @@
 `h-9`（36px），`size="sm"` 只有 **32px**，`SelectItem`（下拉里那个选项本身）**36px**。
 「小号」在触摸目标这件事上不存在——设置页一度打算给表格开例外（行数是个位数），
 **实测推翻了**：邀请码的「复制」和用户行的角色选择器正是手机上要用手指点的。
-落点是一个常量 `features/settings/settings-ui.ts` 的 `TOUCH = 'min-h-11'`
+落点是一个常量 **`src/lib/touch.ts` 的 `TOUCH = 'min-h-11'`**
 （`min-height` 盖过 `height`，不用改 `size` 变体）。
 `SelectItem` 要**单独**带上：它不在触发器那类的覆盖范围里，漏了的表现是
 「触发器 44，展开后每行又变回 36」。将来迁其余页面时，这条按页面照搬。
+
+> 2026-09-21 这个常量从 `features/settings/settings-ui.ts` 搬到了 `lib/`：
+> 卡片、菜单项、编辑面板、词表 chip 同时要用它，**再抄一份就是第二个落点**，
+> 而这份规则的教训正是「散着写会漏」。`settings-ui.ts` 现在只 re-export，
+> 设置页那十几处调用一行没动。
+>
+> 同一轮补上的还有一处**一直在的违规**：编辑面板里的词表 chip 是 `padding: 4px 10px`
+> （≈24px），而那条窄屏触摸块只覆盖了菜单项和面板关闭按钮——手机上这一屏标签全都低于 44。
+> chip 现在带 `TOUCH`，代价是三个分区变长（面板本来就能滚）。
+>
+> ⚠️ **浮在图上的按钮仍按「桌面 32 / 窄屏 44」走**（卡片上的「⋯」与收藏，
+> `size-8 max-sm:size-11`）。这不是例外松绑，是两个使用场景不同：桌面那一枚压在 160px 宽的
+> 瀑布流格子上，44 会把图压掉一块；而 `max-sm` 正好落在手机那一档。**新加浮层按钮照这个抄，
+> 不要照 `TOUCH` 抄**——`min-h-11` 用在这里会把桌面卡片顶大。
+
+**浮层操作器的显形：能 hover 的设备上默认藏起来，鼠标进卡片才显形**（2026-09-21 加，
+GPT 图片墙那种）。落点是 `components/MemeCard.tsx` 的 `REVEAL_ON_HOVER`。
+
+要害是**基线必须是「看得见」**，隐藏叠在 `(pointer: fine)` 上：
+
+```ts
+'transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover/card:opacity-100'
+```
+
+反过来写（基线 `opacity-0` + `hover:opacity-100`）**在触摸设备上就是入口直接消失**——
+内建的 `hover` 变体自带 `@media (hover: hover)` 外壳，手机上永远不成立。手机是这个产品的
+主场，不能为了一种视觉效果把「⋯」和收藏弄没。判据用 `(pointer: fine)` 而不用动图那句
+`(hover: hover)`：判错了的后果不同（「得点一下」vs「入口不见了」），粗指针一律按看得见处理。
+
+三个配套，少一个都出事：
+
+| 配套 | 少了会怎样 |
+|---|---|
+| `group-focus-within/card:opacity-100` | 键盘焦点落在看不见的按钮上 |
+| `has-[[aria-expanded=true]]:opacity-100` | 菜单是 portal 出去的，打开后焦点离开卡片 → 「⋯」淡出、菜单悬空（Radix 打开期间给触发器挂 `aria-expanded`） |
+| **角标不跟着藏** | 角标是状态不是操作器，而且是打标列表的全部信息量；它让位的那 48px 也照留，跟着显隐一起变会让角标在鼠标进出时重排 |
+
+`group` 要**具名**（`group/card`）：`ui/sidebar.tsx` 在更高层也挂了 `group`，不具名会被外面那层顺带点亮。
+
+**卡片的浅阴影与 hover 遮罩**（2026-09-21 加）：
+
+- 浅阴影 `shadow-sm`（`0 1px 3px 0 #0000001a, 0 1px 2px -1px #0000001a`）挂在 `MemeImage`
+  的图片框上，**和圆角写在同一个元素上**。挂到外面那层矩形（`MemeCard` 的根，没有圆角）上，
+  影子的四角是方的——图是圆的、影是方的。量级跟 `ui/sidebar.tsx` 的浮动侧边栏一致。
+  深色模式下这个影子看不出来，属正常（深色底上的黑影子），没做 `dark:` 分支。
+- hover 遮罩 `bg-black/20` 压在图上，**基线是「看不见」**，与上面那两枚操作器**相反**。
+  判据是同一条——**藏错了会丢什么**：遮罩只是个视觉提示，没有入口可丢，所以可以放心默认不可见；
+  操作器藏错了就是入口消失，所以必须默认可见。`group-hover/card` 自带 `@media (hover: hover)`，
+  手机上这一层永远不会亮；基线写死可见的话，手机每张图永久蒙着一层灰。
+- 遮罩**必须 `pointer-events-none`**：它盖住的正是图片本身，吃掉指针事件等于把动图的
+  hover 播放与点按播放一起废掉（角标行是同一条理由）。
+- 遮罩的圆角 import 图片框导出的 `IMAGE_RADIUS`，**不自己写**：它是图片框的兄弟节点，
+  不在那个 `overflow-hidden` 里，圆角写岔了方角会从圆角外面露出来。
 
 **全站导航的落点**：侧边栏导航项的 44px 在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`
 （`min-h-11 group-data-[collapsible=icon]:min-h-8`），不在 `styles.css` 里——那套 `.app__nav`

@@ -9,10 +9,10 @@ import {
   type Meme,
   type SearchResult,
 } from '../lib/api'
-import { Heart } from 'lucide-react'
 import { DiscoverWall } from '../features/discover/DiscoverWall'
+import { MemeCard } from '../components/MemeCard'
+import { cn } from '../lib/utils'
 import { SEND_LABELS, detectSendPath, sendMeme, sendNote } from '../lib/clipboard'
-import { tagStatusLabel } from '../lib/tag-status'
 
 type SearchState =
   | { kind: 'idle' }
@@ -269,55 +269,22 @@ export function HomePage() {
                   aria-selected={index === selectedIndex}
                   // 选中态描边落在卡片外面、不挤压网格（styling.md）。↑↓ 选择的可见反馈，
                   // 键盘路径没有它就等于没有反馈。
-                  className={
-                    index === selectedIndex
-                      ? 'search__result outline outline-2 outline-offset-2 outline-current'
-                      : 'search__result'
-                  }
+                  className={cn(
+                    'flex flex-col gap-1',
+                    index === selectedIndex && 'outline outline-2 outline-offset-2 outline-current',
+                  )}
                   tabIndex={-1}
                 >
-                  {/* ⚠️ 2026-09-21 起这里是**裸图**：卡片层随样式返工删掉了（重做是单独任务）。 */}
-                  <div className="relative">
-                    <img
-                      className="aspect-square w-full rounded-lg bg-muted object-cover"
-                      src={meme.thumbUrl ?? meme.url}
-                      alt={meme.description ?? meme.originalFilename ?? meme.id}
-                      loading="lazy"
-                      width={meme.width ?? undefined}
-                      height={meme.height ?? undefined}
-                    />
-                    {(meme.tagStatus !== 'ok' ||
-                      meme.isAnimated ||
-                      matchedBadges(meme.matchedBy).length > 0) && (
-                      <div className="pointer-events-none absolute left-1.5 right-12 top-1.5 z-10 flex flex-wrap gap-1">
-                        {meme.tagStatus !== 'ok' && (
-                          <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
-                            {tagStatusLabel(meme.tagStatus)}
-                          </span>
-                        )}
-                        {meme.isAnimated && (
-                          <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold leading-none tracking-wide text-white backdrop-blur-sm">
-                            GIF
-                          </span>
-                        )}
-                        {/* 召回来源是诊断信息，不参与排序，只做提示（SPEC §6.3.1） */}
-                        {matchedBadges(meme.matchedBy).length > 0 && (
-                          <span className="rounded-full bg-black/45 px-2 py-0.5 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
-                            {matchedBadges(meme.matchedBy).join('+')}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => void handleFavorite(meme)}
-                      aria-label={meme.favorited ? '取消收藏' : '收藏'}
-                      aria-pressed={meme.favorited}
-                      className="absolute bottom-1.5 right-1.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 max-sm:h-11 max-sm:w-11"
-                    >
-                      <Heart className="h-4 w-4" fill={meme.favorited ? 'currentColor' : 'none'} />
-                    </button>
-                  </div>
+                  {/*
+                    role / data-index / aria-selected / 选中描边留在**这张 wrapper** 上，
+                    不进卡片：描边要落在卡片外面、不挤压网格（styling.md）。
+                    卡片只认「一张图 + 角标 + 收藏 + 一个可选的 actions 槽」。
+                  */}
+                  <MemeCard
+                    meme={meme}
+                    recallBadges={matchedBadges(meme.matchedBy)}
+                    onFavorite={handleFavorite}
+                  />
                   {/*
                     点击卡片与 Enter 同一条路径，行为一致（clipboard-share.md §7）：
                     静图是「复制」，动图是「下载」——**文案在渲染时就分开**，

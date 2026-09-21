@@ -41,6 +41,7 @@ src/features/
 | `vocab.ts` | 读 `shared/vocab/vocab.json`，提供筛选选项 |
 | `format.ts` | 时间、文件大小等纯格式化 |
 | `use-mobile.ts` | `useIsMobile()`，shadcn 的 `sidebar.tsx` 用它决定走桌面栏还是手机抽屉 |
+| `touch.ts` | `TOUCH = 'min-h-11'`，触摸目标 44px 的**唯一落点**，见 [styling.md](styling.md) |
 
 > `use-mobile.ts` 是 `npx shadcn add sidebar` 拉下来的，**落点是 `components.json` 的
 > `aliases.hooks` 决定的**。CLI 默认写 `@/hooks`，那会建出本文件上面明令禁止的
