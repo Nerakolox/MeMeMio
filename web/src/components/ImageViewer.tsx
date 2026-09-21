@@ -36,8 +36,13 @@ const ImageViewerContext = createContext<OpenImage | null>(null)
  *
  * ## z-index
  *
- * 默认 `.yarl__portal { z-index: 9999 }`，在顶栏 `z-10` 与 Radix 那一层 `z-50` 之上
- * ——全屏阅览本来就该压过外壳。本仓没有 z-index 总表，这条只在这里记着。
+ * 默认 `.yarl__portal { z-index: 9999 }`，在 Radix 那一层（`z-50`）之上——全屏阅览本来
+ * 就该压过外壳。本仓没有 z-index 总表，这条只在这里记着。
+ *
+ * ⚠️ 2026-09-22：顶栏是 `z-20`（为修「卡片浮层画到顶栏上面」那个缺陷抬的，见 `App.tsx`）。
+ * **9999 > 20，全屏阅览比数值就赢**，与挂载位置无关（当天顶栏一度也是 9999，
+ * 那时靠的是 DOM 顺序——portal 排在 `#root` 之后）。这条关系是**一条上限**：
+ * 顶栏那个数可以往下调，但**不能加到 9999 以上**，否则阅览器的工具栏会被顶栏盖住。
  */
 export function ImageViewerProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<Meme | null>(null)

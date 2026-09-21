@@ -62,8 +62,9 @@
 - 不混用：现有页面的 BEM 全局样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前
   允许并存，但**新增代码一律写 Tailwind utility + shadcn 组件**，不再往 `styles.css`
   追加新的手写装饰。迁移是单独任务，不在引入 shadcn 这一次里做。
-  进度：外壳（2026-09-21）、设置页（2026-09-21）、首页（2026-09-21）已迁完；
-  **浏览页、导入页、打标页仍是 BEM**，`styles.css` 里剩下的 `.browse__*` / `.import__*` / `.tagging__*` 是它们的。
+  进度：外壳（2026-09-21）、设置页（2026-09-21）、首页（2026-09-21）、
+  浏览页（2026-09-22）已迁完；**导入页、打标页仍是 BEM**，`styles.css` 里剩下的
+  `.import__*` / `.tagging__*` 是它们的。
 
 ## 移动端不是适配，是主场
 
@@ -73,14 +74,43 @@
 
 触摸目标至少 44×44px。搜索结果卡片在手机上是单手点击的主要目标。
 
-**shadcn 的控件默认全部低于 44**，而且**没有例外**：`Button` / `Input` / `Select` 默认
+**shadcn 的控件默认全部低于 44**：`Button` / `Input` / `Select` 默认
 `h-9`（36px），`size="sm"` 只有 **32px**，`SelectItem`（下拉里那个选项本身）**36px**。
 「小号」在触摸目标这件事上不存在——设置页一度打算给表格开例外（行数是个位数），
 **实测推翻了**：邀请码的「复制」和用户行的角色选择器正是手机上要用手指点的。
-落点是一个常量 **`src/lib/touch.ts` 的 `TOUCH = 'min-h-11'`**
+落点是一个常量 **`src/lib/touch.ts` 的 `TOUCH`**
 （`min-height` 盖过 `height`，不用改 `size` 变体）。
 `SelectItem` 要**单独**带上：它不在触发器那类的覆盖范围里，漏了的表现是
 「触发器 44，展开后每行又变回 36」。将来迁其余页面时，这条按页面照搬。
+
+### 44 是给**手指**的：按指针分档（2026-09-22 定案）
+
+上面那条原来是无条件的，于是 1600px 的桌面上每个控件都白扛 12px 的触摸垫。
+产品负责人看完成品的一句话定了案：「**所有的标签、按钮都太大了，浏览页的筛选板块是
+最佳实例**」——那一栏 163 个 chip、每行复选框、每个下拉全是 44 高，比 shadcn 自己的
+`size="sm"` 高出 12px，整栏因此长三成。
+
+闸门是**指针**，不是断点：
+
+| 指针 | `TOUCH` 那半句 | 落到的实际尺寸 |
+|---|---|---|
+| `pointer: coarse`（手指） | `min-h-11` | **44**，一个字没变 |
+| `pointer: fine`（鼠标） | `pointer-fine:min-h-8` | 各控件**自己的** `size` 变体：chip 与 `SelectTrigger size="sm"` 32、`SidebarMenuButton` 与 `SelectItem` 36 |
+
+`min-height` 只抬不压，所以细指针那一档是**把额外加的那 12px 收回去**，不是把控件压成 32。
+
+- **为什么不写 `md:`**：断点按宽度猜指针，两种都猜错——700px 的桌面窗口被当成手机
+  （白扛 44），宽屏平板被当成桌面（手指按 32）。`pointer-fine:` 这个变体仓库里早就在用
+  （`MemeCard` 的浮层显形就叠在它上面）。
+- **用 `pointer-*` 不是 `any-pointer-*`**：后者问「这台机器有没有粗指针」，触屏笔记本
+  答「有」，于是每台带触摸屏的桌面都退回 44。主指针才是「你现在拿什么在点」。
+- **手写 `min-h-11` 等于绕过闸门**。「可点的一行」现在一律写 `TOUCH`——浏览页筛选栏里
+  不受控件管的那四行也是（`BrowseFilters.tsx` 的 `ROW`）。
+- **浮层按钮照 `pointer-coarse` 抄**（卡片上的「⋯」与收藏：`size-8 pointer-coarse:size-11`），
+  **不要用 `TOUCH`**：`min-h-11` 用在那里会把桌面卡片顶大。
+- `/import`、`/tagging` 还没迁，`styles.css` 里那几条**无条件**的 `min-height: 44px`
+  属于它们（`.import__*` / `.review-card__actions` / `.tagging__*`），迁移时按这条改。
+- 连手机也想再小，改 `lib/touch.ts` 那一行的 `min-h-8` 一个数，别去各调用点散着改。
 
 首页（2026-09-21 迁移）的四处落点，和设置页一样是**各调用点的 `TOUCH`**，
 `styles.css` 里那四条 `.search__submit` / `.search__card-action` / `.discover__*` 的
@@ -92,8 +122,9 @@
 | 卡片下的发送按钮、错误态的「重试」（`features/search/SearchResults.tsx`） | `cn(TOUCH, …)`，重试那枚另带 `mt-2` |
 | 「换一批」、图墙错误态的「重试」、空库态的「去导入几张」（`features/discover/DiscoverWall.tsx`） | `Button` 上带 `TOUCH`；`variant="link"` 那枚也一样 |
 
-> ⚠️ `size="sm"` **不豁免**：重试与「换一批」都是 `size="sm"`（32px），靠 `TOUCH`
-> 的 `min-height` 顶回来。**实测四页全部是 44**，别再给自己找「这个按钮小一号没关系」的理由。
+> ⚠️ `size="sm"` **在手指那一档不豁免**：重试与「换一批」都是 `size="sm"`（32px），
+> 靠 `TOUCH` 的 `min-height` 顶回 44（2026-09-22 之后鼠标那一档就是它自己的 32，
+> 见下面那节）。别再给自己找「这个按钮小一号没关系」的理由。
 
 > 2026-09-21 这个常量从 `features/settings/settings-ui.ts` 搬到了 `lib/`：
 > 卡片、菜单项、编辑面板、词表 chip 同时要用它，**再抄一份就是第二个落点**，
@@ -104,10 +135,11 @@
 > （≈24px），而那条窄屏触摸块只覆盖了菜单项和面板关闭按钮——手机上这一屏标签全都低于 44。
 > chip 现在带 `TOUCH`，代价是三个分区变长（面板本来就能滚）。
 >
-> ⚠️ **浮在图上的按钮仍按「桌面 32 / 窄屏 44」走**（卡片上的「⋯」与收藏，
-> `size-8 max-sm:size-11`）。这不是例外松绑，是两个使用场景不同：桌面那一枚压在 160px 宽的
-> 瀑布流格子上，44 会把图压掉一块；而 `max-sm` 正好落在手机那一档。**新加浮层按钮照这个抄，
-> 不要照 `TOUCH` 抄**——`min-h-11` 用在这里会把桌面卡片顶大。
+> ⚠️ **浮在图上的按钮按「鼠标 32 / 手指 44」走**（卡片上的「⋯」与收藏，
+> `size-8 pointer-coarse:size-11`）。这不是例外松绑，是两个使用场景不同：鼠标那一枚压在
+> 160px 宽的瀑布流格子上，44 会把图压掉一块。**新加浮层按钮照这个抄，不要照 `TOUCH` 抄**
+> ——`min-h-11` 用在这里会把桌面卡片顶大，而 `max-sm` 那种按宽度分的写法两种都判错
+> （700px 的桌面窗口白扛一个 44 的方块，700px 宽的手机反而落不进去）。
 
 **浮层操作器的显形：能 hover 的设备上默认藏起来，鼠标进卡片才显形**（2026-09-21 加，
 GPT 图片墙那种）。落点是 `components/MemeCard.tsx` 的 `REVEAL_ON_HOVER`。
@@ -148,31 +180,53 @@ GPT 图片墙那种）。落点是 `components/MemeCard.tsx` 的 `REVEAL_ON_HOVE
 - 遮罩的圆角 import 图片框导出的 `IMAGE_RADIUS`，**不自己写**：它是图片框的兄弟节点，
   不在那个 `overflow-hidden` 里，圆角写岔了方角会从圆角外面露出来。
 
-**全站导航的落点**：侧边栏导航项的 44px 在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`
-（`min-h-11 group-data-[collapsible=icon]:min-h-8`），不在 `styles.css` 里——那套 `.app__nav`
+**全站导航的落点**：侧边栏导航项在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`
+（`cn(TOUCH, 'group-data-[collapsible=icon]:min-h-8')`），不在 `styles.css` 里——那套 `.app__nav`
 规则随顶部导航一起删了（2026-09-21）。两处容易踩：
 
-- `SidebarMenuButton` 默认 `h-9`（36px），**低于 44**，每个新加的菜单项都要自己带上
-  `NAV_ITEM_SIZE`，registry 不会替你加。
-- 图标窄栏模式（`data-collapsible=icon`）是**例外**：registry 用 `size-8!` 把按钮压成 32×32 的
-  方块，而 `min-height` 会盖过 `height`（不同属性，`!important` 管不着），所以必须带
-  `group-data-[collapsible=icon]:min-h-8`，否则按钮变成 32 宽 × 44 高的长条。
-  那个形态只在 md 以上出现；手机端拿到的是抽屉里的**展开版**，仍是 44。
+- `SidebarMenuButton` 默认 `h-9`（36px），每个新加的菜单项都要自己带上
+  `NAV_ITEM_SIZE`，registry 不会替你加。手指那一档由此仍是 44，鼠标那一档是它自己的 36。
+- 图标窄栏模式（`data-collapsible=icon`）那半句**不能并进 `TOUCH`**：registry 用 `size-8!`
+  把按钮压成 32×32 的方块，而 `min-height` 会盖过 `height`（不同属性，`!important` 管不着），
+  少了它按钮变成 32 宽 × 44 高的长条。这个形态在**粗指针下也会出现**（平板横屏 ≥768px
+  收成图标栏），那时 `TOUCH` 给的正是 44，所以必须无条件写死。
+  手机端拿到的是抽屉里的**展开版**，由 `TOUCH` 保住 44。
 
 **顶栏是吸顶的，它占住的 3.5rem 是一个跨文件的尺寸**（2026-09-21 加）。值只有一个落点：
 `src/index.css` 的 `:root` 里 `--app-header-h: 3.5rem`，**不写进 `@theme inline`**
-（`inline` 不输出变量，`var()` 会解析成空，同圆角刻度的坑）。现在有三处引用它：
+（`inline` 不输出变量，`var()` 会解析成空，同圆角刻度的坑）。现在有这些引用它：
 
 | 引用点 | 写法 |
 |---|---|
-| 顶栏自己（`App.tsx`） | `h-(--app-header-h)`，另带 `sticky top-0 z-10 bg-background` |
-| `.browse__sidebar`（`styles.css`，无层样式） | `top: var(--app-header-h)` + `max-height: calc(100vh - var(--app-header-h))` |
+| 顶栏自己（`App.tsx`） | `h-(--app-header-h)`，另带 `sticky top-0 z-20 bg-background` |
+| 浏览页（`routes/browse.tsx`） | md 以上**页面不滚动**：容器 `md:h-[calc(100svh_-_var(--app-header-h))]`，配 `md:-my-6`（抵消外壳 `p-6`）与 `md:py-6`（加回来）；两列各自 `overflow-y-auto`（2026-09-22 第二稿，此前是筛选列 `sticky top-…` + `max-h-[…]`——那条只在结果列比视口高时才钉得住，见该文件头部推导） |
+| 三处抽屉（导航抽屉 `ui/sidebar.tsx`、编辑侧边栏 `MemeEditPanel.tsx`、筛选抽屉 `BrowseFilterSheet.tsx`） | **不在这张表里**——它们在 Radix 那层（`z-50`）、压得住顶栏，按注册表原样全高（`inset-y-0`）。2026-09-22 当天曾各写一段 `data-[side=*]:top-(--app-header-h) bottom-0 h-auto`，随顶栏收回 `z-20` 一起删掉了 |
+| `SettingsCard`（锚点落点） | `scroll-mt-[calc(var(--app-header-h)_+_1rem)]` |
 | `SettingsCard`（锚点落点） | `scroll-mt-[calc(var(--app-header-h)_+_1rem)]` |
 
 **新写任何「贴视口顶边」的 sticky / 锚点 / `scroll-mt`，先减掉这个值。** 漏了不报错：
 top 写 0 的元素会滑到顶栏底下（顶栏有实色底，压得住它，只是看不见了），
 锚点则会落进顶栏里而 `scrollIntoView()` 照样返回成功。另注：Tailwind 工具类里的
 `calc()` 空格要写成 `_`——`calc(var(--x)_+_1rem)`，写成 `+1rem` 会被浏览器整条丢弃。
+
+**顶栏 `z-20`——比卡片浮层高、比 Radix 那层低**（2026-09-22 定：当天先从 `z-10`
+抬到 `9999`、又落到 `60`，最后收到 `20`）。
+抬起来是因为卡片浮层的角标 /「⋯」/ 收藏也是 `z-10` 且 DOM 更靠后，`SidebarInset` 不构成
+层叠上下文，滚动时**卡片浮层会画到顶栏上面**——那是真的会画错，不是观感问题。`20 > 10`，
+这条修好了。
+
+**20 只和两个邻居有关**，不是「越大越保险」：卡片浮层与侧边栏是 `z-10` / 轨道 `z-20`
+（那条细线与顶栏不相交），Radix 那层是 `z-50`。
+
+⚠️ **上限不是「9999 以下」而是「50 以下」。** 顶栏一旦高过 `z-50`，三处全高抽屉就被它切成
+「顶栏 + 抽屉」两条同时在屏幕上——手机端开导航抽屉时还留着一条 56px 的顶栏和一个 ☰，
+2026-09-22 产品负责人报的就是这个（「和侧边栏展开有冲突，会一起显示」）。而且那条顶栏
+**是假的**：Radix 的模态会给 **`body` 挂 `pointer-events: none`**，在它上面按下命中的是
+`SheetOverlay`，效果是**把抽屉关掉**，不是「顶栏还活着、点 ☰ 能开合导航」（绘制与交互
+不是一回事）。`60` 那一版为此给三处抽屉各写了 `top-(--app-header-h) bottom-0 h-auto`，
+`20` 之后那三段连同它们的推导一起删了。
+
+全屏阅览（`ImageViewer.tsx`）不受影响：`.yarl__portal` 自带 `9999`，本来就是数值最大的一个。
 
 ## 响应式：按容器分档，不按视口
 
@@ -271,7 +325,8 @@ portal 到 `document.body`，只要它的 React 父链经过首页，键盘事�
   （3.32.2 的 `exports` 只有 `styles` 与 captions / counter / thumbnails 四个），补一行会让构建失败。
 - 触摸目标**不用自己调**：关闭按钮 `padding: 8px` + `--yarl__icon_size: 32px` = 48px ≥ 44。
   改它的时候别把图标缩到 28px 以下。
-- z-index 不用管：`--yarl__portal_zindex` 默认 9999，压过顶栏 `z-10` 与 Radix `z-50`。
+- z-index 不用管：`--yarl__portal_zindex` 默认 `9999`，**比顶栏（`z-20`）大**——
+  压过顶栏靠的是差值（两者同值那天靠的是 portal 在 `#root` 之后的 DOM 顺序）。
   本仓没有 z-index 总表，这条只记在 `ImageViewer.tsx` 的注释里。
 
 ### 文案必须本地化，**插件的文案是插件自己那份**

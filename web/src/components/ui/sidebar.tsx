@@ -186,6 +186,15 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
+          /*
+           * 本地修改（2026-09-22）：抽屉**全高**（注册表的 `inset-y-0` 原样保留）。
+           *
+           * 顶栏 `z-20` 在 Radix 这一层（`z-50`）**之下**，所以抽屉与遮罩都盖得住它，
+           * 顶上那条线不再是「顶栏 + 抽屉」两条同时在屏幕上。曾经反过来做过：顶栏抬到
+           * `z-60`、抽屉改从顶栏下沿开始（`top-(--app-header-h) bottom-0 h-auto` 三个类），
+           * 结果正是产品负责人报的那个「和侧边栏展开有冲突，会一起显示」，
+           * 而且那条顶栏其实点不动。`App.tsx` 的 z-index 段落有完整推导。
+           */
           className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
           style={
             {

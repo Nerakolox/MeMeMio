@@ -60,13 +60,38 @@ function ImportProgressLink() {
  * 用 `sticky` 不用 `fixed`：`fixed` 把顶栏抽离文档流，下面那几处偏移量之外还得再补一层
  * `padding-top`，多一个会漂的量；`sticky` 的高度仍在流内，变的只是它在视口里的位置。
  *
- * 吸顶的代价是**三处「比它低」的地方**必须跟着算，全部按 `--app-header-h`
+ * 吸顶的代价是**几处「比它低」的地方**必须跟着算，全部按 `--app-header-h`
  * （`index.css` 的 `:root`，吸顶那天为它新加的一个值）：
- *   · `.browse__sidebar` 的 sticky `top` 与 `max-height`（`styles.css`）
+ *   · 浏览页筛选列的 sticky `top` 与 `max-height`（`routes/browse.tsx`）
  *   · `SettingsCard` 的 `scroll-mt`（`#invites` 这类锚点的落点）
+ * （**三处抽屉不在这张表里**：它们在 Radix 那一层、压得住顶栏，所以按注册表原样全高，
+ * 见下面 `z-index` 那段。）
  * 再加上本条自己的高度。顶栏还得压住页面内容，所以 `bg-background` 不能省
- * ——省了不报错，是内容从顶栏底下透出来。`z-10` 与桌面侧边栏同层（DOM 在后，压得住它），
- * 且低于 Sheet / Dialog 的 `z-50`——手机端的导航抽屉要盖得住这条顶栏。
+ * ——省了不报错，是内容从顶栏底下透出来。
+ *
+ * ## z-index 20（2026-09-22 定；当天先从 `z-10` 抬到 9999、又落到 60，最终收到 20）
+ *
+ * 抬起来是修一个**真的会画错**的现象：卡片上的角标 /「⋯」/ 收藏
+ * （`components/MemeCard.tsx`）也是 `z-10`，而它们 DOM 更靠后，`SidebarInset` 又只是
+ * `relative`（**不构成层叠上下文**）——同一层里按 DOM 顺序比，滚动时卡片浮层会画到顶栏上面。
+ * 20 > 10，这个缺陷是修好的（首页图墙那种不带 `transform` 的卡片格子上量得到）。
+ *
+ * **20 这个数只和两个邻居有关**，不是「越大越保险」：
+ *   · 卡片浮层 `z-10`、侧边栏 `z-10`（轨道那条 `z-20` 的细线与顶栏不相交）—— 在下面；
+ *   · Radix 那一层 `z-50`（手机端导航抽屉、Dialog、Sheet、Select、Popover）—— 在**上面**。
+ *
+ * ⚠️ **顶栏必须低于 Radix 那一层**，反过来（60 / 9999 那两版）都错过一次：顶栏一旦高过
+ * 50，三处全高面板就被它切成「顶栏 + 面板」上下两条同时显示——手机端开导航抽屉时屏幕上
+ * 还留着一条 56px 的顶栏和一个 ☰，产品负责人 2026-09-22 报的就是这个
+ * （「和侧边栏展开有冲突，会一起显示」）。那条顶栏还是**假的**：Radix 的模态机制给 `body`
+ * 挂了 `pointer-events: none`，在它上面按下命中的是遮罩、效果是**把抽屉关掉**，
+ * 不是「顶栏还活着、点 ☰ 能开合导航」。
+ *
+ * 20 < 50 之后，三处抽屉按注册表原样全高（`inset-y-0`），遮罩也蒙住顶栏，
+ * 不用再给它们各写一段 `top-(--app-header-h)`——省掉的正是那段推导。
+ *
+ * 全屏阅览（`components/ImageViewer.tsx`）不受影响：`.yarl__portal` 自带 `z-index: 9999`，
+ * 本来就是数值最大的那一个。
  */
 function AppLayout() {
   return (
@@ -84,8 +109,13 @@ function AppLayout() {
         <ImageViewerProvider>
           <AppSidebar />
           <SidebarInset>
-            <header className="sticky top-0 z-10 flex h-(--app-header-h) shrink-0 items-center gap-2 border-b bg-background px-4">
-              <SidebarTrigger className="size-11" />
+            <header className="sticky top-0 z-20 flex h-(--app-header-h) shrink-0 items-center gap-2 border-b bg-background px-4">
+              {/*
+                44 是手机那一档的（手指按抽屉开关），鼠标那一档回到 32——
+                一个 44 的方块摆在 56 高的顶栏里，四周的空比图标本身还大。
+                闸门是指针不是宽度，理由同 `lib/touch.ts`。
+              */}
+              <SidebarTrigger className="size-11 pointer-fine:size-8" />
               {/*
                 进度放顶栏而不是侧边栏：手机端（<768px）整条导航收进抽屉，
                 侧边栏上的角标就看不见了，而 import-ux.md §9 要的是「切走再切回来还能看到」。

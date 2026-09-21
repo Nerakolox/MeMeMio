@@ -1,494 +1,191 @@
-import { useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { Masonry, type RenderComponentProps } from 'masonic'
-import {
-  type Meme,
-  type FetchMemesParams,
-  fetchMemes,
-  toggleFavorite,
-  deleteMeme,
-  ApiError,
-} from '../lib/api'
-import { sendMeme, sendNote, type SendTarget } from '../lib/clipboard'
+/**
+ * 浏览页：按条件筛着翻（`GET /memes`，游标分页 + 无限滚动）。
+ *
+ * 这一层只做**布局与编排**，三件事分别住在 `features/browse/`：
+ *   · `use-browse-filters` —— URL ↔ 接口参数，筛选的唯一真源
+ *   · `use-browse-list`    —— 列表、分页、本地变更
+ *   · `use-browse-actions` —— 发送 / 收藏 / 删除 / 编辑侧边栏与那条操作反馈
+ *
+ * ## 布局：md 以上**页面本身不滚动**，两列各自滚（2026-09-22 第二稿）
+ *
+ * 要求是「左栏固定，不跟着右栏一起滚」。最早用的是 `position: sticky`，**做不到**，
+ * 实测把原因量清楚了：
+ *
+ * ```text
+ *   可粘余量 = 容器高 − 左列高
+ *   左列高   = max-height = 100vh − 顶栏        （163 个 chip 永远撑满，不缩）
+ *   容器高   = max(左列高, 结果列高)             （md:items-start，两列各按自己长）
+ * ```
+ *
+ * 于是**只要结果列比视口矮，余量就是 0**，左列整段跟着页面走：1920×1080 与 2560×1440
+ * 上结果列只有 871 高（< 1024 / 1384），左栏一路跟着滚；1280×800 上结果列 865 > 744
+ * 才真钉住。滚程那 48px 来自外壳 `p-6` 的上下内边距，滚到底还会再释放 24px。
+ * 一句话：**sticky 版左栏的「固定」取决于结果列有多高**，图片少的时候立刻失效。
+ *
+ * 所以改成外壳式布局：md 以上的容器高度钉死为 `100svh − 顶栏`，两列各自内部滚动，
+ * 文档不滚——左栏因此**无条件不动**，与结果多少、视口多高都无关。
+ *
+ * ```
+ *   md:-my-6   抵消外壳 `p-6` 的上下内边距（同一个 6，改一个要改另一个），
+ *              不抵消的话容器下移 24px，页面又多出 48px 可滚，左栏照样跟着漂
+ *   md:h-…     减去顶栏（--app-header-h，见 index.css）
+ *   md:py-6    加回来：容器正好铺满顶栏以下，而两列的位置与改前一模一样
+ *   svh        外壳是 min-h-svh（sidebar-wrapper），两把尺要一样，否则在浏览器 UI
+ *              会收起的设备上页面还能滚 `vh − svh` 那一段
+ * ```
+ *
+ * 无限滚动的观察点不受影响：`IntersectionObserver` 的 `root` 是 null（视口），
+ * 祖先裁剪会照算——sentinel 在列内滚到视口里照样触发下一页（实测见任务文件）。
+ *
+ * ## 第三稿（同日）：分栏可拖、两处滚动换成 shadcn 的 ScrollArea
+ *
+ * 用户看过截图后提的：此前是 `mx-auto max-w-6xl`，1600px 窗口两侧各留 96px 死白
+ * （2560 上是 552px），左栏离左沿很远。要的是「左栏在左、右栏占满」，外加
+ * 「两处滚动换成 shadcn 的滚动条组件、分栏换成可拖宽的组件」。于是：
+ *
+ * - **容器不再封顶**：masonic 按容器宽度算列数，铺满就铺满。代价记在这儿——
+ *   2560px 下是十三列左右，单张图仍然 160px 起（`columnWidth={160}`），
+ *   不会跟着窗口变大；想让图变大得动 masonic 的参数，那是另一件事。
+ * - `ResizablePanelGroup` 是**唯一的**两列容器，手机上靠 `max-md:` 退回普通块级堆叠，
+ *   **不是** JS 分支：`BrowseResults` 只能有一份实例，两份就是两个
+ *   `IntersectionObserver` + 两次取数（何况 `useIsMobile()` 在手机上会先画一帧桌面版）。
+ *   Panel 那些 `flex-basis` 是行内样式，块级上下文里不起作用，所以 `max-md:block`
+ *   之后两个面板就是普通的 auto 高块；手机上分隔条与筛选列都 `hidden`，面板塌成 0 高。
+ * - 结果列的滚动容器**就是** ScrollArea 的 viewport，`scroller` 那个 state 把它交给
+ *   瀑布流（masonic 的虚拟化要自己喂 `scrollTop`，理由见 BrowseResults 的文件头）。
+ *   此前那套 `scrollbar-gutter: stable` 不再需要：Radix 的滚动条是**浮层**、不占宽，
+ *   「竖条出现 → 容器窄 15px → 列数变少 → 墙变矮 → 竖条消失」这条回路从根上不存在。
+ */
+
+import * as React from 'react'
+import { Button } from '../components/ui/button'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../components/ui/resizable'
+import { ScrollArea } from '../components/ui/scroll-area'
 import { useAuth } from '../contexts/auth'
-import { MemeCard } from '../components/MemeCard'
-import { MemeActions } from '../features/manage/MemeActions'
+import { BrowseFilterSheet } from '../features/browse/BrowseFilterSheet'
+import { BrowseFilters } from '../features/browse/BrowseFilters'
+import { BrowseResults } from '../features/browse/BrowseResults'
+import { useBrowseActions } from '../features/browse/use-browse-actions'
+import { useBrowseFilters } from '../features/browse/use-browse-filters'
+import { useBrowseList } from '../features/browse/use-browse-list'
 import { MemeEditPanel } from '../features/manage/MemeEditPanel'
-import { TAG_STATUS_LABELS } from '../lib/tag-status'
-import { emotionOptions, sceneOptions, tagOptions } from '../lib/vocab'
-
-/** 操作反馈：复制/下载的结果、删除失败等。一条就够，不堆历史。 */
-type Note = { text: string; error?: boolean; requestId?: string }
-
-/** 把当前 URL query string 解析为接口参数，游标在外部传入，不放 URL（SPEC §6.3.2）。 */
-function buildParams(sp: URLSearchParams): FetchMemesParams {
-  const p: FetchMemesParams = {}
-  const emotions = sp.getAll('emotions')
-  if (emotions.length) p.emotions = emotions
-  const scenes = sp.getAll('scenes')
-  if (scenes.length) p.scenes = scenes
-  const tags = sp.getAll('tags')
-  if (tags.length) p.tags = tags
-  const ia = sp.get('isAnimated')
-  if (ia !== null) p.isAnimated = ia === 'true'
-  if (sp.get('favorited') === 'true') p.favorited = true
-  const upl = sp.get('uploader')
-  if (upl) p.uploader = upl
-  const ts = sp.get('tagStatus')
-  if (ts) p.tagStatus = ts
-  return p
-}
+import { TOUCH } from '../lib/touch'
 
 export function BrowsePage() {
   const { user } = useAuth()
-  const [searchParams, setSearchParams] = useSearchParams()
-
-  const [items, setItems] = useState<Meme[]>([])
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<ApiError | null>(null)
-  const [initialDone, setInitialDone] = useState(false)
-  const sentinelRef = useRef<HTMLDivElement>(null)
-
-  /**
-   * 打开编辑侧边栏的那条**只存 id**，面板再从列表里取当前那一条。
-   *
-   * 存整个对象会变成一份影子副本：保存成功后列表里换了新的，而面板还指着旧的
-   * （state-navigation.md §2「不维护第二份可编辑副本」）。
-   */
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [note, setNote] = useState<Note | null>(null)
-
-  /**
-   * 瀑布流的「重挂代际」。删除会让 `items` 缩短，而 masonic 按 index 缓存位置，
-   * items 缩短会错位甚至越界抛错，所以删除成功后 bump 一次、换 key 强制重挂，
-   * 位置器从零重建。筛选切换走的是 `items → [] → 新 items`，中间那次空态已经把
-   * `<Masonry>` 整个卸载了，不需要这里参与。
-   */
-  const [masonryEpoch, setMasonryEpoch] = useState(0)
-
-  const editingMeme = editingId === null ? null : (items.find((m) => m.id === editingId) ?? null)
-
-  // Changes only when filter params change — used as dep key for effects below
-  const filtersKey = searchParams.toString()
-
-  async function doLoad(params: FetchMemesParams, cursor?: string) {
-    setLoading(true)
-    setError(null)
-    try {
-      const page = await fetchMemes({ ...params, cursor })
-      setItems((prev) => (cursor ? [...prev, ...page.items] : page.items))
-      setNextCursor(page.nextCursor)
-      if (!cursor) setInitialDone(true)
-    } catch (err) {
-      setError(err as ApiError)
-    } finally {
-      setLoading(false)
-    }
-  }
-  // Reset and reload when filter params change
-  useEffect(() => {
-    setItems([])
-    setNextCursor(null)
-    setInitialDone(false)
-    doLoad(buildParams(searchParams))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey])
-
-  // Infinite scroll: observe the sentinel div and load the next page
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el) return
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting && !loading && nextCursor) {
-          doLoad(buildParams(searchParams), nextCursor)
-        }
-      },
-      { threshold: 0.1 },
-    )
-    obs.observe(el)
-    return () => obs.disconnect()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, nextCursor, filtersKey])
-
-  // --- filter helpers ---
-
-  function toggleMultiParam(key: string, value: string) {
-    const next = new URLSearchParams(searchParams)
-    const existing = next.getAll(key)
-    if (existing.includes(value)) {
-      next.delete(key)
-      existing.filter((v) => v !== value).forEach((v) => next.append(key, v))
-    } else {
-      next.append(key, value)
-    }
-    setSearchParams(next, { replace: true })
-  }
-
-  function toggleBoolParam(key: string) {
-    const next = new URLSearchParams(searchParams)
-    if (next.get(key) === 'true') next.delete(key)
-    else next.set(key, 'true')
-    setSearchParams(next, { replace: true })
-  }
-
-  function setStringParam(key: string, value: string | null) {
-    const next = new URLSearchParams(searchParams)
-    if (value) next.set(key, value)
-    else next.delete(key)
-    setSearchParams(next, { replace: true })
-  }
-
-  function clearFilters() {
-    setSearchParams(new URLSearchParams(), { replace: true })
-  }
-
-  // tagStatus is shown only to admin or when filtering own uploads (SPEC §6.3.2 + §3.3)
-  const canUseTagStatus =
-    user?.role === 'admin' || searchParams.get('uploader') === 'me'
-
-  const activeEmotions = searchParams.getAll('emotions')
-  const activeScenes = searchParams.getAll('scenes')
-  const activeTags = searchParams.getAll('tags')
-
-  // --- handle favorite toggle with optimistic update (SPEC §5.4) ---
-  async function handleFavorite(meme: Meme) {
-    const next = !meme.favorited
-    // optimistic: flip immediately
-    setItems((prev) => prev.map((m) => (m.id === meme.id ? { ...m, favorited: next } : m)))
-    try {
-      await toggleFavorite(meme.id, next)
-    } catch {
-      // rollback
-      setItems((prev) => prev.map((m) => (m.id === meme.id ? { ...m, favorited: !next } : m)))
-    }
-  }
-
-  // --- 图片操作：复制 / 下载 / 编辑 / 删除 ---
-
-  /**
-   * 发送这张图。路径由 `lib/clipboard.ts` 按 `isAnimated` 和能力探测决定，
-   * 菜单上的文案也是它给的——**同一个动作在首页和浏览页不能有两套行为**
-   * （clipboard-share.md §3，那一节把这件事列为本端最不能犯的错）。
-   *
-   * ⚠️ 这个函数由点击事件直接调起，中间不要先 await 别的请求：
-   * 剪贴板写入要落在用户手势的同步调用栈里，否则 Safari 会拒（§4.1）。
-   */
-  async function handleSend(target: SendTarget) {
-    setNote(null)
-    const text = sendNote(await sendMeme(target))
-    if (text !== null) setNote({ text })
-  }
-
-  /**
-   * 关掉编辑侧边栏。
-   *
-   * ⚠️ **这里的焦点交回是必须的，Radix 不会代劳**：侧边栏是受控打开、没有
-   * `SheetTrigger`，而 `DialogContentModal` 的关闭逻辑是
-   * `triggerRef.current?.focus()`——没有触发器就是 null，什么都不会做，焦点会掉在 body 上。
-   * （`AlertDialog` 那条路同理，它的交回写在 `MemeActions` 自己里面。）
-   *
-   * 选择器带 `[data-actions-trigger]` 而不是随便挑一个 `button`：卡片上还有收藏按钮，
-   * 挑错了就把焦点交给收藏，用户按回车会莫名其妙地取消收藏。
-   *
-   * 它可靠的前提是**侧边栏是模态的**（打开期间页面滚不动），那个 meme 的格子不会被
-   * masonic 回收掉——格子还在，`querySelector` 才找得到。
-   */
-  function closeEditor() {
-    const id = editingId
-    setEditingId(null)
-    if (id !== null) {
-      requestAnimationFrame(() => {
-        document
-          .querySelector<HTMLElement>(`[data-actions-for="${id}"] [data-actions-trigger]`)
-          ?.focus()
-      })
-    }
-  }
-
-  /**
-   * 编辑保存成功后就地换掉列表里那一条——响应就是新的完整 Meme，**不再拉一次**
-   * （SPEC §6.4.1）。
-   */
-  function handleSaved(updated: Meme) {
-    setItems((prev) => prev.map((m) => (m.id === updated.id ? updated : m)))
-    setNote({ text: '已保存' })
-  }
-
-  /**
-   * 删除一张图。**「删除中」那段反馈现在归 `MemeActions` 自己管**（它的确认框要等这个
-   * Promise 落定才关），所以这里不再需要 `deletingId` 那种「告诉菜单谁在忙」的状态。
-   *
-   * 失败**不往外抛**：原因是页面顶部那条带 requestId 的提示（它得在图消失之后还看得见），
-   * 弹层只负责等它落定。
-   */
-  async function handleDelete(meme: Meme) {
-    setNote(null)
-    try {
-      // 404 在 deleteMeme 里已经当成功处理（SPEC §6.4.2）：那张图本来就要消失
-      await deleteMeme(meme.id)
-      setItems((prev) => prev.filter((m) => m.id !== meme.id))
-      if (editingId === meme.id) setEditingId(null)
-      setNote({ text: '已删除' })
-      setMasonryEpoch((e) => e + 1)
-    } catch (err) {
-      // 服务端仍是唯一权威：前端禁用只是体验，403 / FORBIDDEN 要能显示出来（SPEC §6.4.2）
-      const apiErr = err instanceof ApiError ? err : null
-      setNote({
-        text: `删除失败：${apiErr?.message ?? '请稍后重试'}`,
-        error: true,
-        requestId: apiErr?.requestId ?? '未知',
-      })
-    }
-  }
-
-  const hasFilters = searchParams.toString() !== ''
+  const filters = useBrowseFilters()
+  const list = useBrowseList(filters.params)
+  const actions = useBrowseActions(list)
+  /*
+    结果列的滚动容器。用 state 存元素而不是 ref：瀑布流量测的那个 effect 依赖它，
+    而 ref 的 `current` 变化不触发渲染——存 ref 的话第一次量测读到的是 null。
+  */
+  const [scroller, setScroller] = React.useState<HTMLDivElement | null>(null)
 
   return (
-    <div className="browse">
-      {/* ---- sidebar filter panel ---- */}
-      <aside className="browse__sidebar">
-        <div className="browse__filter-group">
-          <div className="browse__filter-header">
-            <span>筛选</span>
-            {hasFilters && (
-              <button className="browse__clear-btn" onClick={clearFilters}>
-                清除
-              </button>
-            )}
-          </div>
+    <>
+      {/*
+        `md:py-6` 不是「顺手加的间距」：它和 `md:-my-6` 一起把两列放回改前的位置
+        （顶栏下 24px），见上面那段推导。
 
-          <label className="browse__filter-label">
-            <input
-              type="checkbox"
-              checked={searchParams.get('isAnimated') === 'true'}
-              onChange={() => toggleBoolParam('isAnimated')}
-            />
-            只看动图
-          </label>
+        面板尺寸用**数字**（react-resizable-panels v4 的约定：数字=像素，
+        无单位字符串=百分比）：220 是筛选列原来的宽度；可拖范围 168（再窄 chip 就得换行）
+        到 420。`groupResizeBehavior="preserve-pixel-size"` 让窗口变大时**筛选列宽度不变**，
+        多出来的全归结果列——这就是「左栏固定、右栏占满」的字面意思。
 
-          <label className="browse__filter-label">
-            <input
-              type="checkbox"
-              checked={searchParams.get('favorited') === 'true'}
-              onChange={() => toggleBoolParam('favorited')}
-            />
-            只看收藏
-          </label>
+        高度上的两个 `!` 不能省：库给自己写行内 `height:100%` + `display:flex`，
+        而行内样式压得过大类——只有 `!important` 能反过来压住它（ui/resizable.tsx 记了这条）。
+        没有 `!` 的表现是「容器高 = 内容高」：页面又能滚了，左栏跟着跑，回到第二稿之前。
+      */}
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className="max-md:block! max-md:h-auto! md:-my-6 md:h-[calc(100svh_-_var(--app-header-h))]! md:py-6"
+      >
+        {/* 桌面筛选列。手机上 `hidden`（那时走 `BrowseFilterSheet` 抽屉）。 */}
+        <ResizablePanel
+          id="filters"
+          defaultSize={220}
+          minSize={168}
+          maxSize={420}
+          groupResizeBehavior="preserve-pixel-size"
+          className="hidden md:block"
+        >
+          {/*
+            `pr-3` 是留给滚动条的：Radix 的竖条是**浮层**，绝对定位在 Root 的右沿，
+            而 viewport 是 `size-full`（撑满内容盒）——不留这几像素，163 个 chip 的右端
+            会被浮层压住 8px。结果列同理（那边被压的是最右一列的图）。
+          */}
+          <ScrollArea className="h-full pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain">
+            <BrowseFilters filters={filters} user={user} />
+          </ScrollArea>
+        </ResizablePanel>
 
-          <div className="browse__filter-row">
-            <span>上传者</span>
-            <select
-              value={searchParams.get('uploader') ?? ''}
-              onChange={(e) => setStringParam('uploader', e.target.value || null)}
-            >
-              <option value="">全部</option>
-              <option value="me">只看我的</option>
-            </select>
-          </div>
+        {/*
+          拖拽手柄。`mx-3` 撑出两列之间的空档（改前是 `md:gap-6` 的 24px），
+          1px 的线因此落在正中间。可见的那 1px 当然不到 44px 触摸目标，
+          但**这条路径只在 md 以上存在**，且库自己给粗指针留了 37px 的命中区
+          （`resizeTargetMinimumSize` 的默认值），不会「按不准」。
+        */}
+        <ResizableHandle className="mx-3 hidden md:flex" />
 
-          {canUseTagStatus && (
-            <div className="browse__filter-row">
-              <span>标注状态</span>
-              <select
-                value={searchParams.get('tagStatus') ?? ''}
-                onChange={(e) => setStringParam('tagStatus', e.target.value || null)}
-              >
-                <option value="">全部</option>
-                {/* 值与文案都取自 tag-status.ts 那一份表：选项顺序就是表里的顺序。
-                    枚举直出英文会让用户对着一堆 tag_status 猜自己该选哪个。 */}
-                {Object.entries(TAG_STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+        <ResizablePanel id="results" minSize={320}>
+          {/*
+            `h-full` 撑满面板。**不要**往这里塞内边距：瀑布流按容器的 `offsetWidth`
+            算列数，内边距会把最后一列顶出去。窄屏工具条放在 viewport 里，
+            因此它跟着内容一起滚（改前也是这样）。
+
+            Radix 会在 viewport 里套一层 `display:table` 的行内样式 div，块级孩子
+            进表里按收缩宽度算——实测瀑布流容器的 `offsetWidth` 仍是满宽
+            （那层带着 `min-width:100%` 兜底），列数与改前逐字相同，所以没有加
+            `[&>div]:block!`。**别照抄别人的写法**：这里加不加以量出来的列数为准，
+            见任务文件的验收数字。
+          */}
+          <ScrollArea
+            viewportRef={setScroller}
+            /* `md:pr-3` 的 `md:` 不能省：手机上这个 viewport 不滚、没有滚动条可躲，
+               白扣掉的 12px 正好让列数从 2 掉到 1（(330+12)/172 = 1.98），
+               而 2 列才是这一档原来的样子。 */
+            className="h-full md:pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain"
+          >
+            {/* 窄屏工具条：抽屉入口 + 快捷「清除」。桌面这行不存在（筛选列常驻在左边） */}
+            <div className="mb-4 flex items-center gap-2 md:hidden">
+              <BrowseFilterSheet filters={filters} user={user} />
+              {filters.hasFilters && (
+                <Button variant="ghost" size="sm" className={TOUCH} onClick={filters.clear}>
+                  清除
+                </Button>
+              )}
             </div>
-          )}
-        </div>
 
-        <FilterGroup
-          title="情绪"
-          options={emotionOptions}
-          active={activeEmotions}
-          onToggle={(v) => toggleMultiParam('emotions', v)}
-        />
-        <FilterGroup
-          title="场景"
-          options={sceneOptions}
-          active={activeScenes}
-          onToggle={(v) => toggleMultiParam('scenes', v)}
-        />
-        <FilterGroup
-          title="标签"
-          options={tagOptions}
-          active={activeTags}
-          onToggle={(v) => toggleMultiParam('tags', v)}
-        />
-      </aside>
-
-      {/* ---- main grid ---- */}
-      <div className="browse__content">
-        {!initialDone && loading && (
-          <div className="browse__grid">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div
-                key={i}
-                aria-hidden="true"
-                className="aspect-square animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
-              />
-            ))}
-          </div>
-        )}
-
-        {initialDone && items.length === 0 && !loading && !error && (
-          <p className="browse__empty">没有符合条件的图片</p>
-        )}
-
-        {error && (
-          <div className="browse__error" role="alert">
-            <p>加载失败：{error.message}</p>
-            <p className="browse__request-id">requestId: {error.requestId}</p>
-            <button onClick={() => doLoad(buildParams(searchParams))}>重试</button>
-          </div>
-        )}
-
-        {/* 复制 / 下载的结果在这里说一句：剪贴板是不可见的，**没有反馈的复制等于没复制**
-            （clipboard-share.md §4.1）。 */}
-        {note !== null && (
-          <p className={`browse__note${note.error === true ? ' browse__note--error' : ''}`} role={note.error === true ? 'alert' : 'status'}>
-            {note.text}
-            {note.requestId !== undefined && (
-              <span className="browse__request-id">requestId: {note.requestId}</span>
-            )}
-          </p>
-        )}
-
-        {items.length > 0 && (
-          <Masonry
-            key={masonryEpoch}
-            items={items.map((meme) => ({
-              meme,
-              favorite: () => handleFavorite(meme),
-              send: (t: SendTarget) => void handleSend(t),
-              edit: () => setEditingId(meme.id),
-              remove: () => handleDelete(meme),
-              // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
-              // 前端判断只是体验，服务端仍会独立判一次。
-              canDelete: user?.role === 'admin' || meme.uploaderId === user?.id,
-            }))}
-            columnWidth={160}
-            columnGutter={12}
-            overscanBy={3}
-            itemHeightEstimate={220}
-            itemKey={(item) => item.meme.id}
-            render={BrowseMasonryCell}
-          />
-        )}
-
-        {/* sentinel — observed for infinite scroll */}
-        <div ref={sentinelRef} className="browse__sentinel" aria-hidden="true" />
-
-        {loading && initialDone && (
-          <p className="browse__loading">加载中…</p>
-        )}
-      </div>
+            <BrowseResults
+              list={list}
+              note={actions.note}
+              user={user}
+              scrollEl={scroller}
+              onSend={(t) => void actions.send(t)}
+              onEdit={(meme) => actions.openEditor(meme.id)}
+              onRemove={actions.remove}
+            />
+          </ScrollArea>
+        </ResizablePanel>
+      </ResizablePanelGroup>
 
       {/*
         编辑侧边栏。key 用 meme.id：换一张图时组件要重挂，草稿才有正确的初始值——
         同一个组件实例上换 props 会让草稿停留在上一张图的标签上。
+
+        挂在分栏之外：它是个 Sheet（portal 到 body），挂哪一层都不影响布局，
+        留在里面反而会在跨断点时被连带重挂、把草稿丢掉。
       */}
-      {editingMeme !== null && (
+      {actions.editingMeme !== null && (
         <MemeEditPanel
-          key={editingMeme.id}
-          meme={editingMeme}
+          key={actions.editingMeme.id}
+          meme={actions.editingMeme}
           currentUserId={user?.id ?? null}
-          onClose={closeEditor}
-          onSaved={handleSaved}
+          onClose={actions.closeEditor}
+          onSaved={actions.handleSaved}
         />
       )}
-    </div>
+    </>
   )
 }
-
-// ---- sub-components ----
-
-/**
- * 瀑布流单元格的载体：一条 meme + 页面注入的回调。
- *
- * 回调要跟着数据走，是因为 masonic 的 `render` 组件必须是**稳定引用**（模块级）——
- * 如果每次渲染都现写一个箭头函数，masonic 会把「render prop 换了新函数」当成换组件，
- * 所有可见卡片重挂，收藏、删除、编辑弹层这些交互的本地状态全被打断。
- * 所以把会变的回调放进 `data`（每帧重算没关系，key 是 meme.id，React 不会重挂）。
- *
- * 卡片本身（图片承载、角标、收藏按钮、比例占位）全在 `components/MemeCard.tsx`，
- * 四页共用；这一层只剩「瀑布流要的回调怎么接上去」。浏览页是四处里**唯一**带「⋯」的。
- */
-type BrowseMasonryItem = {
-  meme: Meme
-  favorite: () => void
-  send: (target: SendTarget) => void
-  edit: () => void
-  remove: () => Promise<void>
-  canDelete: boolean
-}
-
-function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
-  const { meme } = data
-
-  return (
-    <MemeCard
-      // natural：按 width/height 整张展示、不裁方——表情包的信息常在边缘，
-      // 裁掉之后用户认不出这是哪张（styling.md「图片网格」）。
-      shape="natural"
-      meme={meme}
-      actions={
-        /*
-          「⋯」是浏览页唯一的删除 / 编辑 / 发送入口。它是绝对定位的浮层，不占布局，
-          弹层因此能探出图片边界（菜单本身走 portal，更不受裁剪影响）。
-        */
-        <MemeActions
-          target={meme}
-          canDelete={data.canDelete}
-          deleteDeniedReason="只有上传这张图的人或管理员可以删除"
-          onSend={(t) => void data.send(t)}
-          onEdit={data.edit}
-          onDelete={data.remove}
-        />
-      }
-      onFavorite={data.favorite}
-    />
-  )
-}
-
-function FilterGroup({
-  title,
-  options,
-  active,
-  onToggle,
-}: {
-  title: string
-  options: string[]
-  active: string[]
-  onToggle: (v: string) => void
-}) {
-  return (
-    <div className="browse__filter-group">
-      <p className="browse__filter-section-title">{title}</p>
-      <div className="browse__tag-list">
-        {options.map((opt) => (
-          <button
-            key={opt}
-            className={`browse__tag-btn${active.includes(opt) ? ' browse__tag-btn--active' : ''}`}
-            onClick={() => onToggle(opt)}
-            aria-pressed={active.includes(opt)}
-          >
-            {opt}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-

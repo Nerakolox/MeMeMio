@@ -80,6 +80,11 @@ export function MemeEditPanel({
         showCloseButton={false}
         // ⚠️ `w-full` 单独写没用：注册表是 `data-[side=right]:w-3/4`，不同变体不合并，
         // 必须带上同样的变体前缀才盖得住。宽度 420px 是上一版 `.manage-panel` 的值。
+        //
+        // 高度保持注册表的 `inset-y-0`（**全高**）：顶栏 `z-20` 在 Radix 这层（`z-50`）之下，
+        // 面板与遮罩都盖得住它。曾经因为顶栏被抬到 `z-60` 而改成「从顶栏下沿开始」、
+        // 于是这一格 `SheetHeader`（「图片信息」标题 + 右上关闭按钮）必须一起让位——
+        // 顶栏收回 20 之后那段偏移连同它的三个类一起删掉了（`App.tsx` 有完整推导）。
         className="data-[side=right]:w-full data-[side=right]:sm:max-w-[420px]"
         onOpenAutoFocus={(e) => {
           // 挡掉 Radix 的默认聚焦（它会挑第一个可聚焦元素，也就是关闭按钮），

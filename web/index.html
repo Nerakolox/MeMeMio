@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mememio</title>
+    <!--
+      图形 LOGO（`public/mememio-mark.svg`，仓库根的 `MeMeMio-LOGO.svg` 是同一份）。
+
+      两枚、按系统配色挑一枚（2026-09-22 补深色那份，此前只有浅色、深色标签栏上看不见）：
+      favicon 不是页面元素、挂不了 `dark:` class，而 SVG 文件**内部**写
+      `@media (prefers-color-scheme: dark)` 在 WebKit 上不生效，所以走 `media` 属性——
+      它是**页面**求值的，各浏览器一致。浅色那枚放前面且**不带** `media`：不认这个属性的
+      浏览器只取第一枚，落到浅色（可用），而不是反过来在浅色界面上显示深色图标。
+    -->
+    <link rel="icon" type="image/svg+xml" href="/mememio-mark.svg" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="/mememio-mark-dark.svg"
+      media="(prefers-color-scheme: dark)"
+    />
   </head>
   <body>
     <div id="root"></div>

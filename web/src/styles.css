@@ -65,124 +65,25 @@ body {
  * 不用再有一份平行的规则。`width: 120px` 的配额输入框改成了 `Input` 上的 `w-30`。
  */
 
-/* ---- Browse page ---- */
-
-.browse {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-}
-
-.browse__sidebar {
-  flex: 0 0 220px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  position: sticky;
-  /*
-    落点让给吸顶的外壳顶栏（2026-09-21 顶栏改 sticky）。
-    用 `top: 0` 时筛选栏会滑到顶栏底下——顶栏有实色底，压得住它，所以**不报错，
-    只是筛选栏的上半截看不见了**。高度同理：不减去顶栏，筛选栏底部会伸到视口外。
-    两个值都从 `--app-header-h` 算（`index.css` 的 `:root`），不写死 56px。
-  */
-  top: var(--app-header-h);
-  max-height: calc(100vh - var(--app-header-h));
-  overflow-y: auto;
-}
-
-.browse__content {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.browse__filter-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.browse__filter-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-weight: 600;
-}
-
-.browse__clear-btn {
-  font-size: 0.8em;
-  padding: 2px 6px;
-}
-
-.browse__filter-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-
-.browse__filter-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.browse__filter-section-title {
-  margin: 0;
-  font-weight: 600;
-  font-size: 0.85em;
-}
-
-.browse__tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.browse__tag-btn {
-  padding: 2px 8px;
-  font-size: 0.8em;
-  border-radius: 12px;
-  cursor: pointer;
-}
-
-.browse__tag-btn--active {
-  font-weight: 600;
-}
-
-/* Grid */
-
-.browse__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-}
-
-.browse__sentinel {
-  height: 1px;
-  margin-top: 24px;
-}
-
-.browse__loading {
-  text-align: center;
-  margin: 16px 0;
-}
-
-.browse__empty {
-  margin: 0;
-}
-
-.browse__error {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.browse__request-id {
-  font-size: 0.8em;
-  font-family: monospace;
-}
-
-/* 卡片的外形（含「⋯」入口）全在 components/MemeCard.tsx 与 ui/ 里，这边没有遗留类。 */
+/*
+ * 浏览页那套 `.browse__*`（含 `@media (max-width: 640px)` 的塌陷规则）在 2026-09-22
+ * 整块迁走：筛选面板、骨架、空 / 错误 / 反馈三态、瀑布流容器全部换成 shadcn 组件 +
+ * Tailwind，落在 `features/browse/`，路由只剩布局（`routes/browse.tsx`）。
+ *
+ * ⚠️ 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
+ * 留着旧选择器会在它们命中新元素时静默盖掉工具类。这次留不得的还有具体一条——
+ * `.browse__grid` 的 `grid-template-columns` 会压住骨架新写的网格工具类。
+ *
+ * 搬走过的东西：
+ *   · sticky 的落点与限高（`top: var(--app-header-h)` / `max-height: calc(100vh - …)`）
+ *     → `routes/browse.tsx` 里 `<aside>` 上的 `md:top-(--app-header-h)` /
+ *       `md:max-h-[calc(100vh_-_var(--app-header-h))]`（**单元素**，理由在那边注释里）
+ *   · 触摸目标 44px（`.browse__clear-btn` / `.browse__tag-btn`）→ 各调用点的 `TOUCH`
+ *   · 网格 `minmax(160px,1fr)` / `gap: 12px`（`.browse__grid`）→ `BrowseResults.tsx`
+ *     的 `SKELETON_GRID`，与 masonic 的 `columnWidth` / `columnGutter` 是同一条账
+ *   · 640px 的塌陷 → 768px(`md:`) 上的抽屉（`BrowseFilterSheet.tsx`），
+ *     全站因此只剩外壳那一套手机断点
+ */
 
 /*
  * 首页（`/`）的 `.search__*` 与 `.discover__*` 共约 180 行在 2026-09-21 整块迁走：
@@ -199,28 +100,7 @@ body {
  * 语义见 `DiscoverWall.tsx` 里 `WALL_GRID` 的注释。
  */
 
-/* Responsive: collapse sidebar on narrow viewports */
-@media (max-width: 640px) {
-  .browse {
-    flex-direction: column;
-  }
 
-  .browse__sidebar {
-    flex: none;
-    width: 100%;
-    position: static;
-    max-height: none;
-  }
-}
-
-/* ---- 操作反馈 ---- */
-
-.browse__note {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 0 12px;
-}
 
 /* ---- Import page (/import) ---- */
 

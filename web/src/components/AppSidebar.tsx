@@ -13,7 +13,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   Blocks,
-  GalleryVerticalEnd,
   House,
   Images,
   LogOut,
@@ -23,6 +22,8 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../contexts/auth'
 import { postLogout } from '../lib/api'
+import { TOUCH } from '../lib/touch'
+import { cn } from '../lib/utils'
 import { Badge } from './ui/badge'
 import {
   Sidebar,
@@ -61,13 +62,18 @@ const NAV: NavItem[] = [
  * 换成竖排侧边栏之后那个不对称从结构上消失了，但**尺寸要求还在**：
  * shadcn 的菜单项默认 `h-9`（36px），低于 44，所以这里统一抬到 44。
  *
- * 图标窄栏模式例外：那时 registry 用 `size-8!` 把按钮压成 32×32 的方块，
- * 而 `min-height` 会盖过 `height`（不同的属性，`!important` 管不着），
- * 不加下面那半句按钮会变成 32 宽 × 44 高的长条。
+ * 2026-09-22 起那一抬由 `TOUCH` 承担、按**指针**分档（`lib/touch.ts` 头部有推导）：
+ * 鼠标那一档收回额外的 12px，菜单项落到 registry 自己的 `h-9` = 36，
+ * 手指那一档仍是 44。写字面量 `min-h-11` 就等于绕过了那道闸门。
+ *
+ * 图标窄栏模式的那半句**不能并进 `TOUCH`**：那时 registry 用 `size-8!` 把按钮压成
+ * 32×32 的方块，而 `min-height` 会盖过 `height`（不同的属性，`!important` 管不着），
+ * 少了它按钮会变成 32 宽 × 44 高的长条。窄栏形态在**粗指针下也会出现**
+ * （平板横屏 ≥768px 时收成图标栏），那时 `TOUCH` 给的是 44，所以这一条必须无条件写死。
  * 32 是窄栏的物理宽度（`--sidebar-width-icon: 3rem` 减去 `SidebarGroup` 的 `p-2`），
- * 且那个形态只在 md 以上的桌面出现——手机端拿到的是 Sheet 里的**展开版**，仍然是 44。
+ * 手机端拿到的是 Sheet 里的**展开版**，那一档由 `TOUCH` 保住 44。
  */
-const NAV_ITEM_SIZE = 'min-h-11 group-data-[collapsible=icon]:min-h-8'
+const NAV_ITEM_SIZE = cn(TOUCH, 'group-data-[collapsible=icon]:min-h-8')
 
 export function AppSidebar() {
   const { user, setUser } = useAuth()
@@ -94,19 +100,72 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <SidebarHeader>
+      {/*
+        品牌行**坐在顶栏的同一根中线上**（2026-09-22）。顶栏是一条 56px 的带子
+        （`--app-header-h`），而 registry 的 `SidebarHeader` 自带 `p-2`，于是品牌行
+        （`size="lg"` = `h-14`，也是 56px）落在 y=8..64：**logo 比 ☰ 低 8px**，
+        两个都在左上角，一条水平线对不齐。`pt-0` 让这 56px 与顶栏那 56px 完全重合。
+        窄栏（`collapsible=icon`）下按钮被压成 32px 的方块，同样要对齐 28 就得从 12 起，
+        所以 `pt-3`。手机上侧栏是抽屉、按 md 断点判断，icon 模式到不了，故 `max-md:pt-2`
+        把 registry 那 8px 留给它，抽屉里 logo 不至于贴着上沿。
+      */}
+      <SidebarHeader className="pt-0 group-data-[collapsible=icon]:pt-3 max-md:pt-2">
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild
               size="lg"
               tooltip="Mememio"
-              className={NAV_ITEM_SIZE}
+              // `justify-center` 只在窄栏下加：`size="lg"` 那一档的 registry 里写着
+              // `group-data-[collapsible=icon]:p-0!`（**带 `!`**），于是 32px 的方块内边距为 0，
+              // 图形 LOGO 贴死左沿——实测中心 16，而同栏里每一个导航图标都是 24。
+              // 不跟那个 `!important` 硬碰（两条 `!` 规则比的是源码顺序，不稳），换 `justify-content`。
+              className={cn(NAV_ITEM_SIZE, 'group-data-[collapsible=icon]:justify-center')}
               onClick={closeDrawer}
             >
-              <Link to="/">
-                <GalleryVerticalEnd />
-                <span className="truncate font-semibold">Mememio</span>
+              <Link to="/" aria-label="Mememio">
+                {/* 图形 + 文字两颗 LOGO 替代了原来的通用图标 + 文字（2026-09-22）。
+                    源文件在仓库根（`MeMeMio-LOGO.svg` / `MeMeMio-TEXT.svg`），这里是它的副本；
+                    深色那一份由它换色得到（配方写在 `web/agents/rules/styling.md`），
+                    设计师改图时四份要一起换。
+
+                    两颗都 `alt=""` + 链接上 `aria-label`：窄栏下文字 LOGO 是 `hidden`，
+                    名字若靠图的 alt 给，收起来就没了。
+
+                    尺寸跟着 registry 的图标位走：`[&_svg]:size-4` 只管 svg，
+                    `<img>` 得自己写；窄栏（`collapsible=icon`）是 32×32 的方块，取 16。
+
+                    ## 为什么是 `<picture>` 而不是 `dark:invert`（2026-09-22 换掉）
+
+                    原来靠 `filter: invert(1)` 反色，两处不对：字腔那两条 `#FEFDF9` 是
+                    **故意画的「透底」**（应当露出侧栏底色），反色后变成近黑，而深色侧栏是
+                    `oklch(0.205 0 0)` = `#171717`；favicon 也没有深色变体。
+
+                    SVG 走 `<img>` 时取不到页面的 `currentColor`，而**在 SVG 文件里写
+                    `@media (prefers-color-scheme: dark)` 是 WebKit 上不生效的**
+                    （Safari 不把宿主页的配色传给图片文档），深色下会变成深底上的深 logo——
+                    不是不好看，是看不见。所以备了两份文件、由 `<picture>` 在**页面这一侧**
+                    挑（`<source media>` 是页面求值的，各浏览器一致），既不进 JS 包，
+                    又只下载用到的那一份。
+
+                    `display: contents` 让 `<picture>` 自己不生成盒子：它是 inline 元素，
+                    留着会多一个行盒，整行一起漂（`ImageViewer` 那次记过同样的坑）。
+                    `group-data-[collapsible=icon]:hidden` 因此挪到 `<picture>` 上。 */}
+                <picture className="contents">
+                  <source srcSet="/mememio-mark-dark.svg" media="(prefers-color-scheme: dark)" />
+                  <img
+                    src="/mememio-mark.svg"
+                    alt=""
+                    className="size-5 shrink-0 group-data-[collapsible=icon]:size-4"
+                  />
+                </picture>
+                <picture className="contents group-data-[collapsible=icon]:hidden">
+                  <source
+                    srcSet="/mememio-wordmark-dark.svg"
+                    media="(prefers-color-scheme: dark)"
+                  />
+                  <img src="/mememio-wordmark.svg" alt="" className="h-4 w-auto shrink-0" />
+                </picture>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -143,8 +202,15 @@ export function AppSidebar() {
           {/*
             `User` 里没有邮箱和昵称（`lib/api.ts` 的 `User` 只有 id / role / 配额 / 创建时间），
             所以这里只显示角色，不编一个用户名出来。
+
+            角色用**描边/实底**区分（2026-09-22 产品负责人定：管理员用 `default`、成员用
+            `outline`），不是靠颜色深浅：`secondary` 对两个角色是一模一样的灰，扫一眼分不出
+            自己是什么身份。深浅在同一块底色上也容易被当成「选中/未选中」。
           */}
-          <Badge variant="secondary" className="mx-2 group-data-[collapsible=icon]:hidden">
+          <Badge
+            variant={user.role === 'admin' ? 'default' : 'outline'}
+            className="mx-2 group-data-[collapsible=icon]:hidden"
+          >
             {user.role === 'admin' ? '管理员' : '成员'}
           </Badge>
           <SidebarMenu>

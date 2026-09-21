@@ -130,7 +130,7 @@ export function MemeActions({
 
   return (
     // data-actions-for 是给「编辑侧边栏关闭后把焦点交回来」用的查询目标，
-    // 和搜索页用 [data-index] 找回卡片是同一种做法。见 routes/browse.tsx 的 closeEditor。
+    // 和搜索页用 [data-index] 找回卡片是同一种做法。见 features/browse/use-browse-actions.ts 的 closeEditor。
     <div data-actions-for={target.id}>
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
@@ -150,7 +150,9 @@ export function MemeActions({
             size="icon"
             data-actions-trigger
             aria-label="图片操作"
-            className={cn(OVERLAY_BTN, 'size-8 max-sm:size-11')}
+            // 鼠标 32 / 手指 44，与 MemeCard 的收藏按钮同一条闸门（`pointer-coarse`，
+            // 不是 `max-sm`：那个把「窄窗口」当成「手机」，两种都判错）。
+            className={cn(OVERLAY_BTN, 'size-8 pointer-coarse:size-11')}
           >
             <MoreHorizontal className="size-4" />
           </Button>

@@ -42,6 +42,10 @@ function toggleValue(selected: string[], options: string[], value: string): stri
  * 而 `styles.css` 里那条窄屏触摸规则只覆盖了菜单项和面板关闭按钮——手机上这一屏标签
  * 全都低于 44（styling.md「至少 44×44px」，而且明写「没有例外」）。代价是三个分区变长，
  * 面板本来就能滚，所以不亏。
+ *
+ * 2026-09-22 那条闸门改成按**指针**分档（`lib/touch.ts`）：chip 在手指那一档仍是 44，
+ * 鼠标那一档是 32。所以桌面筛选栏比迁移那天短了约三成——这是产品负责人要的，
+ * 「所有的标签、按钮都太大了」那段话里的主角就是这 163 个 chip。
  */
 export function VocabPicker({
   title,
@@ -75,7 +79,17 @@ export function VocabPicker({
               // fieldset 的 disabled 已经让这些按钮在功能上被禁用（`:disabled` 会匹配到），
               // 这一个是为了让**视觉状态**不依赖那条容易忘的规则。
               disabled={disabled}
-              className={cn(TOUCH, 'rounded-full px-3')}
+              /*
+               * `cursor-pointer` 得自己写：Tailwind v4 起不再给 `<button>` 加 `cursor: pointer`
+               * （styling.md），而**可点的元素才给 pointer**——`disabled` 时不给，光标是
+               * 「点了会有事发生」的承诺。
+               *
+               * 它在浏览器里的落点在浏览页的筛选 chip 上：那一条 `cursor: pointer` 原先来自
+               * `styles.css` 的 `.browse__tag-btn`，2026-09-22 那页迁到 Tailwind 时随 BEM 一起
+               * 删掉了。放在这里而不是各调用点：同一组 chip 在编辑侧边栏里也要有同样的光标
+               * （它以前是箭头，那不是有意设计的差别）。
+               */
+              className={cn(TOUCH, 'rounded-full px-3', !disabled && 'cursor-pointer')}
               onClick={() => onChange(toggleValue(selected, options, opt))}
             >
               {opt}

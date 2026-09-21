@@ -171,10 +171,13 @@ export function MemeCard({
           onClick={() => onFavorite(meme)}
           aria-label={meme.favorited ? '取消收藏' : '收藏'}
           aria-pressed={meme.favorited}
-          // 桌面 32、窄屏 44：桌面用鼠标点，32 不至于把 160px 宽的格子压掉一块。
+          // 鼠标 32、手指 44：前者不至于把 160px 宽的格子压掉一块，后者按得准。
+          // 闸门是**指针**不是宽度（`size-8 max-sm:size-11` 是 2026-09-22 之前那一版）：
+          // 窄窗口不一定是手机（700px 的桌面窗口白扛一个 44 的方块），
+          // 而 700px 宽的手机反而落不进 `max-sm`。同 `lib/touch.ts` 那条。
           className={cn(
             OVERLAY_BTN,
-            'absolute right-1.5 bottom-1.5 z-10 size-8 max-sm:size-11',
+            'absolute right-1.5 bottom-1.5 z-10 size-8 pointer-coarse:size-11',
             REVEAL_ON_HOVER,
           )}
         >
