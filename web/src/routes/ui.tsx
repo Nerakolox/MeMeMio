@@ -118,13 +118,15 @@ function Section({
   )
 }
 
+// 参照页的容器直接用 Card 本体——这一页就是给人看「主题下的组件长什么样」，
+// 手搓一个仿卡片就等于绕过被测对象。见 web/agents/rules/styling.md
 function DemoCard({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border bg-card text-card-foreground shadow-sm">
-      <div className="flex min-h-[120px] flex-wrap items-center justify-center gap-3 p-6">
+    <Card>
+      <CardContent className="flex min-h-[120px] flex-wrap items-center justify-center gap-3">
         {children}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -138,7 +140,8 @@ export function UiPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">组件</h1>
         <p className="text-muted-foreground">
-          shadcn/ui 组件库参照页 —— new-york + zinc 主题，与官网同款样式。
+          shadcn/ui 组件库参照页 —— 组件层 radix-luma，主题与圆角见 src/index.css
+          （自调 preset b1VlIttI，2026-09-21 从 new-york + Tailwind v3 迁来）。
         </p>
       </div>
 
@@ -340,7 +343,7 @@ export function UiPage() {
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button variant="outline" size="icon">
+                    <Button variant="outline" size="icon" aria-label="通知">
                       <Bell className="h-4 w-4" />
                     </Button>
                   </TooltipTrigger>

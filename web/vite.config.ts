@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
@@ -6,7 +7,9 @@ const shared = fileURLToPath(new URL('../shared', import.meta.url))
 const src = fileURLToPath(new URL('./src', import.meta.url))
 
 export default defineConfig({
-  plugins: [react()],
+  // Tailwind v4 走 vite 插件，没有 postcss.config.js、也没有 tailwind.config.js：
+  // 主题整块在 src/index.css 的 @theme 里。见 web/agents/rules/styling.md
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       // 词表主源在仓库根的 shared/，web 在**编译期**把它打进产物。

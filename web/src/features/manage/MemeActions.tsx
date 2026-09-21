@@ -1,6 +1,17 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
+import { cn } from '../../lib/utils'
 import { SEND_LABELS, detectSendPath, type SendTarget } from '../../lib/clipboard'
+
+/**
+ * 「⋯」按钮的底座。它压在图上的任意位置，底下是什么颜色的图不知道，
+ * 所以只有自带对比度的深色玻璃底才在两极都读得出来（浅色按钮压在白底表情包上会消失）。
+ *
+ * 原先这份常量住在 `components/MemeCard.tsx`，那份卡片层已随 2026-09-21 的样式返工删掉，
+ * 常量跟着唯一的使用者搬到这里。触屏给 44×44 的触摸目标（styling.md）。
+ */
+const OVERLAY_BTN =
+  'flex items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 max-sm:h-11 max-sm:w-11'
 
 /**
  * 卡片右上角的「⋯」操作入口。
@@ -100,11 +111,13 @@ export function MemeActions({
   return (
     // data-actions-for 是给「编辑面板关闭后把焦点交回来」用的查询目标，
     // 和搜索页用 [data-index] 找回卡片是同一种做法。
-    <div className="meme-card__actions" data-actions-for={target.id} ref={rootRef}>
+    // 定位和显隐由调用方那一层负责（它是绝对定位的浮层，见 browse.tsx 的网格单元），
+    // 这里只做弹层的锚点。
+    <div className="relative" data-actions-for={target.id} ref={rootRef}>
       <button
         ref={triggerRef}
         type="button"
-        className="meme-card__actions-btn flex h-9 w-9 items-center justify-center rounded-full border bg-card text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+        className={cn('h-8 w-8 cursor-pointer', OVERLAY_BTN)}
         aria-haspopup="true"
         aria-expanded={open}
         aria-label={open ? '收起图片操作' : '图片操作'}

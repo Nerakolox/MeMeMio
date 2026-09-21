@@ -1,66 +1,123 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/inter';
 
 /*
- * shadcn/ui 主题（new-york + zinc，官网同款）。色值是 HSL 三元组（h s% l%），
- * 组件只引用语义 token（--primary 等），不写死 HEX —— 与仓库「token 优先」一致。
- * 深色走 prefers-color-scheme（styling.md），不用 .dark class、不做手动切换开关。
+ * shadcn/ui 主题：用户自调的 preset b1VlIttI / --base radix（2026-09-21）。
+ * 本节逐字来自该 preset 的产出（`npx shadcn init --preset b1VlIttI`），
+ * 只动了两处，都是**本项目约定**要求，不是偏好：
+ *
+ * 1. **深色走系统偏好，不做手动切换开关**（styling.md「深色模式」）。
+ *    preset 生成的是 `.dark` class 变体，这里因此**不写** `@custom-variant dark`——
+ *    Tailwind v4 的 `dark:` 默认就是 `@media (prefers-color-scheme: dark)`，
+ *    恰好就是我们要的；深色 token 从 `.dark {}` 搬进媒体查询。
+ *    组件里所有 `dark:` 前缀因此不用改一个字。
+ *
+ * 2. `--chart-*` / `--sidebar-*` 没抄：这 25 个组件里零引用（已逐份 grep 过），
+ *    抄了只是十行够不着的死声明。哪天真拉到用它们的组件（图表、侧栏），
+ *    连带 `@theme inline` 里的两行一起补。
+ *
+ * 另外两件容易被当成「可有可无」的东西，其实是硬依赖：
+ * - `shadcn/tailwind.css`：25 个组件里 18 个用了它定义的 `data-open:` / `data-closed:` /
+ *   `data-checked:` / `data-disabled:` / `data-horizontal:` 等变体，v4 本体不提供这些名字。
+ *   漏掉不报错，表现是弹层动画没了、勾选态不显示、滑块方向错。
+ * - `tw-animate-css`：`animate-in` / `fade-in-0` / `zoom-in-95` 这些类来自它
+ *   （v3 时代那块 `tailwindcss-animate` 的替代），弹层进出场靠它。
  */
-@layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 10% 3.9%;
-    --radius: 0.5rem;
-  }
 
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --background: 240 10% 3.9%;
-      --foreground: 0 0% 98%;
-      --card: 240 10% 3.9%;
-      --card-foreground: 0 0% 98%;
-      --popover: 240 10% 3.9%;
-      --popover-foreground: 0 0% 98%;
-      --primary: 0 0% 98%;
-      --primary-foreground: 240 5.9% 10%;
-      --secondary: 240 3.7% 15.9%;
-      --secondary-foreground: 0 0% 98%;
-      --muted: 240 3.7% 15.9%;
-      --muted-foreground: 240 5% 64.9%;
-      --accent: 240 3.7% 15.9%;
-      --accent-foreground: 0 0% 98%;
-      --destructive: 0 62.8% 30.6%;
-      --destructive-foreground: 0 0% 98%;
-      --border: 240 3.7% 15.9%;
-      --input: 240 3.7% 15.9%;
-      --ring: 240 4.9% 83.9%;
-    }
+@theme inline {
+  --font-sans: 'Inter Variable', sans-serif;
+  --font-heading: var(--font-sans);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /*
+   * 圆角是**乘法**刻度，不是 `--radius - 2px` 那套加减。
+   * 这是 radix-luma 与 new-york 观感差最明显的一处：同样 --radius: 0.625rem，
+   * 按钮走 `rounded-4xl` 得到 ≈26px，加减法那套只给 8px。
+   */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --radius: 0.625rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
   }
 }
 
 @layer base {
   * {
-    @apply border-border;
+    @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
+  }
+
+  html {
+    @apply font-sans;
   }
 }

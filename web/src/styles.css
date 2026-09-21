@@ -1,6 +1,10 @@
 :root {
   color-scheme: light dark;
-  font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  /*
+   * 字体不在这里定：`--font-sans`（Inter Variable）由 index.css 的 `@theme` 定义、
+   * 在 `@layer base` 里落到 `html`。这份 styles.css 是**无层**样式，无层胜过分层，
+   * 这里再写一条 `font-family` 会静默盖掉主题里的字体。
+   */
   line-height: 1.6;
 }
 
@@ -251,36 +255,7 @@ body {
   font-family: monospace;
 }
 
-/* Meme card */
-
-.meme-card {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.meme-card--skeleton {
-  aspect-ratio: 1;
-}
-
-.meme-card__footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  flex-wrap: wrap;
-}
-
-.meme-card__status-badge,
-.meme-card__animated-badge {
-  font-size: 0.7em;
-  padding: 1px 4px;
-}
-
-.meme-card__fav-btn {
-  margin-left: auto;
-  cursor: pointer;
-}
+/* Meme card 的外形全部在 `components/MemeCard.tsx`（含 MemeActions 的入口按钮），无遗留类。 */
 
 /* ---- Search page (/) ---- */
 
@@ -352,12 +327,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-
-/* 键盘选中态：当前阶段不写装饰样式，用轮廓表示选中（styling.md） */
-.meme-card--selected {
-  outline: 2px solid currentColor;
-  outline-offset: 2px;
 }
 
 .search__card-action {
@@ -448,30 +417,7 @@ body {
 }
 
 /* ---- 图片操作：卡片上的「⋯」与它的弹层 ---- */
-
-/*
- * 入口浮在缩略图右上角，所以它得脱出文档流。
- * 卡片是 flex 列容器，absolute 的兄弟节点不占位——不会把图往下挤。
- */
-.meme-card__actions {
-  position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 10;
-}
-
-/*
- * 卡片默认 overflow: hidden，会把从边缘探出去的弹层裁掉。
- * 只给带操作的卡片（浏览页）放开——搜索页与图墙的卡片保持原样。
- */
-.meme-card--with-actions {
-  position: relative;
-  overflow: visible;
-}
-
-.meme-card__actions-btn {
-  cursor: pointer;
-}
+/* 入口的位置与显隐在 components/MemeCard.tsx（浮层那一层），这里只剩弹层本身。 */
 
 .manage-popover {
   position: absolute;
@@ -699,13 +645,8 @@ body {
  */
 @media (max-width: 640px) {
   .manage-popover__item,
-  .meme-card__actions-btn,
   .manage-panel__close {
     min-height: 44px;
-  }
-
-  .meme-card__actions-btn {
-    min-width: 44px;
   }
 
   .manage-panel {

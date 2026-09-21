@@ -11,7 +11,7 @@ import { TaggingSummary } from './TaggingSummary'
  *
  * `ok` 不列：它是绝大多数，要看全部去浏览页。
  * `refused` 不列：它要求主副通道都被拒绝，而副通道尚未接入（SPEC §6.6.2 仍是 `proposed`），
- * 所有终局失败都落 `needs_manual`——文案仍按四个取值全量映射（MemeCard 角标），
+ * 所有终局失败都落 `needs_manual`——文案仍按四个取值全量映射（卡片角标），
  * 但**不为一个当前不可达的状态做单独的交互**。
  */
 const LIST_STATUSES = ['pending', 'needs_manual']

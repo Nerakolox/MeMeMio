@@ -6,8 +6,31 @@
 
 - 组件从 shadcn 拉进仓库，落在 `src/components/ui/`，底层原语是 Radix。新组件用
   `npx shadcn add` 拿，再按项目约定改，不把它当黑盒依赖。
-- 主题是 new-york + zinc，颜色/圆角/阴影全部走 `src/index.css` 里的 CSS 变量 token
-  （`--primary` 等 HSL 三元组），**组件与页面只引用语义 token，不写死 HEX**。
+- 主题是**自调的 shadcn preset `b1VlIttI`**（2026-09-21 换掉 new-york + zinc 默认值），
+  颜色/圆角/阴影全部走 `src/index.css` 里的 CSS 变量 token（`--primary` 等 **oklch** 值），
+  **组件与页面只引用语义 token，不写死 HEX**。
+- **样式载体是 Tailwind v4**（2026-09-21 从 v3.4 迁上来，见[该次任务](../../../joint-tasks/2026-09-21-web-tailwind-v4-radix-luma.md)）。
+  没有 `tailwind.config.js`、没有 `postcss.config.js`：主题整块在 `src/index.css` 的
+  `@theme inline` 里，构建走 `@tailwindcss/vite`。加 token 就在那两处加，别去找配置文件。
+- **token 存完整色值**（`--primary: oklch(0.205 0 0)`），`@theme inline` 用
+  `--color-primary: var(--primary)` 映射成工具类。不要写 v3 那套「裸分量 + `<alpha-value>`
+  占位符」——那是为了在 v3 里凑出透明度修饰符，v4 原生支持，写成裸分量反而解析不出颜色。
+- **组件层是 `radix-luma`**（`components.json` 的 `style`）。它和旧的 `new-york` 不是一套
+  东西：圆角是乘法刻度（`rounded-4xl` = `--radius × 2.6`）、按钮是药丸形、destructive 是
+  浅底红字，组件代码里用 `data-open:` / `data-checked:` 这类变体。**这些变体来自
+  `shadcn/tailwind.css`**，所以 `index.css` 里对它的 `@import` 删不得——删了不报错，
+  表现是弹层没动画、勾选态不显示。
+- **深色不写 `@custom-variant dark`**：v4 的 `dark:` 默认就是 `prefers-color-scheme`，
+  正合本项目约定（见下「深色模式」）。preset 产出的是 `.dark` class 版，抄的时候别抄那行。
+- **本端还跑 React 18，radix-luma 是按 React 19 写的——自己写的组件要当 `asChild` 子节点时
+  必须 `forwardRef`。** React 19 里 `ref` 是普通 prop，注册表组件一律不写 `forwardRef`，
+  靠 `{...props}` 透传；React 18 里 `ref` 不进 props，这么写的组件**会把 ref 静默丢掉**
+  （生产构建不报警；dev 模式报 `Function components cannot be given refs`）。丢在最要命的地方：
+  `PopoverTrigger` / `DropdownMenuTrigger` / `TooltipTrigger` 用 `asChild` 包我们的 `Button` 时，
+  popper 拿不到触发器 ref 就没有锚点，`useFloating` 静默早退，**弹层永远停在未定位的
+  `translate(0, -200%)`（跑到视口外）**，顺带被 Radix 内联 `animation: none` 压掉进场动画。
+  本次已给 `button.tsx` / `badge.tsx` 加 `forwardRef`；**新拉的组件或新写的可组合组件同样要加**。
+  升 React 19 可根治，但那要能回归业务页，目前不具备条件。
 - 不混用：现有页面的 BEM 全局样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前
   允许并存，但**新增代码一律写 Tailwind utility + shadcn 组件**，不再往 `styles.css`
   追加新的手写装饰。迁移是单独任务，不在引入 shadcn 这一次里做。

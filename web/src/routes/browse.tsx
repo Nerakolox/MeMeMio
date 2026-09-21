@@ -11,10 +11,10 @@ import {
 } from '../lib/api'
 import { sendMeme, sendNote, type SendTarget } from '../lib/clipboard'
 import { useAuth } from '../contexts/auth'
-import { MemeCard } from '../components/MemeCard'
+import { Heart } from 'lucide-react'
 import { MemeActions } from '../features/manage/MemeActions'
 import { MemeEditPanel } from '../features/manage/MemeEditPanel'
-import { TAG_STATUS_LABELS } from '../lib/tag-status'
+import { TAG_STATUS_LABELS, tagStatusLabel } from '../lib/tag-status'
 import { emotionOptions, sceneOptions, tagOptions } from '../lib/vocab'
 
 /** 操作反馈：复制/下载的结果、删除失败等。一条就够，不堆历史。 */
@@ -316,7 +316,11 @@ export function BrowsePage() {
         {!initialDone && loading && (
           <div className="browse__grid">
             {Array.from({ length: 12 }).map((_, i) => (
-              <div key={i} className="meme-card meme-card--skeleton" aria-hidden="true" />
+              <div
+                key={i}
+                aria-hidden="true"
+                className="aspect-square animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
+              />
             ))}
           </div>
         )}
@@ -414,12 +418,46 @@ type BrowseMasonryItem = {
 
 function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
   const { meme } = data
+  // 按 width/height 先占住高度：瀑布流的格子是绝对定位的，图片晚于布局到达，
+  // 不占位的话每张图 onLoad 都会把下面整列推乱。width/height 为 null（旧数据 / 探测失败）兜底 1/1。
+  // 整张展示、不裁方——表情包的信息常在边缘，裁掉之后用户认不出这是哪张（styling.md「图片网格」）。
+  const ratio =
+    meme.width != null && meme.height != null && meme.width > 0 && meme.height > 0
+      ? `${meme.width} / ${meme.height}`
+      : '1 / 1'
+
   return (
-    <MemeCard
-      meme={meme}
-      variant="natural"
-      onFavorite={data.favorite}
-      actions={
+    <div className="relative">
+      <img
+        className="w-full rounded-lg bg-muted object-contain"
+        style={{ aspectRatio: ratio }}
+        src={meme.thumbUrl ?? meme.url}
+        alt={meme.description ?? meme.originalFilename ?? meme.id}
+        loading="lazy"
+        width={meme.width ?? undefined}
+        height={meme.height ?? undefined}
+      />
+
+      {(meme.tagStatus !== 'ok' || meme.isAnimated) && (
+        <div className="pointer-events-none absolute left-1.5 right-12 top-1.5 z-10 flex flex-wrap gap-1">
+          {meme.tagStatus !== 'ok' && (
+            <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
+              {tagStatusLabel(meme.tagStatus)}
+            </span>
+          )}
+          {meme.isAnimated && (
+            <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold leading-none tracking-wide text-white backdrop-blur-sm">
+              GIF
+            </span>
+          )}
+        </div>
+      )}
+
+      {/*
+        「⋯」是浏览页唯一的删除 / 编辑 / 发送入口。它是绝对定位的浮层，不占布局，
+        弹层因此能探出图片边界——上一版卡片层要专门放开 overflow 才做得到，这里天然成立。
+      */}
+      <div className="absolute right-1.5 top-1.5 z-10">
         <MemeActions
           target={meme}
           canDelete={data.canDelete}
@@ -429,8 +467,18 @@ function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
           onEdit={data.edit}
           onDelete={() => void data.remove()}
         />
-      }
-    />
+      </div>
+
+      <button
+        type="button"
+        onClick={data.favorite}
+        aria-label={meme.favorited ? '取消收藏' : '收藏'}
+        aria-pressed={meme.favorited}
+        className="absolute bottom-1.5 right-1.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 max-sm:h-11 max-sm:w-11"
+      >
+        <Heart className="h-4 w-4" fill={meme.favorited ? 'currentColor' : 'none'} />
+      </button>
+    </div>
   )
 }
 

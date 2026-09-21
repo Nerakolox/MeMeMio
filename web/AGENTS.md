@@ -40,8 +40,10 @@ Hono RPC 直接消费 `api` 导出的类型，**没有代码生成步骤，不�
 
 ## 5. 样式
 
-**组件库：shadcn/ui（new-york + zinc），样式载体：Tailwind**（2026-09-19 定稿）。
-「只做布局、不做视觉装饰」的阶段约束随这次定稿结束，视觉风格跟 shadcn 默认主题落地。
+**组件库：shadcn/ui（组件层 `radix-luma`），样式载体：Tailwind v4**（2026-09-19 定稿；
+2026-09-21 换成自调 preset `b1VlIttI`、同时从 Tailwind v3.4 迁到 v4，
+见 [styling.md](agents/rules/styling.md)）。
+「只做布局、不做视觉装饰」的阶段约束随这次定稿结束，视觉风格跟主题 token 落地。
 
 - 新组件从 shadcn 拉，落在 `src/components/ui/`，底层是 Radix 原语；颜色/圆角/阴影
   走 `src/index.css` 的 CSS 变量 token，只引用语义 token、不写死 HEX。

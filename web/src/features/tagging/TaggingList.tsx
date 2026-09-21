@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Heart } from 'lucide-react'
 import { ApiError, fetchMemes, toggleFavorite, type Meme } from '../../lib/api'
-import { MemeCard } from '../../components/MemeCard'
+import { tagStatusLabel } from '../../lib/tag-status'
 
 /**
  * 空状态的文案。`needs_manual` 为 0 **是好事**，所以要说清「为什么这里是空的」——
@@ -60,7 +61,11 @@ export function TaggingList({ status }: { status: string }) {
     return (
       <div className="tagging__grid" aria-busy="true">
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="meme-card meme-card--skeleton" aria-hidden="true" />
+          <div
+            key={i}
+            aria-hidden="true"
+            className="aspect-square animate-pulse rounded-lg bg-muted motion-reduce:animate-none"
+          />
         ))}
       </div>
     )
@@ -89,8 +94,43 @@ export function TaggingList({ status }: { status: string }) {
   return (
     <>
       <div className="tagging__grid">
+        {/* ⚠️ 2026-09-21 起这里是**裸图**（同 DiscoverWall）：卡片层随样式返工删掉了。
+            角标必须留——这个列表的用途就是**看哪张卡在哪个状态上**，
+            没了角标这张图等于没信息（styling.md「状态的视觉表达」）。 */}
         {items.map((meme) => (
-          <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
+          <div key={meme.id} className="relative">
+            <img
+              className="aspect-square w-full rounded-lg bg-muted object-cover"
+              src={meme.thumbUrl ?? meme.url}
+              alt={meme.description ?? meme.originalFilename ?? meme.id}
+              loading="lazy"
+              width={meme.width ?? undefined}
+              height={meme.height ?? undefined}
+            />
+            {(meme.tagStatus !== 'ok' || meme.isAnimated) && (
+              <div className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex flex-wrap gap-1">
+                {meme.tagStatus !== 'ok' && (
+                  <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-medium leading-none text-white backdrop-blur-sm">
+                    {tagStatusLabel(meme.tagStatus)}
+                  </span>
+                )}
+                {meme.isAnimated && (
+                  <span className="rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold leading-none tracking-wide text-white backdrop-blur-sm">
+                    GIF
+                  </span>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleFavorite(meme)}
+              aria-label={meme.favorited ? '取消收藏' : '收藏'}
+              aria-pressed={meme.favorited}
+              className="absolute bottom-1.5 right-1.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-sm transition-colors hover:bg-black/85 max-sm:h-11 max-sm:w-11"
+            >
+              <Heart className="h-4 w-4" fill={meme.favorited ? 'currentColor' : 'none'} />
+            </button>
+          </div>
         ))}
       </div>
 
