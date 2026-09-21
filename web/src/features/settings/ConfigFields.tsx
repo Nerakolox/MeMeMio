@@ -1,4 +1,9 @@
+import type { ReactNode } from 'react'
 import type { ConfigInput } from '../../lib/api-config'
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import { Label } from '../../components/ui/label'
+import { TOUCH } from './settings-ui'
 
 /**
  * Base URL / Model / API Key 三个输入框。视觉通道和 Embedding 共用。
@@ -22,15 +27,26 @@ type Props = {
   onChange: (name: keyof ConfigInput, value: string) => void
 }
 
+/** 一行「标签 + 控件」。三行都一样，抽出来免得三处各写一遍 gap。 */
+function Field({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+    </div>
+  )
+}
+
 export function ConfigFields({ idPrefix, fields, maskedApiKey, disabled, onChange }: Props) {
   const keyUnchanged = maskedApiKey !== null && fields.apiKey === maskedApiKey
 
   return (
-    <div className="config-fields">
-      <div className="config-fields__row">
-        <label htmlFor={`${idPrefix}-base-url`}>Base URL</label>
-        <input
+    // 480px：表单比卡片窄一截，输入框拉满整张卡会让人以为要填很长
+    <div className="flex w-full max-w-[30rem] flex-col gap-4">
+      <Field id={`${idPrefix}-base-url`} label="Base URL">
+        <Input
           id={`${idPrefix}-base-url`}
+          className={TOUCH}
           type="url"
           inputMode="url"
           autoComplete="off"
@@ -39,47 +55,52 @@ export function ConfigFields({ idPrefix, fields, maskedApiKey, disabled, onChang
           disabled={disabled}
           onChange={(e) => onChange('baseUrl', e.target.value)}
         />
-      </div>
+      </Field>
 
-      <div className="config-fields__row">
-        <label htmlFor={`${idPrefix}-model`}>Model</label>
-        <input
+      <Field id={`${idPrefix}-model`} label="Model">
+        <Input
           id={`${idPrefix}-model`}
+          className={TOUCH}
           type="text"
           autoComplete="off"
           value={fields.model}
           disabled={disabled}
           onChange={(e) => onChange('model', e.target.value)}
         />
-      </div>
+      </Field>
 
-      <div className="config-fields__row">
-        <label htmlFor={`${idPrefix}-api-key`}>API Key</label>
-        <input
+      <Field id={`${idPrefix}-api-key`} label="API Key">
+        <Input
           id={`${idPrefix}-api-key`}
+          className={TOUCH}
           type="password"
           autoComplete="off"
           value={fields.apiKey}
           disabled={disabled}
           onChange={(e) => onChange('apiKey', e.target.value)}
         />
-        <div className="config-fields__key-state">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           {maskedApiKey === null && <span>未配置</span>}
           {keyUnchanged && (
             <>
-              <span>当前：{maskedApiKey}</span>
-              <button
+              <span>
+                当前：<code className="font-mono">{maskedApiKey}</code>
+              </span>
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                className={TOUCH}
                 disabled={disabled}
                 onClick={() => onChange('apiKey', '')}
               >
                 更换 Key
-              </button>
+              </Button>
             </>
           )}
           {maskedApiKey !== null && !keyUnchanged && <span>将写入新的 Key</span>}
         </div>
-      </div>
+      </Field>
     </div>
   )
 }

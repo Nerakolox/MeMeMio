@@ -55,7 +55,7 @@ function ImportProgressLink() {
  *
  * 顶栏**故意不做 sticky**：它一旦吸顶，`styles.css` 里 `.browse__sidebar` 的 `top: 0`
  * 会让筛选栏滑到它底下，`#invites` 这类锚点的落点也会被它盖住
- * （`.settings-page__block` 的 `scroll-margin-top` 是按当前布局量的）。
+ * （`SettingsCard` 的 `scroll-mt-4` 是按当前布局量的）。
  */
 function AppLayout() {
   return (

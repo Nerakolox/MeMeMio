@@ -46,6 +46,15 @@
   `translate(0, -200%)`（跑到视口外）**，顺带被 Radix 内联 `animation: none` 压掉进场动画。
   本次已给 `button.tsx` / `badge.tsx` 加 `forwardRef`；**新拉的组件或新写的可组合组件同样要加**。
   升 React 19 可根治，但那要能回归业务页，目前不具备条件。
+- ⚠️ **Radix 的折叠高度是「展开那一刻量一次」的快照，展开后再长的内容会被静默裁掉。**
+  `--radix-collapsible-content-height` 由 `useLayoutEffect` 在 `[open, present]` 变化时量一次，
+  **没有 ResizeObserver**；而 `AccordionContent` 的内层 div 是 `h-(--radix-accordion-content-height)`，
+  外面套 `overflow-hidden`。实测（2026-09-21）：展开后往里塞一块 200px 的 div，
+  内层 `scrollHeight` 108 → 292，而 `height` 仍是写死的 `108px`，塞进去的内容只露出 16px
+  ——**不跟高度，也不报错**。所以 `Accordion` / `Collapsible` 里**只能装渲染完就不再变的内容**；
+  结果、进度、异步回来的列表这类会长大的东西，用 `Button aria-expanded` + 条件渲染，
+  或者把滚动交给内容自己（限高 + `overflow-auto`）。
+  设置页的「高级选项」就是被这条否掉的：里面装的正是点了按钮才出现的测试结果。
 - 不混用：现有页面的 BEM 全局样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前
   允许并存，但**新增代码一律写 Tailwind utility + shadcn 组件**，不再往 `styles.css`
   追加新的手写装饰。迁移是单独任务，不在引入 shadcn 这一次里做。
@@ -57,6 +66,15 @@
 所以：**移动优先写样式**，桌面是加宽版本，不是反过来。
 
 触摸目标至少 44×44px。搜索结果卡片在手机上是单手点击的主要目标。
+
+**shadcn 的控件默认全部低于 44**，而且**没有例外**：`Button` / `Input` / `Select` 默认
+`h-9`（36px），`size="sm"` 只有 **32px**，`SelectItem`（下拉里那个选项本身）**36px**。
+「小号」在触摸目标这件事上不存在——设置页一度打算给表格开例外（行数是个位数），
+**实测推翻了**：邀请码的「复制」和用户行的角色选择器正是手机上要用手指点的。
+落点是一个常量 `features/settings/settings-ui.ts` 的 `TOUCH = 'min-h-11'`
+（`min-height` 盖过 `height`，不用改 `size` 变体）。
+`SelectItem` 要**单独**带上：它不在触发器那类的覆盖范围里，漏了的表现是
+「触发器 44，展开后每行又变回 36」。将来迁其余页面时，这条按页面照搬。
 
 **全站导航的落点**：侧边栏导航项的 44px 在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`
 （`min-h-11 group-data-[collapsible=icon]:min-h-8`），不在 `styles.css` 里——那套 `.app__nav`

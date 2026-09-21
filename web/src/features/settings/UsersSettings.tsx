@@ -1,12 +1,34 @@
 import { useEffect, useState } from 'react'
 import { ApiError, fetchAdminUsers, patchAdminUser, type AdminUser } from '../../lib/api'
 import { formatBytes, formatDate } from '../../lib/format'
+import { cn } from '../../lib/utils'
 import { useAuth } from '../../contexts/auth'
+import { Alert, AlertTitle } from '../../components/ui/alert'
+import { Badge } from '../../components/ui/badge'
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../../components/ui/table'
+import { SettingsCard } from './SettingsCard'
+import { TOUCH } from './settings-ui'
 
 /**
  * 设置页 · 用户（仅管理员可见的分段，原 `/admin/users` 整页）。
  *
- * 和 [InviteSettings] 一样，加载态在 `<section>` 内部 —— 锚点 `#users` 要一直在。
+ * 和 [InviteSettings] 一样，加载态在卡片内部 —— 锚点 `#users` 要一直在。
  */
 
 type RowState = {
@@ -81,84 +103,112 @@ export function UsersSettings() {
   }
 
   return (
-    <section className="settings-section">
-      <h2>用户</h2>
-
-      {loading && <p>加载中…</p>}
+    <SettingsCard
+      id="users"
+      title="用户"
+      description="角色决定权限，存储配额决定这个账号能占用多少空间。"
+      action={!loading && !error && <Badge variant="secondary">{users.length} 人</Badge>}
+    >
+      {loading && <p className="text-sm text-muted-foreground">加载中…</p>}
       {error && (
-        <p className="error">
-          {error}
-          {requestId && `（requestId：${requestId}）`}
-        </p>
+        <Alert variant="destructive">
+          <AlertTitle>
+            {error}
+            {requestId && `（requestId：${requestId}）`}
+          </AlertTitle>
+        </Alert>
       )}
 
       {!loading && !error && (
-        <table className="settings-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>用户名</th>
-              <th>角色</th>
-              <th>存储配额</th>
-              <th>已用空间</th>
-              <th>注册时间</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ID</TableHead>
+              <TableHead>用户名</TableHead>
+              <TableHead>角色</TableHead>
+              <TableHead>存储配额</TableHead>
+              <TableHead>已用空间</TableHead>
+              <TableHead>注册时间</TableHead>
+              <TableHead>操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {users.map((u) => {
               const row = rows[u.id]
               const isSelf = u.id === currentUser?.id
               const willLoseSelf = isSelf && row?.role === 'member'
               return (
-                <tr key={u.id}>
-                  <td className="settings-table__mono">{u.id}</td>
-                  <td>{u.name}</td>
-                  <td>
-                    <select
-                      aria-label={`${u.name} 的角色`}
+                <TableRow key={u.id}>
+                  <TableCell className="font-mono text-xs">{u.id}</TableCell>
+                  <TableCell>{u.name}</TableCell>
+                  <TableCell>
+                    <Select
                       value={row?.role ?? u.role}
-                      onChange={(e) =>
-                        setRow(u.id, { role: e.target.value as 'admin' | 'member' })
+                      disabled={row?.saving}
+                      onValueChange={(value) =>
+                        setRow(u.id, { role: value as 'admin' | 'member' })
                       }
                     >
-                      <option value="admin">admin</option>
-                      <option value="member">member</option>
-                    </select>
+                      <SelectTrigger
+                        size="sm"
+                        className={cn(TOUCH, 'w-30')}
+                        aria-label={`${u.name} 的角色`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin" className={TOUCH}>
+                          admin
+                        </SelectItem>
+                        <SelectItem value="member" className={TOUCH}>
+                          member
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                     {willLoseSelf && (
-                      <span className="settings-table__warn"> 降为 member 后将失去管理权限</span>
+                      <p className="mt-1 text-xs text-destructive">降为 member 后将失去管理权限</p>
                     )}
-                  </td>
-                  <td>
-                    <input
+                  </TableCell>
+                  <TableCell>
+                    <Input
                       type="number"
                       aria-label={`${u.name} 的存储配额（字节）`}
                       min={0}
                       value={row?.quotaInput ?? String(u.storageQuotaBytes)}
                       onChange={(e) => setRow(u.id, { quotaInput: e.target.value })}
-                      className="settings-table__quota-input"
+                      className={cn(TOUCH, 'w-32')}
                     />
-                  </td>
-                  <td>{formatBytes(u.storageUsedBytes)}</td>
-                  <td>{formatDate(u.createdAt)}</td>
-                  <td>
-                    <button
+                  </TableCell>
+                  <TableCell>{formatBytes(u.storageUsedBytes)}</TableCell>
+                  <TableCell>{formatDate(u.createdAt)}</TableCell>
+                  <TableCell>
+                    <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
+                      className={TOUCH}
                       disabled={row?.saving}
                       onClick={() => handleSave(u.id)}
                     >
                       {row?.saving ? '保存中…' : '保存'}
-                    </button>
+                    </Button>
+                    {/*
+                      行内的错误用一行小字，不用 Alert：那颗组件是 `px-4 py-3` 的整块，
+                      塞进单元格会把行撑成一张卡，而这里要说清的只有一句话。
+                      role="alert" 保留——保存失败必须被读屏念出来。
+                    */}
                     {row?.error && (
-                      <p className="error settings-table__row-error" role="alert">{row.error}</p>
+                      <p role="alert" className="mt-1 text-xs text-destructive">
+                        {row.error}
+                      </p>
                     )}
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               )
             })}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
-    </section>
+    </SettingsCard>
   )
 }

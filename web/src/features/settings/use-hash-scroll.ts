@@ -31,7 +31,7 @@ export function useHashScroll(hash: string, rootSelector: string) {
     window.addEventListener('keydown', stop)
     /*
      * 点击也算「用户自己动手」（2026-09-21 加）。
-     * 侧边栏折叠会改内容列宽，`.settings-page` 跟着变宽变窄，观察者当作「页面还在长」
+     * 侧边栏折叠会改内容列宽，被观察的根节点跟着变宽变窄，观察者当作「页面还在长」
      * 又把人拽回锚点——而触发折叠的那一下正是点击。pointerdown 早于 click 生效，
      * 鼠标 / 触摸 / 笔一支就够，不用分别监听。
      */
