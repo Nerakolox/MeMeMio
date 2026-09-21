@@ -14,13 +14,21 @@
  *    恰好就是我们要的；深色 token 从 `.dark {}` 搬进媒体查询。
  *    组件里所有 `dark:` 前缀因此不用改一个字。
  *
- * 2. `--chart-*` / `--sidebar-*` 没抄：这 25 个组件里零引用（已逐份 grep 过），
- *    抄了只是十行够不着的死声明。哪天真拉到用它们的组件（图表、侧栏），
- *    连带 `@theme inline` 里的两行一起补。
+ * 2. `--chart-*` 没抄：这 27 个组件里零引用（已逐份 grep 过），
+ *    抄了只是十行够不着的死声明。哪天真拉到用它们的组件（图表），
+ *    连带 `@theme inline` 里的映射一起补。
+ *    `--sidebar-*` 2026-09-21 补上了（换侧边导航那次），照旧只抄**被引用的**六个；
+ *    `--sidebar-primary` / `--sidebar-primary-foreground` 仍然零引用，没抄——
+ *    sidebar.tsx 里 `sidebar-primary` 出现 0 次。将来谁要用，先确认它真的在用。
+ *    这组值不是推出来的，取自注册表的 neutral 主题条目
+ *    （`https://ui.shadcn.com/r/colors/neutral.json` 的 `cssVars`），
+ *    与本节其余 18 个 token 逐字对得上。
  *
  * 另外两件容易被当成「可有可无」的东西，其实是硬依赖：
- * - `shadcn/tailwind.css`：25 个组件里 18 个用了它定义的 `data-open:` / `data-closed:` /
+ * - `shadcn/tailwind.css`：27 个组件里有 16 个用了它定义的 `data-open:` / `data-closed:` /
  *   `data-checked:` / `data-disabled:` / `data-horizontal:` 等变体，v4 本体不提供这些名字。
+ *   （16 是这六个变体加 `data-active:` / `no-scrollbar` 的并集，2026-09-21 重新数过；
+ *   此前写的是 18，那个数复现不出来。）
  *   漏掉不报错，表现是弹层动画没了、勾选态不显示、滑块方向错。
  * - `tw-animate-css`：`animate-in` / `fade-in-0` / `zoom-in-95` 这些类来自它
  *   （v3 时代那块 `tailwindcss-animate` 的替代），弹层进出场靠它。
@@ -48,11 +56,25 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 
   /*
    * 圆角是**乘法**刻度，不是 `--radius - 2px` 那套加减。
    * 这是 radix-luma 与 new-york 观感差最明显的一处：同样 --radius: 0.625rem，
    * 按钮走 `rounded-4xl` 得到 ≈26px，加减法那套只给 8px。
+   *
+   * ⚠️ 这七行**同时**在下面 `:root` 里写了一份，不是重复。
+   * `@theme inline` 的变量**不会输出到 CSS**——`inline` 的意思就是「工具类直接用值，
+   * 不留变量引用」。工具类因此没事（`.rounded-xl{border-radius:calc(var(--radius)*1.4)}`
+   * 是内联进去的），但**组件自己写 `var(--radius-xl)` 就会解析成空**。
+   * sidebar.tsx 的 `SidebarHeader` / `SidebarContent` 正是这么用的
+   * （`[--radius:var(--radius-xl)]`，把整个侧边栏子树的半径抬高一档），
+   * 少了 `:root` 那份，侧边栏里每个圆角都变成 0，而且不报任何错。
    */
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -82,7 +104,26 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
   --radius: 0.625rem;
+
+  /*
+   * 圆角刻度的**运行时**副本，见上面 `@theme inline` 里的说明：
+   * 那边不输出变量，只生成工具类；组件里写 `var(--radius-xl)` 得从这里取。
+   * 值与上面的 `@theme inline` 逐条对应，改一处就要改另一处。
+   */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -105,6 +146,12 @@
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.556 0 0);
   }
 }
 

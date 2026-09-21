@@ -27,6 +27,11 @@ src/features/
 
 `src/components/` 只放**真正跨 feature 复用**的展示组件（按钮、对话框、标签选择器）。判断标准：**被两个以上 feature 用到**。只有一个 feature 用的组件留在那个 feature 里，哪怕它看起来很通用。
 
+> **例外：应用外壳**。`components/AppSidebar.tsx`（侧边导航，2026-09-21 加）不属于任何一个
+> feature——每条路由都挂在它下面（`App.tsx` 的 `AppLayout`）。上面那条「被两个以上 feature 用到」
+> 针对的是 feature 之间的复用，外壳不在这个坐标系里；放回 `App.tsx` 会把那个文件顶过
+> [code-style.md](code-style.md) 的 150 行上限。`components/ui/` 是另一回事（shadcn 拉下来的原语）。
+
 ## `src/lib/`
 
 | 文件 | 内容 |
@@ -35,6 +40,13 @@ src/features/
 | `clipboard.ts` | 复制 / 下载 / 分享的分流，见 [clipboard-share.md](clipboard-share.md) |
 | `vocab.ts` | 读 `shared/vocab/vocab.json`，提供筛选选项 |
 | `format.ts` | 时间、文件大小等纯格式化 |
+| `use-mobile.ts` | `useIsMobile()`，shadcn 的 `sidebar.tsx` 用它决定走桌面栏还是手机抽屉 |
+
+> `use-mobile.ts` 是 `npx shadcn add sidebar` 拉下来的，**落点是 `components.json` 的
+> `aliases.hooks` 决定的**。CLI 默认写 `@/hooks`，那会建出本文件上面明令禁止的
+> 「按类型切的全局 `hooks/` 目录」，所以 2026-09-21 把它改指 `@/lib`——CLI 自己就落在了
+> 这里并 import `@/lib/use-mobile`，不用手改生成出来的源码。**下次拉带 hook 的组件前先看
+> 一眼那行配置还在不在**，它被改回去的表现是仓库里凭空多一个 `src/hooks/`。
 
 **`api.ts` 是唯一发请求的地方。** 组件里不出现 `fetch`。见 [http.md](http.md)。
 

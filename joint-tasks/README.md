@@ -24,7 +24,8 @@
 
 | 任务 | 状态 | 性质 |
 |---|---|---|
-| [迁 Tailwind v4 + radix-luma 组件层](2026-09-21-web-tailwind-v4-radix-luma.md) | `in_progress` | **web 单端**——上一轮只换对了颜色：preset `b1VlIttI` 的 `style` 是 `radix-luma`（不是 `new-york`）、自带 Inter 字体、圆角换算也从加减改成乘法。三层都在，所以「配色像、整体不像」。迁 Tailwind v4 是它的前置；`shadcn/tailwind.css` 是硬依赖（18 个组件靠它定义的 `data-open:` / `data-checked:` 等变体）。代码侧已完成、`/ui` 实测通过，剩业务四页要登录后过一眼才能关单 |
+| [迁 Tailwind v4 + radix-luma 组件层](2026-09-21-web-tailwind-v4-radix-luma.md) | `in_progress` | **web 单端**——上一轮只换对了颜色：preset `b1VlIttI` 的 `style` 是 `radix-luma`（不是 `new-york`）、自带 Inter 字体、圆角换算也从加减改成乘法。三层都在，所以「配色像、整体不像」。迁 Tailwind v4 是它的前置；`shadcn/tailwind.css` 是硬依赖（18 个组件靠它定义的 `data-open:` / `data-checked:` 等变体）。代码侧已完成、`/ui` 实测通过，剩业务四页要登录后过一眼才能关单——**侧边导航那次用 route 打桩在浏览器里渲染了 home / browse / import / settings，四页在外壳里都正常**（见[该任务](2026-09-21-web-sidebar-nav.md)的验收表），但那是渲染证据，不是真接口联调 |
+| [顶部导航换成侧边导航](2026-09-21-web-sidebar-nav.md) | `done` | **web 单端**——把 `App.tsx` 那套手写 `header.app__header > nav.app__nav` 换成 shadcn 的 `Sidebar`（桌面折叠成图标窄栏、手机收成抽屉）。两处结构性理由：`.app__nav a { min-height: 44px }` 是触摸目标契约在代码里的**唯一落点**，随顶部导航一起消失，得有人接住；`.discover__grid` 的断点绑在视口上，侧边栏吃掉 256px 后 768–1150px 视口仍排 5 列、每格 120–140px，必须换成容器查询。踩到三个「漏了不报错」的坑（`--sidebar-*` token 缺失、`@theme inline` 不输出变量导致侧边栏圆角全 0、`TooltipProvider` 缺失直接白屏），并修掉一个 registry 缺陷（手机端点导航后抽屉不收起） |
 | [浏览页图片操作](2026-09-19-browse-meme-actions.md) | `in_progress` | **跨端**——SPEC §6.4 的 `PATCH` / `DELETE` 写在契约里很久但一行没实现，打标失败的图至今没有出路；卡片「⋯」入口给复制 / 编辑 / 删除，编辑开侧边栏。顺带把首页那段临时的「复制地址」换成 `clipboard-share.md` 的真流程 |
 | [浏览页改瀑布流](2026-09-19-browse-masonry.md) | `done` | **web 单端**——浏览页方形网格改瀑布流，按自然宽高比整张展示（不再裁方）；`width/height` 已在响应里、缩略图保比例，故不动 api/SPEC；分页形态已定：保留无限滚动，引 masonry 库（推荐 `masonic`） |
 | [图片承载组件](2026-09-19-meme-image-host.md) | `done` | **web 单端**——`MemeCard` 的裸 `<img>` 抽成 `MemeImage`：按比例占位 / 加载骨架 / 失败兜底文件名 / 深色底 / 动图 hover·点按播放，四页共用；关键事实是缩略图本就是静态首帧，「不自动播放」天然满足 |

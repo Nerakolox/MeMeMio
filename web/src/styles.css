@@ -12,29 +12,8 @@ body {
   margin: 0;
 }
 
-.app__header {
-  padding: 12px 24px;
-  border-bottom: 1px solid rgb(128 128 128 / 30%);
-  font-weight: 600;
-}
-
-.app__header a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.app__main {
-  padding: 24px;
-}
-
 .error {
   color: #c0392b;
-}
-
-.app__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
 }
 
 .auth-page {
@@ -70,28 +49,15 @@ body {
   text-align: center;
 }
 
-.app__nav {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.app__nav a {
-  color: inherit;
-  text-decoration: none;
-}
-
 /*
- * 触摸目标至少 44×44px（styling.md）。导航条上中文链接靠行高凑到了 51px，
- * 拉丁字母的（品牌名、Embedding）只有 26px——同一条导航不该有两种可点尺寸。
- * 390×844 实测出来的，纯尺寸不是装饰。
+ * 顶部导航条（`.app__header` / `.app__nav` / `.app__main`）连同它那条
+ * 「触摸目标 44×44px」的规则一起删掉了（2026-09-21 换 shadcn 侧边导航）。
+ * 那条尺寸要求没有丢，落点在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`，
+ * 连同「为什么中文 51px、拉丁字母 26px」的实测背景一起搬了过去。
+ *
+ * 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
+ * 留着旧选择器会在它们命中新外壳的元素时静默盖掉工具类。
  */
-.app__nav a,
-.app__nav button {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-}
 
 /* 表格类布局。原来在 .admin-page 下，三个管理页并进 /settings 之后跟着改名。 */
 
@@ -349,6 +315,10 @@ body {
   gap: 12px;
   /* 与搜索框拉开：上面是「找」的动作，下面是「翻」的动作 */
   margin-top: 24px;
+  /*
+   * 图墙的列数按**容器**宽度分档，不按视口——见 `.discover__grid` 里的说明。
+   */
+  container-type: inline-size;
 }
 
 .discover__header {
@@ -374,13 +344,20 @@ body {
   gap: 12px;
 }
 
-@media (max-width: 900px) {
+/*
+  下面两档是**容器**查询，不是媒体查询（2026-09-21 换侧边导航时改的）。
+  列数取决于图墙自己有多宽，而加了侧边栏之后「视口宽度」不再是它的宽度：
+  1280px 视口下内容列只有约 976px，768～1150px 这段更是只剩 120～140px 一格，
+  低于下面注释里写的 160px 底线，而媒体查询在那个区间不会触发。
+  容器查询跟着 `.discover`（`container-type: inline-size`）的宽度走。
+*/
+@container (max-width: 900px) {
   .discover__grid {
     grid-template-columns: repeat(3, 1fr);
   }
 }
 
-@media (max-width: 640px) {
+@container (max-width: 640px) {
   .discover__grid {
     /*
       手机 2 列。这里是**降列数、不降张数**：5 列在 390px 上是 70px 一张，
@@ -655,10 +632,6 @@ body {
 }
 
 /* ---- Import page (/import) ---- */
-
-.app__nav-progress {
-  font-size: 0.8em;
-}
 
 .import {
   display: flex;

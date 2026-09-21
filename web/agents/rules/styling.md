@@ -15,6 +15,21 @@
 - **token 存完整色值**（`--primary: oklch(0.205 0 0)`），`@theme inline` 用
   `--color-primary: var(--primary)` 映射成工具类。不要写 v3 那套「裸分量 + `<alpha-value>`
   占位符」——那是为了在 v3 里凑出透明度修饰符，v4 原生支持，写成裸分量反而解析不出颜色。
+- ⚠️ **`@theme inline` 不输出 CSS 变量**——`inline` 的含义就是「工具类直接用值，不留变量引用」。
+  工具类没事（`.rounded-xl{border-radius:calc(var(--radius)*1.4)}` 是内联进去的），
+  但**组件自己写 `var(--radius-xl)` 会解析成空**。所以 `:root` 里另有一份七行圆角刻度的
+  运行时副本，**不是重复**：`sidebar.tsx` 的 `SidebarHeader` / `SidebarContent` 用
+  `[--radius:var(--radius-xl)]` 把整个侧边栏子树的半径抬高一档，少了那份副本，
+  侧边栏里每个圆角都变成 0 且不报任何错。**加 token 时先问一句：有没有组件会写 `var(--它)`，
+  有就两处都加。** 判据可以量：侧边栏菜单项的 `border-radius` 是 19.6px
+  （`0.625rem × 1.4 × 1.4`），是 0 就说明这份副本丢了。
+- **颜色 token 只抄被引用的**。`--chart-*` 至今零引用，没抄；`--sidebar-*` 在换成侧边导航
+  （2026-09-21）时补了 **6 个**（`sidebar` / `sidebar-foreground` / `sidebar-accent` /
+  `sidebar-accent-foreground` / `sidebar-border` / `sidebar-ring`），
+  `--sidebar-primary` / `--sidebar-primary-foreground` 仍零引用，也没抄。
+  **漏一个不报错**——Tailwind v4 对未知的颜色工具类不生成任何东西，`bg-sidebar` 静默失效，
+  侧边栏渲染成全透明。值取自 `https://ui.shadcn.com/r/colors/neutral.json` 的 `cssVars`，
+  不自己推。将来谁要用新的一组，先确认它真的在用。
 - **组件层是 `radix-luma`**（`components.json` 的 `style`）。它和旧的 `new-york` 不是一套
   东西：圆角是乘法刻度（`rounded-4xl` = `--radius × 2.6`）、按钮是药丸形、destructive 是
   浅底红字，组件代码里用 `data-open:` / `data-checked:` 这类变体。**这些变体来自
@@ -42,6 +57,17 @@
 所以：**移动优先写样式**，桌面是加宽版本，不是反过来。
 
 触摸目标至少 44×44px。搜索结果卡片在手机上是单手点击的主要目标。
+
+**全站导航的落点**：侧边栏导航项的 44px 在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`
+（`min-h-11 group-data-[collapsible=icon]:min-h-8`），不在 `styles.css` 里——那套 `.app__nav`
+规则随顶部导航一起删了（2026-09-21）。两处容易踩：
+
+- `SidebarMenuButton` 默认 `h-9`（36px），**低于 44**，每个新加的菜单项都要自己带上
+  `NAV_ITEM_SIZE`，registry 不会替你加。
+- 图标窄栏模式（`data-collapsible=icon`）是**例外**：registry 用 `size-8!` 把按钮压成 32×32 的
+  方块，而 `min-height` 会盖过 `height`（不同属性，`!important` 管不着），所以必须带
+  `group-data-[collapsible=icon]:min-h-8`，否则按钮变成 32 宽 × 44 高的长条。
+  那个形态只在 md 以上出现；手机端拿到的是抽屉里的**展开版**，仍是 44。
 
 ## 图片网格
 
