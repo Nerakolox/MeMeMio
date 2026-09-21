@@ -124,6 +124,19 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /*
+   * 外壳顶栏（`App.tsx` 的 `AppLayout`）的高度。**不是随手写的一个尺寸**：
+   * 顶栏吸顶（2026-09-21）之后，页面里有三处必须「比它低」，都按这个值算——
+   * 顶栏自己（`h-(--app-header-h)`）、`styles.css` 里 `.browse__sidebar` 的 sticky `top`
+   * 与 `max-height`、`SettingsCard` 的 `scroll-mt`。
+   *
+   * 散着写三个 `56px` 不会报错，只会让某天改高度时漏掉一两处，表现是
+   * 「筛选栏滑到顶栏底下」或「锚点被顶栏盖住」——都不是报错，是肉眼才发现得了的错位。
+   * 放 `:root` 而不是 `@theme inline`：`inline` 不输出变量，`var(--app-header-h)` 会解析成空
+   * （同上面圆角刻度那份副本的理由）。
+   */
+  --app-header-h: 3.5rem;
 }
 
 @media (prefers-color-scheme: dark) {

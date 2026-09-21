@@ -79,8 +79,14 @@ body {
   flex-direction: column;
   gap: 16px;
   position: sticky;
-  top: 0;
-  max-height: 100vh;
+  /*
+    落点让给吸顶的外壳顶栏（2026-09-21 顶栏改 sticky）。
+    用 `top: 0` 时筛选栏会滑到顶栏底下——顶栏有实色底，压得住它，所以**不报错，
+    只是筛选栏的上半截看不见了**。高度同理：不减去顶栏，筛选栏底部会伸到视口外。
+    两个值都从 `--app-header-h` 算（`index.css` 的 `:root`），不写死 56px。
+  */
+  top: var(--app-header-h);
+  max-height: calc(100vh - var(--app-header-h));
   overflow-y: auto;
 }
 

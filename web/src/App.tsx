@@ -53,9 +53,19 @@ function ImportProgressLink() {
  * 登录后的外壳。2026-09-21 之前这里是顶部导航条 + `styles.css` 里一组 `.app__*`
  * 规则，现在换成 shadcn 的侧边导航（见 `components/AppSidebar.tsx`）。
  *
- * 顶栏**故意不做 sticky**：它一旦吸顶，`styles.css` 里 `.browse__sidebar` 的 `top: 0`
- * 会让筛选栏滑到它底下，`#invites` 这类锚点的落点也会被它盖住
- * （`SettingsCard` 的 `scroll-mt-4` 是按当前布局量的）。
+ * 顶栏**吸顶**（2026-09-21 改，此前故意不吸顶）：它唯一的常驻内容是折叠按钮，
+ * 而不吸顶时按钮只在页面顶部可见——长页面往下一滚就再也折不动侧边栏了。
+ *
+ * 用 `sticky` 不用 `fixed`：`fixed` 把顶栏抽离文档流，下面那几处偏移量之外还得再补一层
+ * `padding-top`，多一个会漂的量；`sticky` 的高度仍在流内，变的只是它在视口里的位置。
+ *
+ * 吸顶的代价是**三处「比它低」的地方**必须跟着算，全部按 `--app-header-h`
+ * （`index.css` 的 `:root`，吸顶那天为它新加的一个值）：
+ *   · `.browse__sidebar` 的 sticky `top` 与 `max-height`（`styles.css`）
+ *   · `SettingsCard` 的 `scroll-mt`（`#invites` 这类锚点的落点）
+ * 再加上本条自己的高度。顶栏还得压住页面内容，所以 `bg-background` 不能省
+ * ——省了不报错，是内容从顶栏底下透出来。`z-10` 与桌面侧边栏同层（DOM 在后，压得住它），
+ * 且低于 Sheet / Dialog 的 `z-50`——手机端的导航抽屉要盖得住这条顶栏。
  */
 function AppLayout() {
   return (
@@ -66,7 +76,7 @@ function AppLayout() {
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+          <header className="sticky top-0 z-10 flex h-(--app-header-h) shrink-0 items-center gap-2 border-b bg-background px-4">
             <SidebarTrigger className="size-11" />
             {/*
               进度放顶栏而不是侧边栏：手机端（<768px）整条导航收进抽屉，

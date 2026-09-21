@@ -87,6 +87,21 @@
   `group-data-[collapsible=icon]:min-h-8`，否则按钮变成 32 宽 × 44 高的长条。
   那个形态只在 md 以上出现；手机端拿到的是抽屉里的**展开版**，仍是 44。
 
+**顶栏是吸顶的，它占住的 3.5rem 是一个跨文件的尺寸**（2026-09-21 加）。值只有一个落点：
+`src/index.css` 的 `:root` 里 `--app-header-h: 3.5rem`，**不写进 `@theme inline`**
+（`inline` 不输出变量，`var()` 会解析成空，同圆角刻度的坑）。现在有三处引用它：
+
+| 引用点 | 写法 |
+|---|---|
+| 顶栏自己（`App.tsx`） | `h-(--app-header-h)`，另带 `sticky top-0 z-10 bg-background` |
+| `.browse__sidebar`（`styles.css`，无层样式） | `top: var(--app-header-h)` + `max-height: calc(100vh - var(--app-header-h))` |
+| `SettingsCard`（锚点落点） | `scroll-mt-[calc(var(--app-header-h)_+_1rem)]` |
+
+**新写任何「贴视口顶边」的 sticky / 锚点 / `scroll-mt`，先减掉这个值。** 漏了不报错：
+top 写 0 的元素会滑到顶栏底下（顶栏有实色底，压得住它，只是看不见了），
+锚点则会落进顶栏里而 `scrollIntoView()` 照样返回成功。另注：Tailwind 工具类里的
+`calc()` 空格要写成 `_`——`calc(var(--x)_+_1rem)`，写成 `+1rem` 会被浏览器整条丢弃。
+
 ## 图片网格
 
 列表用缩略图，**不加载原图**。一屏几十张原图会把流量打爆。
