@@ -27,6 +27,26 @@ docs(spec): §4 补充标签词表新增流程
 
 小文案修正不新增测试框架。
 
+## 依赖变更
+
+**`web` 与 `api` 的 `hono` 版本必须一致。** `web` 的类型链会把 `api/src/` 一起编译，
+两端版本错开就可能出现「api 自查全绿、`cd web && npm run typecheck` 红」，
+而报错全落在 api 的代码里——看不出是版本问题。
+
+**装包一律不加 `--no-save`。** 那会把新包写进 `node_modules` 却不写 `package.json`
+和 lockfile，下一次任何 `npm install` 都会**重新解析整棵树**，`hono` 因此漂过
+一次（4.13.7 → 4.13.8）并打断了类型链。
+
+装依赖的步骤：
+
+1. 先停掉在跑的 `vite`（dev server 持着 `node_modules` 的文件句柄，装的时候换掉会出怪事）；
+2. `npm install <包>@<确切版本>`，**不带 `--no-save`**；
+3. `git diff <工作区>/package-lock.json` **只看有没有既存条目被改**——正常应该是纯新增；
+4. 两头各读一次 `hono` 版本，应当相同；
+5. `cd web && npm run typecheck`。
+
+**依赖变更单独一个 `chore` 提交**（见开头：不混入功能改动）。
+
 ## 密钥
 
 提交前确认没有把 `.env`、API Key、`CONFIG_ENC_KEY` 或任何真实凭据带进差异。`CONFIG_ENC_KEY` 丢失会导致所有用户配置的 API Key 永久解不开，但**泄露比丢失更糟**——它能解开数据库里全部密钥。
