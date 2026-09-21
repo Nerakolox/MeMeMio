@@ -46,6 +46,10 @@
   `translate(0, -200%)`（跑到视口外）**，顺带被 Radix 内联 `animation: none` 压掉进场动画。
   本次已给 `button.tsx` / `badge.tsx` 加 `forwardRef`；**新拉的组件或新写的可组合组件同样要加**。
   升 React 19 可根治，但那要能回归业务页，目前不具备条件。
+  > 2026-09-21 首页补了第三例：**`input.tsx`**。它中招的地方和弹层不一样——不是没锚点，
+  > 而是 `inputRef.current?.focus()` 里拿到 `null`，**自动聚焦静默不生效**
+  > （dev 报一行 `Function components cannot be given refs`，生产构建里连那行都没有）。
+  > **凡是要拿 DOM 节点的调用点，先确认那个组件包了 `forwardRef`**，别照注册表原样抄。
 - ⚠️ **Radix 的折叠高度是「展开那一刻量一次」的快照，展开后再长的内容会被静默裁掉。**
   `--radix-collapsible-content-height` 由 `useLayoutEffect` 在 `[open, present]` 变化时量一次，
   **没有 ResizeObserver**；而 `AccordionContent` 的内层 div 是 `h-(--radix-accordion-content-height)`，
@@ -58,6 +62,8 @@
 - 不混用：现有页面的 BEM 全局样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前
   允许并存，但**新增代码一律写 Tailwind utility + shadcn 组件**，不再往 `styles.css`
   追加新的手写装饰。迁移是单独任务，不在引入 shadcn 这一次里做。
+  进度：外壳（2026-09-21）、设置页（2026-09-21）、首页（2026-09-21）已迁完；
+  **浏览页、导入页、打标页仍是 BEM**，`styles.css` 里剩下的 `.browse__*` / `.import__*` / `.tagging__*` 是它们的。
 
 ## 移动端不是适配，是主场
 
@@ -75,6 +81,19 @@
 （`min-height` 盖过 `height`，不用改 `size` 变体）。
 `SelectItem` 要**单独**带上：它不在触发器那类的覆盖范围里，漏了的表现是
 「触发器 44，展开后每行又变回 36」。将来迁其余页面时，这条按页面照搬。
+
+首页（2026-09-21 迁移）的四处落点，和设置页一样是**各调用点的 `TOUCH`**，
+`styles.css` 里那四条 `.search__submit` / `.search__card-action` / `.discover__*` 的
+`min-height: 44px` 随迁移一起删了：
+
+| 位置 | 写法 |
+|---|---|
+| 搜索框、提交按钮（`features/search/SearchBar.tsx`） | `Input` / `Button` 上各带 `TOUCH`；提交按钮另带 `min-w-18`（72px，接旧 `min-width`） |
+| 卡片下的发送按钮、错误态的「重试」（`features/search/SearchResults.tsx`） | `cn(TOUCH, …)`，重试那枚另带 `mt-2` |
+| 「换一批」、图墙错误态的「重试」、空库态的「去导入几张」（`features/discover/DiscoverWall.tsx`） | `Button` 上带 `TOUCH`；`variant="link"` 那枚也一样 |
+
+> ⚠️ `size="sm"` **不豁免**：重试与「换一批」都是 `size="sm"`（32px），靠 `TOUCH`
+> 的 `min-height` 顶回来。**实测四页全部是 44**，别再给自己找「这个按钮小一号没关系」的理由。
 
 > 2026-09-21 这个常量从 `features/settings/settings-ui.ts` 搬到了 `lib/`：
 > 卡片、菜单项、编辑面板、词表 chip 同时要用它，**再抄一份就是第二个落点**，
@@ -154,6 +173,51 @@ GPT 图片墙那种）。落点是 `components/MemeCard.tsx` 的 `REVEAL_ON_HOVE
 top 写 0 的元素会滑到顶栏底下（顶栏有实色底，压得住它，只是看不见了），
 锚点则会落进顶栏里而 `scrollIntoView()` 照样返回成功。另注：Tailwind 工具类里的
 `calc()` 空格要写成 `_`——`calc(var(--x)_+_1rem)`，写成 `+1rem` 会被浏览器整条丢弃。
+
+## 响应式：按容器分档，不按视口
+
+**视口宽度不等于内容宽度。** 加了侧边导航之后它差了 256px（桌面折叠成图标窄栏时还要再算），
+而首页的图墙、结果网格都在内容列里。旧 CSS 的断点绑在视口上，768–1150px 视口下每格只剩
+120–140px，**低于这条规则自己写的 160px 底线，而媒体查询在那个区间不触发**（侧边导航那次
+发现，首页迁移时把最后两处也换掉了）。
+
+写法（Tailwind v4，本仓**零先例**，2026-09-21 起）：
+
+```
+容器那一层：  className="@container …"          → container-type: inline-size
+档位：        @max-[900px]:grid-cols-3          → @container (width < 900px)
+```
+
+`DiscoverWall.tsx` 的 `WALL_GRID` 是范本。两个坑：
+
+- **`@max-[900px]:` 生成的是 `<`，不是 `≤`**——与 CSS 的 `max-width: 900px` **只在恰好等于
+  900.00 那一刻不同**。布局宽度几乎取不到整数值，不做小数补偿，但改这两档时要知道有这笔账。
+- **`@container` 那个类删了不报错，下面所有档位查询一起静默失效**（图墙永远 5 列，
+  手机上一格 70px）。它必须落在**既是容器、又真的包住网格**的那一层，别挂在无关的父节点上。
+
+多档之间的先后顺序由**值本身**决定（900 那条一定排在 640 之前，与写的先后无关），
+已核对产物 CSS。改完的判据是**实测列数**，不是读代码：首页图墙在容器 1152 / 976px 时 5 列、
+796 / 696px 时 3 列、596 / 496px 时 2 列。
+
+**窄屏只降列数、不降张数**：少给几张等于让「换一批」在更小的池子里换，和这个按钮的用途正好相反。
+
+## 自动聚焦：只在精确指针设备上做
+
+**`autoFocus` 属性不要用在手机上。** 首页的搜索框一直带 `autoFocus`（为了「打开就能打字」），
+在随机图墙出现之后它变成：**一进首页就弹键盘，把下半屏整个盖住**——而图墙正是「不知道要找什么」
+时唯一的入口，手机又是这个产品的主场。
+
+判据按**输入方式**分流，不按屏幕宽度：
+
+```ts
+useEffect(() => {
+  if (window.matchMedia?.('(pointer: fine)').matches) inputRef.current?.focus()
+}, [])
+```
+
+桌面保留「打开就能打字」（这是搜索页存在的理由），触摸设备不抢焦点——要搜的时候手指本来就在屏幕上。
+与卡片浮层用的是同一条判据（`pointer: fine`），问的都是「有没有一个精确指针」。
+**用 effect 而不是 `autoFocus` 属性**：属性没法带条件。（也因此 `Input` 必须包 `forwardRef`，见上。）
 
 ## 图片网格
 

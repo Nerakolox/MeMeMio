@@ -184,155 +184,20 @@ body {
 
 /* 卡片的外形（含「⋯」入口）全在 components/MemeCard.tsx 与 ui/ 里，这边没有遗留类。 */
 
-/* ---- Search page (/) ---- */
-
-.search {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.search__bar {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-
-.search__input {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 10px 12px;
-  font-size: 1rem;
-}
-
-.search__submit {
-  flex: none;
-  min-width: 72px;
-  min-height: 44px;
-  cursor: pointer;
-}
-
-.search__degraded,
-.search__rewritten,
-.search__copy-note,
-.search__hint {
-  margin: 0;
-}
-
-.search__rewritten,
-.search__copy-note,
-.search__hint {
-  font-size: 0.85em;
-}
-
-.search__error {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.search__request-id {
-  font-size: 0.8em;
-  font-family: monospace;
-  margin: 0;
-}
-
-.search__retry {
-  align-self: flex-start;
-  min-height: 44px;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-.search__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-}
-
-.search__card-action {
-  min-height: 44px;
-  cursor: pointer;
-}
-
-/* Responsive: 手机上缩小网格列宽，卡片仍是单手点击目标 */
-@media (max-width: 640px) {
-  .search__grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  }
-}
-
-/* ---- 首页随机图墙（/ 的「随便看看」） ---- */
-
-.discover {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  /* 与搜索框拉开：上面是「找」的动作，下面是「翻」的动作 */
-  margin-top: 24px;
-  /*
-   * 图墙的列数按**容器**宽度分档，不按视口——见 `.discover__grid` 里的说明。
-   */
-  container-type: inline-size;
-}
-
-.discover__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.discover__refresh {
-  min-height: 44px;
-  padding: 0 12px;
-  cursor: pointer;
-}
-
-.discover__grid {
-  display: grid;
-  /*
-    桌面固定 5 列 × 2 行 = 10 张，不是 auto-fill：用户的预期是「一屏 10 张」，
-    auto-fill 会随窗口宽度忽多忽少，而张数由 WALL_SIZE 定死。
-  */
-  grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
-}
-
 /*
-  下面两档是**容器**查询，不是媒体查询（2026-09-21 换侧边导航时改的）。
-  列数取决于图墙自己有多宽，而加了侧边栏之后「视口宽度」不再是它的宽度：
-  1280px 视口下内容列只有约 976px，768～1150px 这段更是只剩 120～140px 一格，
-  低于下面注释里写的 160px 底线，而媒体查询在那个区间不会触发。
-  容器查询跟着 `.discover`（`container-type: inline-size`）的宽度走。
-*/
-@container (max-width: 900px) {
-  .discover__grid {
-    grid-template-columns: repeat(3, 1fr);
-  }
-}
-
-@container (max-width: 640px) {
-  .discover__grid {
-    /*
-      手机 2 列。这里是**降列数、不降张数**：5 列在 390px 上是 70px 一张，
-      既看不清也点不准（styling.md：触摸目标是 44×44px 起）。
-      手机是这个产品的主场，不为塞满一屏牺牲可点性。
-    */
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.discover__empty,
-.discover__error {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.discover__request-id {
-  margin: 0;
-}
+ * 首页（`/`）的 `.search__*` 与 `.discover__*` 共约 180 行在 2026-09-21 整块迁走：
+ * 搜索框、结果网格、骨架、错误提示、图墙全部换成 shadcn 组件 + Tailwind，
+ * 落在 `features/search/` 与 `features/discover/DiscoverWall.tsx`。
+ *
+ * ⚠️ 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
+ * 留着旧选择器会在它们命中新元素时静默盖掉工具类——比如 `.discover__grid` 那条
+ * `grid-template-columns` 会压住新写的 `@max-[900px]:grid-cols-3`，图墙永远 5 列。
+ * 两件事必须同一个提交落地，不能分两步。
+ *
+ * `.discover` 的 `container-type: inline-size` 换成了 Tailwind 的 `@container` 类，
+ * 值相同（`inline-size`）；那两档容器查询改成 `@max-[900px]:` / `@max-[640px]:`，
+ * 语义见 `DiscoverWall.tsx` 里 `WALL_GRID` 的注释。
+ */
 
 /* Responsive: collapse sidebar on narrow viewports */
 @media (max-width: 640px) {

@@ -13,6 +13,12 @@ src/features/
 └─ settings/     用户设置、管理页
 ```
 
+> `search/` 2026-09-21 落地：`SearchBar.tsx`（`role="search"` 的 form）、`SearchResults.tsx`（五态 +
+> 结果项）、`use-search.ts`（state 机与键盘路径）。**同一个 feature 内部按「一个文件一件事」切，
+> 不按类型切**——那个目录里没有 `components/` / `hooks/`，`use-search.ts` 与两个组件平级。
+> 搬家的动机是 `routes/home.tsx` 涨到 326 行（[code-style.md](code-style.md) 的上限是 150），
+> 而路由文件只该做布局和数据编排。
+
 > `discover/` 是首页下半屏那个随机图墙（2026-09-19 加）。它和 `search/` 同在一页但**不是一回事**：
 > 搜索是「知道要找什么」，图墙是「不知道要找什么」，前者要有结果就渲染、后者要每次换一批。
 > 混进 `search/` 会让那个目录同时装两种意图。接口是 `GET /memes?random=true`
