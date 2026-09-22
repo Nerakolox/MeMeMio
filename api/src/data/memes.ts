@@ -4,6 +4,8 @@ import { db as defaultDb, type Db } from './db.js'
 import { memes, users, userFavorites } from './schema.js'
 import { splitHash } from '../lib/phash.js'
 import { buildSearchText } from '../lib/vision-output.js'
+import type { VocabField } from '../lib/vision-output.js'
+import { VOCAB_FIELDS } from '../vocab.js'
 import { AppError } from '../lib/app-error.js'
 
 /**
@@ -193,13 +195,19 @@ export async function softDeleteMeme(
 // ── 打标写回（SPEC §5.2.3） ────────────────────────────────────────
 
 /**
- * 一次打标的全部产出。**五个字段一次写完**——单次视觉调用产出全部内容，
+ * 一次打标的全部产出。**八个字段一次写完**——单次视觉调用产出全部内容，
  * 没有独立的 OCR 链路（SPEC §5.2.3），也就不存在「先写 ocr_text 再补 description」。
+ *
+ * 六个数组是六个互不推导的维度（SPEC §4.3.1）。它们在这里是平行的，
+ * 这一层不做任何「表情推情绪」的补全——那是打标器的判断，不是数据层的。
  */
 export type TagResult = {
   ocrText: string
   description: string
+  expressions: string[]
   emotions: string[]
+  tones: string[]
+  purposes: string[]
   scenes: string[]
   tags: string[]
   /** 派生字段，由 `lib/vision-output.ts` 的 `buildSearchText` 算。见下方警告。 */
@@ -210,7 +218,7 @@ export type TagResult = {
 /**
  * 写回打标结果。
  *
- * ⚠️ **`search_text` 必须和五个来源字段在同一条 UPDATE 里**（schema 里那句「任一来源变更时
+ * ⚠️ **`search_text` 必须和八个来源字段在同一条 UPDATE 里**（schema 里那句「任一来源变更时
  *    必须重算」）。拆成两条语句的话，中间崩掉就留下一条 search_text 和标签对不上的记录，
  *    而这不报错——只是那张图在文本检索里搜不到或搜出错的东西。**将来的 `PATCH /memes/:id`
  *    改标签时同样要走这个函数，不要在 handler 里手写一遍 UPDATE。**
@@ -230,7 +238,10 @@ export async function applyTagResult(
     .set({
       ocrText: result.ocrText,
       description: result.description,
+      expressions: result.expressions,
       emotions: result.emotions,
+      tones: result.tones,
+      purposes: result.purposes,
       scenes: result.scenes,
       tags: result.tags,
       searchText: result.searchText,
@@ -288,7 +299,7 @@ export async function applyEmbedding(
 // ── 人工编辑（SPEC §6.4.1） ────────────────────────────────────────
 
 /**
- * `PATCH /memes/{id}` 的请求体，**只认这四个字段**。`ocrText` 不在里面（§6.4.1）。
+ * `PATCH /memes/{id}` 的请求体，**只认这七个字段**。`ocrText` 不在里面（§6.4.1）。
  *
  * 键**不出现** = 不改这个字段；`description: null` = 清空描述；`tags: []` = 清空该维度。
  * 三种传法含义不同，所以判据是「键在不在对象里」，不是「值是不是 undefined」。
@@ -297,10 +308,7 @@ export async function applyEmbedding(
  */
 export type MemeContentPatch = {
   description?: string | null
-  emotions?: string[]
-  scenes?: string[]
-  tags?: string[]
-}
+} & Partial<Record<VocabField, string[]>>
 
 /**
  * 写回人工编辑，返回更新后的完整视图（与 `GET /memes/{id}` 同形，SPEC §6.4.1）。
@@ -338,10 +346,7 @@ export async function updateMemeContent(
 ): Promise<MemeView> {
   // 一个字段都没传：不写库、不动 `edited_at`。空 PATCH 不该留下「有人编辑过」的痕迹。
   const touches =
-    patch.description !== undefined ||
-    patch.emotions !== undefined ||
-    patch.scenes !== undefined ||
-    patch.tags !== undefined
+    patch.description !== undefined || VOCAB_FIELDS.some((f) => patch[f] !== undefined)
 
   return await db.transaction(async (tx) => {
     const meme = await findMemeByIdForUpdate(id, tx)
@@ -351,18 +356,18 @@ export async function updateMemeContent(
 
     if (touches) {
       const description = patch.description === undefined ? meme.description : patch.description
-      const emotions = patch.emotions ?? meme.emotions ?? []
-      const scenes = patch.scenes ?? meme.scenes ?? []
-      const tags = patch.tags ?? meme.tags ?? []
+
+      // 六个维度逐个「传了就用传的，没传就留库里的」。遍历 VOCAB_FIELDS 而不是手写六行：
+      // 漏掉一维的表现是那一维改不动，而且 PATCH 会返回 200。
+      const labels = {} as Record<VocabField, string[]>
+      for (const field of VOCAB_FIELDS) labels[field] = patch[field] ?? meme[field] ?? []
 
       // ocr_text 取的**永远是库里那一个**：它不可编辑（§6.4.1），人工改它会让文本和图
       // 不再对应，而 search_text 会忠实转发这个错。要重来只能靠 retag，不是靠手改。
       const searchText = buildSearchText({
         ocrText: meme.ocrText ?? '',
         description: description ?? '',
-        emotions,
-        scenes,
-        tags,
+        ...labels,
       })
 
       // 内容字段、search_text、edited_by / edited_at 全在这一条里——
@@ -375,9 +380,7 @@ export async function updateMemeContent(
         .update(memes)
         .set({
           description,
-          emotions,
-          scenes,
-          tags,
+          ...labels,
           searchText,
           editedBy: actor.id,
           editedAt: new Date(),
@@ -560,9 +563,13 @@ export async function removeFavorite(
 // ── 浏览接口（SPEC §6.3.2） ─────────────────────────────────────────
 
 export type ListMemesParams = {
-  emotions?: string[]
-  scenes?: string[]
-  tags?: string[]
+  /**
+   * 六个语义维度的筛选值（SPEC §4.3 / §6.3.2）。每维可多值，**所有值之间都是 AND**。
+   *
+   * 写成 `Partial<Record<VocabField, ...>>` 而不是六个手写字段：加一维时漏掉一处的
+   * 表现是那个筛选参数被静默忽略——接口返回 200，结果里混着不该出现的图。
+   */
+} & Partial<Record<VocabField, string[]>> & {
   isAnimated?: boolean
   /** true 时只返回 actorId 收藏的记录。 */
   favorited?: boolean
@@ -621,20 +628,10 @@ export async function listMemes(
 
   const conditions: SQL[] = [isNull(memes.deletedAt)]
 
-  // 多值 AND 过滤——每个值必须在对应数组里出现
-  if (params.emotions && params.emotions.length > 0) {
-    for (const e of params.emotions) {
-      conditions.push(sql`${memes.emotions} @> ARRAY[${e}]::text[]`)
-    }
-  }
-  if (params.scenes && params.scenes.length > 0) {
-    for (const s of params.scenes) {
-      conditions.push(sql`${memes.scenes} @> ARRAY[${s}]::text[]`)
-    }
-  }
-  if (params.tags && params.tags.length > 0) {
-    for (const t of params.tags) {
-      conditions.push(sql`${memes.tags} @> ARRAY[${t}]::text[]`)
+  // 多值 AND 过滤——每个值必须在对应数组里出现。六维一视同仁，靠 GIN 索引走 @>。
+  for (const field of VOCAB_FIELDS) {
+    for (const value of params[field] ?? []) {
+      conditions.push(sql`${memes[field]} @> ARRAY[${value}]::text[]`)
     }
   }
 

@@ -1,27 +1,24 @@
 import { useState } from 'react'
 import { ApiError, patchMeme, type Meme, type MemePatch } from '../../lib/api'
+import { VOCAB_FIELDS, type VocabField } from '../../lib/vocab'
 
 /**
- * 编辑草稿：**可改的那四个字段**（SPEC §6.4.1）。
+ * 编辑草稿：**描述 + 六个词表维度**（SPEC §6.4.1）。
  *
  * `ocrText` 不在这里，而且不该来——它是模型对图像的读数，人工改会让文本和图不再对应，
  * 而 `search_text` 会忠实转发这个错，没有任何地方会报错（SPEC §6.4.1）。想改它只能重新打标。
+ *
+ * 六个维度写成 `Record<VocabField, …>` 而不是六个手写字段：v0.2.0 拆维度时这个文件里
+ * 有四处要同步改（初始化、比较、生成 patch、类型），少改一处的表现是那一维**永远发不出去**
+ * ——用户改了标签、点了保存、界面没报错，而服务端根本没收到那个字段。
  */
-export type MemeEditDraft = {
-  description: string
-  emotions: string[]
-  scenes: string[]
-  tags: string[]
-}
+export type MemeEditDraft = { description: string } & Record<VocabField, string[]>
 
 function draftFrom(meme: Meme): MemeEditDraft {
-  return {
-    description: meme.description ?? '',
-    // 复制一份，不要让草稿和列表里那个对象共享同一个数组引用
-    emotions: [...meme.emotions],
-    scenes: [...meme.scenes],
-    tags: [...meme.tags],
-  }
+  const draft = { description: meme.description ?? '' } as MemeEditDraft
+  // 复制一份，不要让草稿和列表里那个对象共享同一个数组引用
+  for (const field of VOCAB_FIELDS) draft[field] = [...meme[field]]
+  return draft
 }
 
 /**
@@ -47,9 +44,7 @@ function sameSet(a: string[], b: string[]): boolean {
 function sameDraft(a: MemeEditDraft, b: MemeEditDraft): boolean {
   return (
     a.description === b.description &&
-    sameSet(a.emotions, b.emotions) &&
-    sameSet(a.scenes, b.scenes) &&
-    sameSet(a.tags, b.tags)
+    VOCAB_FIELDS.every((field) => sameSet(a[field], b[field]))
   )
 }
 
@@ -65,9 +60,9 @@ function buildPatch(draft: MemeEditDraft, meme: Meme): MemePatch {
   const description = normalizeDescription(draft.description)
   if (description !== (meme.description ?? null)) patch.description = description
 
-  if (!sameSet(draft.emotions, meme.emotions)) patch.emotions = draft.emotions
-  if (!sameSet(draft.scenes, meme.scenes)) patch.scenes = draft.scenes
-  if (!sameSet(draft.tags, meme.tags)) patch.tags = draft.tags
+  for (const field of VOCAB_FIELDS) {
+    if (!sameSet(draft[field], meme[field])) patch[field] = draft[field]
+  }
 
   return patch
 }

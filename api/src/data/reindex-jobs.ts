@@ -134,18 +134,50 @@ export async function markReindexJobFailed(
 }
 
 /**
- * 还有没有未完成的重算任务。
+ * 还有没有**在跑**的重算任务。这一条喂 `GET /admin/reindex/status` 的 `running`
+ * （SPEC §6.5.4），语义就是字面意思：队列里还有活要干。
  *
- * ⚠️ **这条查询落在每一个搜索请求上**（SPEC §6.3.1 的 `degraded`）。所以它必须是
- *    存在性查询：`status in ('pending','running')` 命中 `reindex_jobs_claim_idx`，
- *    `limit 1` 一命中就返回。**不能写成 count(\*)**——那是全表扫，库里几万条重算任务时
- *    每次搜索都要付一遍。
+ * ⚠️ **不要在这里加 `failed`。** 重试耗尽的任务不再推进，它不是「在跑」；
+ *    把它算进 `running` 会让管理员界面上的进度条永远转下去。搜索降级要的是另一个
+ *    口径，在 `hasReindexBacklog` 里。
+ *
+ * 存在性查询而不是 count：`status in (...)` 命中 `reindex_jobs_claim_idx`，
+ * `limit 1` 一命中就返回。**不要改成 count(\*)**——那是全表扫，库里几万条重算任务时
+ * 每次打开管理页都要付一遍。
  */
 export async function hasUnfinishedReindexJobs(db: Db = defaultDb): Promise<boolean> {
   const rows = await db
     .select({ id: reindexJobs.id })
     .from(reindexJobs)
     .where(inArray(reindexJobs.status, ['pending', 'running']))
+    .limit(1)
+  return rows.length > 0
+}
+
+/**
+ * 队列里还有没有**没走到终点**的重算任务——`pending` / `running` / `failed` 三者之一。
+ *
+ * **和上面那个函数差的就是一个 `failed`，而这一个字就是本函数存在的全部理由**
+ * （SPEC §6.5.4、§9.20）。它回答的是搜索那边的问题：「库里的向量还混着旧模型吗」。
+ *
+ * `failed` 为什么算：重试耗尽的任务留在表里不再推进，于是「未完成任务数」归零，
+ * 而它对应的那些记录仍然带着旧模型的向量。向量路按 `embed_model` 过滤之后，那部分
+ * 图**永远召不回来**。只看 `pending` / `running` 的话，接口会一边漏掉它们一边报
+ * `degraded: false`——静默失效，没有任何地方会出声。
+ *
+ * ⚠️ 同样落在每个搜索请求上，同样必须是存在性查询，理由见上。
+ *
+ * ⚠️ **这是个代理信号，不是直接观测。** 直接观测是「库里存不存在
+ *    `embed_model <> 当前模型` 的行」，但 `embed_model` 上没有索引，稳态下（全库都是
+ *    当前模型）那是一次注定扫全表才能得出「没有」的查询——为一个提示字段，每次搜索付
+ *    一遍全表扫，不值当。换模型必须走 `confirmReindex` 并入队（SPEC §6.5.3），所以
+ *    「有混模型」和「队列里有未走完的任务」在本系统里是同一件事。
+ */
+export async function hasReindexBacklog(db: Db = defaultDb): Promise<boolean> {
+  const rows = await db
+    .select({ id: reindexJobs.id })
+    .from(reindexJobs)
+    .where(inArray(reindexJobs.status, ['pending', 'running', 'failed']))
     .limit(1)
   return rows.length > 0
 }

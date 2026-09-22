@@ -112,10 +112,27 @@ export const memes = pgTable(
     // AI 产出，SPEC §5.2.3
     ocrText: text('ocr_text'),
     description: text('description'),
+    // 六个语义维度。**不能互相推导**：微笑是 expressions、开心是 emotions，
+    // 一张微笑角色配「你说得都对」的图是 expressions=微笑 / emotions=空 /
+    // tones=敷衍 / purposes=表面附和。见 SPEC §4.3.1 与 §9.22。
+    /** 面部表情，视觉事实 */
+    expressions: text('expressions').array(),
+    /** 情绪，内心状态 */
     emotions: text('emotions').array(),
+    /** 表达语气，怎么说 */
+    tones: text('tones').array(),
+    /** 聊天用途，想完成什么交流动作 */
+    purposes: text('purposes').array(),
+    /** 生活情境，和什么现实场合有关 */
     scenes: text('scenes').array(),
+    /** 主体与风格 */
     tags: text('tags').array(),
-    /** 派生字段：ocr_text + description + 三个数组。任一来源变更时必须重算。 */
+    /**
+     * 派生字段：ocr_text + description + 六个数组。任一来源变更时必须重算。
+     *
+     * ⚠️ **它只喂 embedding，不再是 trgm 的匹配目标**（SPEC §5.2.3 / §9.21）——
+     * 标签值已经由标签通路精确命中一次，再让 trgm 匹配它们就是同一个信号计两遍分。
+     */
     searchText: text('search_text'),
     /** 全站固定 1024 维，不是每条记录的属性，所以没有 embed_dim 字段。SPEC §5.2.4 */
     embedding: vector('embedding', { dimensions: 1024 }),
@@ -146,16 +163,27 @@ export const memes = pgTable(
     index('memes_tag_status_idx').on(table.tagStatus),
 
     // 三路混合检索（SPEC §9.10）各自要的索引：
-    // 1) pg_trgm 子串匹配。original_filename 参与 trgm 但不进 search_text，待遇不同是有意的（SPEC §5.2.3）
-    index('memes_search_text_trgm_idx').using('gin', sql`${table.searchText} gin_trgm_ops`),
+    // 1) pg_trgm 子串匹配。**目标是原文，不是 search_text**（SPEC §5.2.3 / §9.21）：
+    //    search_text 里拼着标签值，让 trgm 也匹配它们等于同一个信号被文本路和标签路
+    //    各计一次分，标签沾边的图会压过原文精确命中的图。coalesce 与 || 都是 immutable，
+    //    可以直接建表达式索引；改这个表达式必须同步改 data/search.ts 里的同一份拼接。
+    index('memes_text_trgm_idx').using(
+      'gin',
+      sql`(coalesce(${table.ocrText}, '') || ' ' || coalesce(${table.description}, '')) gin_trgm_ops`,
+    ),
     index('memes_original_filename_trgm_idx')
       .using('gin', sql`${table.originalFilename} gin_trgm_ops`),
-    // 2) 标签过滤
+    // 2) 标签过滤，六个维度各一个（SPEC §4.3）
     index('memes_tags_idx').using('gin', table.tags),
+    index('memes_expressions_idx').using('gin', table.expressions),
     index('memes_emotions_idx').using('gin', table.emotions),
+    index('memes_tones_idx').using('gin', table.tones),
+    index('memes_purposes_idx').using('gin', table.purposes),
     index('memes_scenes_idx').using('gin', table.scenes),
     // 3) 向量。共享库没有 WHERE uploader_id = ? 这个过滤条件，HNSW 跑在最舒服的状态；
     //    deleted_at is null 选择率接近 1，不构成同类问题。见 agents/rules/database.md §2
+    //    embed_model = 当前模型 是同一类过滤：稳态下选择率也≈1，只有换模型期间才下降，
+    //    而那正是要它生效的时候（SPEC §9.20）。
     index('memes_embedding_hnsw_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
   ],
 )

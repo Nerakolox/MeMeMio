@@ -15,12 +15,11 @@ import {
 } from '../../components/ui/select'
 import { Separator } from '../../components/ui/separator'
 import { Switch } from '../../components/ui/switch'
-import { VocabPicker } from '../../components/VocabPicker'
+import { VocabSections } from '../../components/VocabSections'
 import type { User } from '../../lib/api'
 import { TAG_STATUS_LABELS } from '../../lib/tag-status'
 import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
-import { emotionOptions, sceneOptions, tagOptions } from '../../lib/vocab'
 import type { BrowseFiltersState } from './use-browse-filters'
 
 /**
@@ -169,31 +168,15 @@ export function BrowseFilters({
       </div>
 
       {/*
-        三个词表分区。用 `VocabPicker`（仓库已有的多选 chip 控件），不写第二份 chip 实现、
-        也不引 `ToggleGroup`：它已经带上了 `TOUCH`、`aria-pressed` 与 fieldset/legend
-        那套「读屏念得出这是一组、叫什么」的语义。
+        六个词表维度（SPEC §4.3）。**整段交给 `VocabSections`**：它内部遍历
+        `VOCAB_DIMENSIONS`，所以词表加一维时这里一个字都不用改——上一版是三段手写的
+        `Separator + VocabPicker`，拆维度那天就得在这里补三段、在编辑面板再补三段。
+
+        它是折叠的（有选中值的那几维默认展开），理由写在 `VocabSections` 的文件头：
+        190 个 chip 全摊开在 220px 的列里要滚四屏。
       */}
       <Separator />
-      <VocabPicker
-        title="情绪"
-        options={emotionOptions}
-        selected={filters.emotions}
-        onChange={(next) => filters.setMulti('emotions', next)}
-      />
-      <Separator />
-      <VocabPicker
-        title="场景"
-        options={sceneOptions}
-        selected={filters.scenes}
-        onChange={(next) => filters.setMulti('scenes', next)}
-      />
-      <Separator />
-      <VocabPicker
-        title="标签"
-        options={tagOptions}
-        selected={filters.tags}
-        onChange={(next) => filters.setMulti('tags', next)}
-      />
+      <VocabSections values={filters.labels} onChange={filters.setMulti} />
     </div>
   )
 }

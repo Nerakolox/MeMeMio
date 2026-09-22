@@ -58,8 +58,12 @@ const IMAGE_LIMIT: Reply = {
 const OK_CONTENT = JSON.stringify({
   ocrText: '',
   description: '一只猫反复翻白眼，最后趴下不动了',
+  expressions: ['翻白眼'],
   emotions: ['无语'],
-  scenes: ['吐槽'],
+  tones: ['无所谓'],
+  // 「吐槽」是交流用途，不是生活情境 —— v0.2.0 拆维度后它从 scenes 搬到了这里
+  purposes: ['吐槽'],
+  scenes: [],
   tags: { subject: ['猫'], style: ['真人'] },
 })
 

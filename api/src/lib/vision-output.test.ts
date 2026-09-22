@@ -7,6 +7,7 @@ import {
   interpretVisionContent,
   isEmptyTagFields,
   parseChatEnvelope,
+  type TagFields,
   type VocabAdapter,
   type VocabField,
 } from './vision-output.js'
@@ -50,7 +51,10 @@ const deepseek = loadProbe('api.deepseek.com-2026-09-14.json')
 // 纯函数，测试也不该顺手把「词表怎么加载」拖进来。词表是数据，这里当数据用。
 
 type VocabJson = {
+  expressions: string[]
   emotions: string[]
+  tones: string[]
+  purposes: string[]
   scenes: string[]
   tags: { subject: string[]; style: string[] }
   aliases?: Record<string, string>
@@ -61,7 +65,10 @@ const vocabJson = JSON.parse(
 ) as VocabJson
 
 const sets: Record<VocabField, Set<string>> = {
+  expressions: new Set(vocabJson.expressions),
   emotions: new Set(vocabJson.emotions),
+  tones: new Set(vocabJson.tones),
+  purposes: new Set(vocabJson.purposes),
   scenes: new Set(vocabJson.scenes),
   tags: new Set([...vocabJson.tags.subject, ...vocabJson.tags.style]),
 }
@@ -69,6 +76,26 @@ const sets: Record<VocabField, Set<string>> = {
 const vocab: VocabAdapter = {
   alias: (value) => vocabJson.aliases?.[value] ?? value,
   isKnown: (field, value) => sets[field].has(value),
+}
+
+/**
+ * 补齐八个字段的 `TagFields`，只写用例关心的那几个。
+ *
+ * 不用 `as TagFields` 硬转：维度以后还会加，漏掉一维时这里要**编译不过**，
+ * 而不是在某个断言里悄悄拿到 undefined。
+ */
+function fields(partial: Partial<TagFields> = {}): TagFields {
+  return {
+    ocrText: '',
+    description: '',
+    expressions: [],
+    emotions: [],
+    tones: [],
+    purposes: [],
+    scenes: [],
+    tags: [],
+    ...partial,
+  }
 }
 
 function interpret(record: ProbeRecord) {
@@ -186,11 +213,13 @@ describe('拒绝形态三：JSON 结构完整但内容全空', () => {
     expect(interpretVisionContent(content, 'stop', vocab).kind).toBe('ok')
   })
 
-  it('isEmptyTagFields 只在五个字段全空时为真', () => {
-    expect(isEmptyTagFields({ ocrText: '', description: '', emotions: [], scenes: [], tags: [] }))
-      .toBe(true)
-    expect(isEmptyTagFields({ ocrText: '', description: '', emotions: ['无语'], scenes: [], tags: [] }))
-      .toBe(false)
+  it('isEmptyTagFields 只在八个字段全空时为真', () => {
+    expect(isEmptyTagFields(fields())).toBe(true)
+    expect(isEmptyTagFields(fields({ emotions: ['无语'] }))).toBe(false)
+    // 新拆出来的三维同样算数：只标出了语气也不是「什么都没标出来」
+    expect(isEmptyTagFields(fields({ tones: ['敷衍'] }))).toBe(false)
+    expect(isEmptyTagFields(fields({ expressions: ['微笑'] }))).toBe(false)
+    expect(isEmptyTagFields(fields({ purposes: ['表面附和'] }))).toBe(false)
   })
 })
 
@@ -315,20 +344,41 @@ describe('解析与结构校验', () => {
 })
 
 describe('search_text 拼接', () => {
-  it('ocrText + description + 三个数组，空的部分不留空格', () => {
+  it('ocrText + description + 六个数组，空的部分不留空格', () => {
     expect(
-      buildSearchText({
-        ocrText: '我裂开了',
-        description: '一只崩溃的猫',
-        emotions: ['崩溃'],
-        scenes: [],
-        tags: ['猫'],
-      }),
+      buildSearchText(
+        fields({
+          ocrText: '我裂开了',
+          description: '一只崩溃的猫',
+          emotions: ['崩溃'],
+          tags: ['猫'],
+        }),
+      ),
     ).toBe('我裂开了 一只崩溃的猫 崩溃 猫')
   })
 
+  /**
+   * 顺序不是随便定的：`migrations/0006_split_label_dimensions.sql` 里的 search_text
+   * 重算按同一个顺序拼。两边不一致的表现是——迁移过的图和之后重打标的图，
+   * search_text 排列不同，diff 看起来像内容变了，其实只是顺序。
+   */
+  it('六个数组按 expressions → emotions → tones → purposes → scenes → tags 拼', () => {
+    expect(
+      buildSearchText(
+        fields({
+          ocrText: '你说得都对',
+          description: '一个角色在微笑',
+          expressions: ['微笑'],
+          tones: ['敷衍'],
+          purposes: ['表面附和'],
+          scenes: ['上班'],
+          tags: ['动漫'],
+        }),
+      ),
+    ).toBe('你说得都对 一个角色在微笑 微笑 敷衍 表面附和 上班 动漫')
+  })
+
   it('全空时是空串，不是一串空格', () => {
-    expect(buildSearchText({ ocrText: '', description: '', emotions: [], scenes: [], tags: [] }))
-      .toBe('')
+    expect(buildSearchText(fields())).toBe('')
   })
 })

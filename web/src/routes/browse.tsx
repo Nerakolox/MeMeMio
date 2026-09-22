@@ -13,7 +13,7 @@
  *
  * ```text
  *   可粘余量 = 容器高 − 左列高
- *   左列高   = max-height = 100vh − 顶栏        （163 个 chip 永远撑满，不缩）
+ *   左列高   = max-height = 100vh − 顶栏        （当时 163 个 chip 永远撑满，不缩）
  *   容器高   = max(左列高, 结果列高)             （md:items-start，两列各按自己长）
  * ```
  *
@@ -112,7 +112,7 @@ export function BrowsePage() {
         >
           {/*
             `pr-3` 是留给滚动条的：Radix 的竖条是**浮层**，绝对定位在 Root 的右沿，
-            而 viewport 是 `size-full`（撑满内容盒）——不留这几像素，163 个 chip 的右端
+            而 viewport 是 `size-full`（撑满内容盒）——不留这几像素，筛选内容的右端
             会被浮层压住 8px。结果列同理（那边被压的是最右一列的图）。
           */}
           <ScrollArea className="h-full pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain">

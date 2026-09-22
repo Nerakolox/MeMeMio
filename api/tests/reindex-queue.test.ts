@@ -77,10 +77,18 @@ async function configureEmbed(): Promise<void> {
   await saveEmbedConfig(EMBED_INPUT, db)
 }
 
-/** 一张已经打过标、但向量是旧模型算的图。 */
+/**
+ * 一张已经打过标、但向量是旧模型算的图。
+ *
+ * `ocrText` 里必须带上用来搜它的那几个字：重算期间它的向量是旧模型的，向量路按
+ * `embed_model` 把它滤掉了（SPEC §9.20），**能召回它的只剩文本路**。而文本路匹配的是
+ * `ocr_text + description`，不是 `search_text`（§9.21）——只写 `search_text` 的话
+ * 「降级时结果一条不少」那条用例会挂在一个与降级无关的原因上。
+ */
 async function seedStaleMeme(uploaderId: string): Promise<string> {
   const meme = await makeMeme(db, {
     uploaderId,
+    ocrText: '今天不想上班',
     searchText: '今天不想上班 一只趴在桌上的猫 疲惫',
     description: '一只趴在桌上的猫，眼神疲惫',
     tags: ['猫'],
@@ -191,9 +199,11 @@ describe('搜索侧降级（SPEC §6.3.1）', () => {
 
     const outcome = await searchMemes('不想上班', 10, user.id, 'req-degraded', db)
 
-    // 关键是**两条同时成立**：降级标记打上了，而结果一条不少
+    // 关键是**两条同时成立**：降级标记打上了，而结果一条不少。
+    // 这一条召回它的是文本路——向量路把旧模型的向量滤掉了，那正是要降级的原因本身。
     expect(outcome.degraded).toBe(true)
     expect(outcome.items.map((item) => item.id)).toContain(memeId)
+    expect(outcome.items.find((item) => item.id === memeId)?.matchedBy).not.toContain('vector')
   })
 
   it('队列空时不降级（向量路本身是通的）', async () => {

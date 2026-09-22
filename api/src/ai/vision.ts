@@ -86,30 +86,50 @@ export async function isVisionConfigured(): Promise<boolean> {
  * （`docs/fixtures/responses/api.deepseek.com-2026-09-14.json`）里探测用的提示词只说了
  * 「标签必须来自项目词表」却没给词表，模型在 reasoning 里反复纠结「用户没有提供词表」，
  * 结果 30 条里 23 条把输出预算烧光、正文全空，剩下 7 条的词表命中率是 **0**。
- * 163 个词条的开销远小于一次废掉的调用。
+ * 163 个词条的开销远小于一次废掉的调用。（v0.2.0 拆成六个维度后约 285 条，结论不变。）
  *
  * **提示词是本端实现约束，不是 SPEC**，随便调——但改完必须跑评测集（api/AGENTS.md §5）。
  */
 function buildSystemPrompt(): string {
-  const { emotions, scenes, tags } = vocabulary
+  const { expressions, emotions, tones, purposes, scenes, tags } = vocabulary
   return [
-    '你是表情包库的打标器。看图，输出一个 JSON 对象，只包含下面五个键：',
-    'ocrText、description、emotions、scenes、tags。',
+    '你是表情包库的打标器。看图，输出一个 JSON 对象，只包含下面八个键：',
+    'ocrText、description、expressions、emotions、tones、purposes、scenes、tags。',
     '',
     'ocrText：图里出现的全部文字，原样抄写，多行用空格连接；没有文字就给空字符串。',
     'description：一句话描述画面，中文，30 到 60 字，写清楚主体、表情和动作。',
-    'emotions、scenes、tags.subject、tags.style：**只能从下面的词表里原样选词**，',
-    '不在词表里的词一个都不要写，宁可少选也不要自造；选不出来就给空数组。',
+    '',
+    '六个标签维度问的是六件不同的事，**不要互相推导**：',
+    'expressions（面部表情）：脸上是什么样。这是看得见的事实。',
+    'emotions（情绪）：他心里在感受什么。**微笑不等于开心**——一张笑脸配上',
+    '  「你说得都对」，脸是微笑，心里是什么图上没说，这时 emotions 就该是空数组。',
+    'tones（表达语气）：这张图**怎么**说话，跟说的内容无关。',
+    '  「敷衍」是不想接着聊，「阴阳怪气」是说反话，两个不是一回事，可以同时成立。',
+    'purposes（聊天用途）：发图的人**想完成什么交流动作**，不是文字的字面意思。',
+    '  「你说得都对」的用途是「表面附和」，不是「赞同」。',
+    'scenes（生活情境）：和什么现实场合有关（上班、考试、没钱这类），跟交流动作无关。',
+    'tags（主体与风格）：图里是什么、长什么样。',
+    '',
+    '选词规则：',
+    '1. **只能从下面的词表里原样选词**，不在词表里的词一个都不要写，也不要自造。',
+    '2. 一个词只属于一个维度，不要把某一维的词填到另一维里。',
+    '3. **证据不足就给空数组。** 猜一个比留空更坏——猜错的标签会让这张图在别人搜',
+    '   完全不相干的东西时冒出来，而没人知道那个标签是猜的。',
+    '4. expressions / emotions / scenes / tags 每维最多 4 个。',
+    '5. **tones 和 purposes 每维最多 2 个**，只填最有把握的。这两维靠推断，宁缺毋滥。',
     '',
     '词表（闭集，不可扩展）：',
+    `expressions = ${expressions.join('、')}`,
     `emotions = ${emotions.join('、')}`,
+    `tones = ${tones.join('、')}`,
+    `purposes = ${purposes.join('、')}`,
     `scenes = ${scenes.join('、')}`,
     `tags.subject = ${tags.subject.join('、')}`,
     `tags.style = ${tags.style.join('、')}`,
     '',
     '输出格式（严格照抄这个形状）：',
-    '{"ocrText":"","description":"","emotions":[],"scenes":[],'
-      + '"tags":{"subject":[],"style":[]}}',
+    '{"ocrText":"","description":"","expressions":[],"emotions":[],"tones":[],'
+      + '"purposes":[],"scenes":[],"tags":{"subject":[],"style":[]}}',
     '',
     '只输出这个 JSON，不要解释、不要 markdown 围栏、不要任何前后缀。',
     '不确定就给空字符串或空数组——看不清就别标，比编一个更有用。',

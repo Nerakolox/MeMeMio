@@ -11,7 +11,7 @@ import {
   type MemeContentPatch,
 } from '../data/memes.js'
 import type { VocabField } from '../lib/vision-output.js'
-import { vocabAdapter } from '../vocab.js'
+import { VOCAB_FIELDS, vocabAdapter } from '../vocab.js'
 import { getTagStatusSummary } from '../services/tag-status.js'
 import { serializeMeme } from '../serialize/meme.js'
 
@@ -37,10 +37,12 @@ type Vars = OptionalAuthVariables
  * 可编辑字段。**`ocrText` 不在里面**——它是模型对图像的读数，人工改它会让
  * 文本和图不再对应，而 `search_text` 会忠实转发这个错（SPEC §6.4.1）。
  */
-const EDITABLE_FIELDS = ['description', 'emotions', 'scenes', 'tags'] as const
+const EDITABLE_FIELDS = ['description', ...VOCAB_FIELDS] as const
 
 /**
- * 三个数组字段的元素校验。**走 `vocab.ts` 的 `vocabAdapter`**（`alias()` 归一化 →
+ * 六个数组字段的元素校验。**按维度校验**——一个词只属于一个维度（SPEC §4.3.2），
+ * 把 `微笑` 传进 `emotions` 和传一个不存在的词一样会被拒，这正是拆维度要挡住的错误。
+ * **走 `vocab.ts` 的 `vocabAdapter`**（`alias()` 归一化 →
  * `isKnownLabel()` 判定），和打标写回同一套——另写一份的表现是模型输出过得去、
  * 人工编辑过不去（或反过来）。`vocab.ts` 顶部写着「全进程只有这一份」。
  *
@@ -99,7 +101,7 @@ function parseEditBody(raw: unknown): MemeContentPatch {
     patch.description = value === null ? null : value.trim()
   }
 
-  for (const field of ['emotions', 'scenes', 'tags'] as const) {
+  for (const field of VOCAB_FIELDS) {
     const value = body[field]
     if (value !== undefined) patch[field] = parseLabels(field, value)
   }
@@ -122,9 +124,10 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
   .get('/', async (c) => {
     const actor = c.get('currentUser')
 
-    const emotions = c.req.queries('emotions')
-    const scenes = c.req.queries('scenes')
-    const tags = c.req.queries('tags')
+    // 六个语义维度各自可重复，所有值之间都是 AND（SPEC §6.3.2）。
+    // 这里**不校验词表**：浏览筛选传了词表外的词，结果就是搜不到，不是请求错误。
+    const labels = {} as Record<VocabField, string[] | undefined>
+    for (const field of VOCAB_FIELDS) labels[field] = c.req.queries(field)
 
     const isAnimatedRaw = c.req.query('isAnimated')
     let isAnimated: boolean | undefined
@@ -170,7 +173,7 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     }
 
     const { items, nextCursor } = await listMemes(
-      { emotions, scenes, tags, isAnimated, favorited, uploader, tagStatus, cursor, limit, random },
+      { ...labels, isAnimated, favorited, uploader, tagStatus, cursor, limit, random },
       actor?.id ?? null,
     )
 

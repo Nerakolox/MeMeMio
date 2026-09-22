@@ -37,6 +37,9 @@ const { eq } = await import('drizzle-orm')
 
 const { sql, db } = createTestDb()
 
+/** 向量路按 `embed_model` 过滤（SPEC §9.20），种子和查询得报同一个模型名。 */
+const EMBED_MODEL = 'test-embed-model'
+
 const testApp = new Hono().use('*', requestId).route('/api/v1/memes', memesRoutes)
 testApp.onError(onError)
 testApp.notFound(onNotFound)
@@ -93,16 +96,25 @@ async function errorCode(res: Response): Promise<string> {
   return body.error.code
 }
 
-/** 三个数组维度都填上的样本，用来测「不传 / null / []」三种传法的差别。 */
+/**
+ * 六个数组维度都填上的样本，用来测「不传 / null / []」三种传法的差别。
+ *
+ * **每一维都给一个不同的值**：只填其中三维的话，「PATCH 漏改某一维」这种错误
+ * 会被另外几维的值盖过去——那一维本来就是空的，改没改不出来（SPEC §4.3.1）。
+ * `searchText` 按 `buildSearchText` 的顺序手写，和迁移、打标写回三处保持一致。
+ */
 async function richMeme(uploaderId: string) {
   return makeMeme(db, {
     uploaderId,
     ocrText: '图上的字',
     description: '原来的描述',
+    expressions: ['微笑'],
     emotions: ['开心'],
-    scenes: ['打招呼'],
+    tones: ['敷衍'],
+    purposes: ['打招呼'],
+    scenes: ['加班'],
     tags: ['猫'],
-    searchText: '图上的字 原来的描述 开心 打招呼 猫',
+    searchText: '图上的字 原来的描述 微笑 开心 敷衍 打招呼 加班 猫',
   })
 }
 
@@ -122,16 +134,30 @@ describe('PATCH /memes/:id 的权限（SPEC §9.1 / §3.3）', () => {
     expect(row?.editedAt).toBeInstanceOf(Date)
   })
 
-  it('非上传者改三个数组也成功', async () => {
+  it('非上传者改六个数组也成功', async () => {
     const alice = await signIn()
     const bob = await signIn()
     const meme = await richMeme(alice.id)
 
-    const res = await patch(meme.id, { emotions: ['无语'], scenes: [], tags: ['狗'] }, bob)
+    const res = await patch(
+      meme.id,
+      {
+        expressions: ['翻白眼'],
+        emotions: ['无语'],
+        tones: ['阴阳怪气'],
+        purposes: ['吐槽'],
+        scenes: [],
+        tags: ['狗'],
+      },
+      bob,
+    )
     expect(res.status).toBe(200)
 
     const row = await readRow(meme.id)
+    expect(row?.expressions).toEqual(['翻白眼'])
     expect(row?.emotions).toEqual(['无语'])
+    expect(row?.tones).toEqual(['阴阳怪气'])
+    expect(row?.purposes).toEqual(['吐槽'])
     expect(row?.scenes).toEqual([])
     expect(row?.tags).toEqual(['狗'])
   })
@@ -156,8 +182,11 @@ describe('PATCH 的请求体（SPEC §6.4.1）', () => {
 
     const row = await readRow(meme.id)
     expect(row?.description).toBe('新描述')
+    expect(row?.expressions).toEqual(['微笑'])
     expect(row?.emotions).toEqual(['开心'])
-    expect(row?.scenes).toEqual(['打招呼'])
+    expect(row?.tones).toEqual(['敷衍'])
+    expect(row?.purposes).toEqual(['打招呼'])
+    expect(row?.scenes).toEqual(['加班'])
     expect(row?.tags).toEqual(['猫'])
   })
 
@@ -209,15 +238,38 @@ describe('PATCH 的请求体（SPEC §6.4.1）', () => {
     expect((await readRow(meme.id))?.tags).toEqual(['猫'])
   })
 
-  it('三个数组各拒一次词表外的值', async () => {
+  it('六个数组各拒一次词表外的值', async () => {
     const alice = await signIn()
     const meme = await richMeme(alice.id)
 
-    for (const body of [{ emotions: ['不存在'] }, { scenes: ['不存在'] }, { tags: ['不存在'] }]) {
+    // 逐维各发一次：校验漏掉某一维的表现是那一维能存进任意字符串，而请求返回 200
+    for (const body of [
+      { expressions: ['不存在'] },
+      { emotions: ['不存在'] },
+      { tones: ['不存在'] },
+      { purposes: ['不存在'] },
+      { scenes: ['不存在'] },
+      { tags: ['不存在'] },
+    ]) {
       const res = await patch(meme.id, body, alice)
       expect(res.status).toBe(400)
       expect(await errorCode(res)).toBe('VALIDATION_FAILED')
     }
+  })
+
+  it('⚠️ 跨维度的词条也被拒 —— 校验按维度，不是按全表', async () => {
+    const alice = await signIn()
+    const meme = await richMeme(alice.id)
+
+    // 「微笑」是 expressions 里的正式词条，填进 emotions 就是越界。
+    // 这正是拆维度要挡住的那个错误（SPEC §4.3.1）：脸上在笑不等于心里开心。
+    // 按全表校验的话它会照收，而那张图会被标成一个视觉事实推不出来的情绪。
+    expect(await errorCode(await patch(meme.id, { emotions: ['微笑'] }, alice))).toBe(
+      'VALIDATION_FAILED',
+    )
+    expect(await errorCode(await patch(meme.id, { tones: ['开心'] }, alice))).toBe(
+      'VALIDATION_FAILED',
+    )
   })
 
   it('alias 归一化后再校验：存进去的是规范词条（猫咪 → 猫）', async () => {
@@ -283,12 +335,13 @@ describe('PATCH 的写入（SPEC §5.2.3 / §9.19）', () => {
 
     const row = await readRow(meme.id)
     // 精确值，不是「包含」：漏掉某个来源字段、或者用旧值拼，都会在这里露出来。
-    // ocr_text 不可编辑，所以它照原样留在文本里。
-    expect(row?.searchText).toBe('图上的字 新描述 无语 狗')
+    // ocr_text 不可编辑，所以它照原样留在文本里；没传的三维（expressions / tones /
+    // purposes）拿库里的旧值参与拼接，顺序仍是 buildSearchText 那一个。
+    expect(row?.searchText).toBe('图上的字 新描述 微笑 无语 敷衍 打招呼 狗')
     // 被移除的标签不能留在 search_text 里——留着就是「文本与标签对不上」，
     // 那张图会被一个它已经没有的标签搜出来
     expect(row?.searchText).not.toContain('开心')
-    expect(row?.searchText).not.toContain('打招呼')
+    expect(row?.searchText).not.toContain('加班')
   })
 
   it('清空后的 search_text 里不留旧词', async () => {
@@ -296,8 +349,21 @@ describe('PATCH 的写入（SPEC §5.2.3 / §9.19）', () => {
     const meme = await richMeme(alice.id)
 
     expect(
-      (await patch(meme.id, { description: null, emotions: [], scenes: [], tags: [] }, alice))
-        .status,
+      (
+        await patch(
+          meme.id,
+          {
+            description: null,
+            expressions: [],
+            emotions: [],
+            tones: [],
+            purposes: [],
+            scenes: [],
+            tags: [],
+          },
+          alice,
+        )
+      ).status,
     ).toBe(200)
 
     // 只剩 ocrText —— 它是唯一不可编辑的来源字段
@@ -346,7 +412,7 @@ describe('PATCH 的写入（SPEC §5.2.3 / §9.19）', () => {
 
     // 断言终值而不是「包含」：加锁之后两种先后顺序的终值**相同**，所以这条是确定性的。
     // 少了锁就会在这里露出来——某个来源字段已经改了，它的词却不在 search_text 里。
-    expect(row?.searchText).toBe('图上的字 B 的描述 开心 打招呼 狗')
+    expect(row?.searchText).toBe('图上的字 B 的描述 微笑 开心 敷衍 打招呼 加班 狗')
   })
 
   it('响应是更新后的完整 Meme，与 GET /memes/:id 同形', async () => {
@@ -383,24 +449,25 @@ describe('DELETE /memes/:id（SPEC §6.4.2）', () => {
     const alice = await signIn()
     const meme = await makeMeme(db, {
       uploaderId: alice.id,
-      searchText: '一只猫在键盘上睡觉',
+      ocrText: '一只猫在键盘上睡觉',
       description: '一只猫',
       tags: ['猫'],
       embedding: unitVector(0),
+      embedModel: EMBED_MODEL,
     })
 
     // 删之前三路都召回得到 —— 否则下面那三条断言是白过的
-    expect(await ocrPathCandidates('猫在键盘上睡觉', db)).toContain(meme.id)
-    expect(await tagPathCandidates(['猫'], db)).toContain(meme.id)
-    expect(await vectorPathCandidates(unitVector(0), db)).toContain(meme.id)
+    expect(await ocrPathCandidates('猫在键盘上睡觉', [], db)).toContain(meme.id)
+    expect(await tagPathCandidates(['猫'], [], db)).toContain(meme.id)
+    expect(await vectorPathCandidates(unitVector(0), EMBED_MODEL, [], db)).toContain(meme.id)
 
     const res = await remove(meme.id, alice)
     expect(res.status).toBe(204)
 
     // 三路是分别写的 SQL，最容易只改一路（database.md §1.1）
-    expect(await ocrPathCandidates('猫在键盘上睡觉', db)).not.toContain(meme.id)
-    expect(await tagPathCandidates(['猫'], db)).not.toContain(meme.id)
-    expect(await vectorPathCandidates(unitVector(0), db)).not.toContain(meme.id)
+    expect(await ocrPathCandidates('猫在键盘上睡觉', [], db)).not.toContain(meme.id)
+    expect(await tagPathCandidates(['猫'], [], db)).not.toContain(meme.id)
+    expect(await vectorPathCandidates(unitVector(0), EMBED_MODEL, [], db)).not.toContain(meme.id)
 
     // 详情接口同样查不到
     expect((await get(meme.id, alice)).status).toBe(404)

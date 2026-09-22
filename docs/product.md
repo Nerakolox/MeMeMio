@@ -56,7 +56,7 @@
 
 理由：本地 Tesseract 对表情包的艺术字体中文基本不可用，白搭一套基础设施；而多模态模型本来就能在同一次调用里顺带完成 OCR。
 
-单次调用产出 `ocrText` / `description` / `emotions[]` / `scenes[]` / `tags[]` 五个字段，后三个从固定词表中选。字段定义见 [SPEC §5.2.3](../spec/05-data-models.md)，词表规则见 [SPEC §4](../spec/04-vocabulary.md)。
+单次调用产出 `ocrText` / `description` 再加六个数组字段——`expressions[]`（面部表情）/ `emotions[]`（情绪）/ `tones[]`（表达语气）/ `purposes[]`（聊天用途）/ `scenes[]`（生活情境）/ `tags[]`，六个数组都从固定词表中选。**五个语义维度互相推导不出来**，这是把它们拆开的全部理由（[SPEC §9.22](../spec/09-decisions.md)）：一张微笑角色配「你说得都对」的图，脸是笑的、情绪不是开心、语气是敷衍、用途是表面附和。字段定义见 [SPEC §5.2.3](../spec/05-data-models.md)，词表规则见 [SPEC §4](../spec/04-vocabulary.md)。
 
 ### 3.3 搜索
 

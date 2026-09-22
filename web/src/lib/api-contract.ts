@@ -48,7 +48,13 @@ const _searchShape: SearchResponse = {
       originalFilename: 'a.png',
       ocrText: null,
       description: null,
+      // 六个数组字段一个不少（SPEC §4.3）。少写一个这里就编译不过——
+      // v0.2.0 新增的 expressions / tones / purposes 正是靠这条断言证明
+      // 「服务端真的把新维度序列化出来了」，而不是前端自己以为有。
+      expressions: [],
       emotions: [],
+      tones: [],
+      purposes: [],
       scenes: [],
       tags: [],
       tagStatus: 'ok',

@@ -16,16 +16,40 @@
 
 // ── 输出字段 ────────────────────────────────────────────────────────
 
-/** 单次视觉调用产出的全部五个字段，**不做独立 OCR 链路**（SPEC §5.2.3）。 */
+/**
+ * 单次视觉调用产出的全部字段，**不做独立 OCR 链路**（SPEC §5.2.3）。
+ *
+ * 六个数组是六个**互不推导**的维度（SPEC §4.3.1）：`expressions` 是脸上什么样，
+ * `emotions` 是心里什么感受，两者不能互相补齐——一张微笑角色配「你说得都对」的图，
+ * 正确答案是 `expressions: ['微笑']` 加上 `emotions: []`，不是 `emotions: ['开心']`。
+ */
 export type TagFields = {
   ocrText: string
   description: string
+  expressions: string[]
   emotions: string[]
+  tones: string[]
+  purposes: string[]
   scenes: string[]
   tags: string[]
 }
 
-export type VocabField = 'emotions' | 'scenes' | 'tags'
+export type VocabField = 'expressions' | 'emotions' | 'tones' | 'purposes' | 'scenes' | 'tags'
+
+/**
+ * 六个维度，**有序**，顺序即语义强度：看得见的排前面，要推断的排后面。
+ *
+ * 本文件里所有「对每个维度做一遍」的地方都遍历它，不手写六次——加第七个维度时
+ * 漏掉一处的表现是那一维静默不校验，模型输出什么就存什么。
+ */
+const LABEL_FIELDS = [
+  'expressions',
+  'emotions',
+  'tones',
+  'purposes',
+  'scenes',
+  'tags',
+] as const satisfies readonly VocabField[]
 
 /**
  * 词表能力的注入口。**这一层不认识词表文件**——`vocab.ts` 要读磁盘，
@@ -218,37 +242,45 @@ function asText(value: unknown): string | null {
 type RawFields = {
   ocrText: string
   description: string
-  emotions: string[]
-  scenes: string[]
-  tags: string[]
-}
+} & Record<VocabField, string[]>
 
 /**
  * 第二步：校验结构。返回 null 表示「解析出来的不是我们要的那个东西」。
  *
- * 五个字段**全部可缺席**（缺席按空处理），但**出现就必须是对的类型**。
+ * 八个字段**全部可缺席**（缺席按空处理），但**出现就必须是对的类型**。
  * 全都缺席也算结构不对——那说明模型回的是另一个 JSON，不是我们要的。
  *
  * 实测样本里 `ocrText` 经常整个不出现（deepseek 那 7 条合法 JSON 全都没有它），
  * 所以「缺席即空」不是宽容，是现实。
+ *
+ * **老模型 / 老提示词只会回 `emotions` / `scenes` / `tags` 三个维度**，缺席的
+ * `expressions` / `tones` / `purposes` 按空处理即可——那是「这次没标」，不是结构错误。
  */
 function validateStructure(value: unknown): RawFields | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
 
-  const known = ['ocrText', 'description', 'emotions', 'scenes', 'tags']
+  const known = ['ocrText', 'description', ...LABEL_FIELDS]
   if (!known.some((key) => raw[key] !== undefined)) return null
 
   const ocrText = asText(raw['ocrText'])
   const description = asText(raw['description'])
-  const emotions = raw['emotions'] === undefined ? [] : asStringArray(raw['emotions'])
-  const scenes = raw['scenes'] === undefined ? [] : asStringArray(raw['scenes'])
-  const tags = parseTags(raw['tags'])
-
   if (ocrText === null || description === null) return null
-  if (emotions === null || scenes === null || tags === null) return null
 
-  return { ocrText, description, emotions, scenes, tags }
+  const labels = {} as Record<VocabField, string[]>
+  for (const field of LABEL_FIELDS) {
+    // tags 多收一种形状（{ subject, style }），其余五维只收扁平数组
+    const parsed = field === 'tags' ? parseTags(raw[field]) : parseLabelArray(raw[field])
+    if (parsed === null) return null
+    labels[field] = parsed
+  }
+
+  return { ocrText, description, ...labels }
+}
+
+function parseLabelArray(value: unknown): string[] | null {
+  if (value === undefined || value === null) return []
+  return asStringArray(value)
 }
 
 /**
@@ -259,6 +291,10 @@ function validateStructure(value: unknown): RawFields | null {
  * 丢掉之后全空的那种情况，正是由判空接住的。
  *
  * 违规词条要带出去记日志：词表 v1 要靠真实打标结果暴露缺词，这是唯一的来源。
+ *
+ * **校验按维度进行。** 一个词只属于一个维度（SPEC §4.3.2）——模型把 `微笑` 放进
+ * `emotions` 时它是违规词条，会被丢掉并记一条 violation，**不会被搬到 expressions 里**。
+ * 自动搬运看着贴心，实际是替模型做判断：它把表情当情绪这件事，正是评测集要看见的信号。
  */
 function applyVocab(
   raw: RawFields,
@@ -284,13 +320,14 @@ function applyVocab(
     return kept
   }
 
+  const labels = {} as Record<VocabField, string[]>
+  for (const field of LABEL_FIELDS) labels[field] = filter(field, raw[field])
+
   return {
     fields: {
       ocrText: raw.ocrText.trim(),
       description: raw.description.trim(),
-      emotions: filter('emotions', raw.emotions),
-      scenes: filter('scenes', raw.scenes),
-      tags: filter('tags', raw.tags),
+      ...labels,
     },
     violations,
   }
@@ -299,17 +336,13 @@ function applyVocab(
 /**
  * 第五步：判空。**三种拒绝形态里最阴险的那一种**（ai-providers.md §3）。
  *
- * 判据是「五个字段全空」，不是「某个字段空」：一张没有文字的图 `ocrText` 本来就该是空，
- * 一张模型认不出情绪的图 `emotions` 空也正常。只有全空才说明这次调用什么都没产出。
+ * 判据是「**全部**字段都空」，不是「某个字段空」：一张没有文字的图 `ocrText` 本来就该是空，
+ * 一张看不出情绪的图 `emotions` 空也正常——SPEC §4.3.1 还明写着「证据不足就留空」。
+ * 只有全空才说明这次调用什么都没产出。
  */
 export function isEmptyTagFields(fields: TagFields): boolean {
-  return (
-    fields.ocrText === ''
-    && fields.description === ''
-    && fields.emotions.length === 0
-    && fields.scenes.length === 0
-    && fields.tags.length === 0
-  )
+  if (fields.ocrText !== '' || fields.description !== '') return false
+  return LABEL_FIELDS.every((field) => fields[field].length === 0)
 }
 
 /**
@@ -378,17 +411,21 @@ function firstLine(text: string): string {
 // ── 派生字段 ────────────────────────────────────────────────────────
 
 /**
- * `search_text` = `ocr_text` + `description` + 三个数组（SPEC §5.2.3）。
+ * `search_text` = `ocr_text` + `description` + 六个数组（SPEC §5.2.3）。
  *
  * **派生字段，任何一个来源字段变更时必须重算**，所以拼接只有这一个实现——
- * 将来 `PATCH /memes/:id` 改标签时用的也是它。两处各拼一份的表现是
+ * `PATCH /memes/:id` 改标签时用的也是它。两处各拼一份的表现是
  * 「手动改过的图搜不到」，不报错。
+ *
+ * ⚠️ **它只喂 embedding，不再是 pg_trgm 的匹配目标**（SPEC §9.21）。标签值已经由
+ *    标签通路精确命中一次，让 trgm 也匹配它们等于同一个信号被计两遍分。向量这边
+ *    要保留标签：一句「一只很累的猫」对上库里的 `疲惫 猫`，正是向量路该干的事。
  *
  * ⚠️ `original_filename` **不进 search_text**，因此不进 embedding。它参与 pg_trgm
  *    但待遇不同是有意的：大量文件名是 `IMG_1234.jpg` 这类纯噪声（SPEC §5.2.3）。
  */
 export function buildSearchText(fields: TagFields): string {
-  return [fields.ocrText, fields.description, ...fields.emotions, ...fields.scenes, ...fields.tags]
+  return [fields.ocrText, fields.description, ...LABEL_FIELDS.flatMap((f) => fields[f])]
     .map((part) => part.trim())
     .filter((part) => part !== '')
     .join(' ')

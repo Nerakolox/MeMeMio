@@ -49,12 +49,19 @@ function toggleValue(selected: string[], options: string[], value: string): stri
  */
 export function VocabPicker({
   title,
+  hideTitle = false,
   options,
   selected,
   onChange,
   disabled = false,
 }: {
   title: string
+  /**
+   * 把 legend 变成 `sr-only`。给的是**已经在别处显示过同一个标题**的调用点
+   * （`VocabSections` 的折叠头就是一个 h3），不是「这一组不需要名字」——
+   * legend 本身必须留着，否则读屏念到的是一串没有归属的按钮。
+   */
+  hideTitle?: boolean
   /** 词表里的全部候选，来自 `lib/vocab.ts`（唯一来源，不维护第二份列表）。 */
   options: string[]
   selected: string[]
@@ -65,7 +72,7 @@ export function VocabPicker({
     // fieldset 的语义要留着：它把这组 chip 绑到一个 legend 上，读屏才会念出
     // 「情绪，三选一」而不是一串没有标题的按钮。默认边框与缩进要显式清掉。
     <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0" disabled={disabled}>
-      <legend className="p-0 text-sm font-medium">{title}</legend>
+      <legend className={cn('p-0 text-sm font-medium', hideTitle && 'sr-only')}>{title}</legend>
       <div className="flex flex-wrap gap-1.5">
         {options.map((opt) => {
           const active = selected.includes(opt)

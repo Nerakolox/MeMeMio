@@ -140,7 +140,7 @@ export async function tagMeme(memeId: string, signal: AbortSignal): Promise<TagO
     }
 
     const searchText = buildSearchText(outcome.fields)
-    // 五个字段 + search_text + vision_model + tag_status 在**同一条 UPDATE** 里
+    // 八个产出字段 + search_text + vision_model + tag_status 在**同一条 UPDATE** 里
     const written = await applyTagResult(memeId, {
       ...outcome.fields,
       searchText,

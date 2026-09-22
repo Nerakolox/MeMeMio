@@ -9,16 +9,18 @@
 import { useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import type { FetchMemesParams } from '../../lib/api'
+import { VOCAB_FIELDS, type VocabField } from '../../lib/vocab'
 
 /** 把当前 query 解析成接口参数。游标在外部传入，**不放 URL**（SPEC §6.3.2，分页游标不是筛选条件）。 */
 function buildParams(sp: URLSearchParams): FetchMemesParams {
   const p: FetchMemesParams = {}
-  const emotions = sp.getAll('emotions')
-  if (emotions.length) p.emotions = emotions
-  const scenes = sp.getAll('scenes')
-  if (scenes.length) p.scenes = scenes
-  const tags = sp.getAll('tags')
-  if (tags.length) p.tags = tags
+  // 六个维度遍历 `VOCAB_FIELDS`，不手写六遍（SPEC §4.3）。漏掉一维不会报错：
+  // URL 里明明有那个参数、角标也数进去了，取数时却不带上——用户看到的是
+  // 「我明明筛了表情，结果里还有别的」，而控制台一片干净。
+  for (const field of VOCAB_FIELDS) {
+    const values = sp.getAll(field)
+    if (values.length) p[field] = values
+  }
   const ia = sp.get('isAnimated')
   // 三态，不是布尔：键不在 = 不过滤，`=true` / `=false` 才是用户选过。
   // 写成 `sp.get(...) === 'true'` 会把「没选」和「选了 false」混成一件事。
@@ -39,11 +41,19 @@ function buildParams(sp: URLSearchParams): FetchMemesParams {
  * 按参数数永远是 3（emotions 是一个重复键），按勾选数是用户心里那个数。
  */
 function countActive(sp: URLSearchParams): number {
-  let n = sp.getAll('emotions').length + sp.getAll('scenes').length + sp.getAll('tags').length
+  let n = 0
+  for (const field of VOCAB_FIELDS) n += sp.getAll(field).length
   for (const key of ['isAnimated', 'favorited', 'uploader', 'tagStatus']) {
     if (sp.get(key) !== null) n += 1
   }
   return n
+}
+
+/** 六个维度当前选中的值，键一个不少——`VocabSections` 要的就是这个形状。 */
+function readLabels(sp: URLSearchParams): Record<VocabField, string[]> {
+  const out = {} as Record<VocabField, string[]>
+  for (const field of VOCAB_FIELDS) out[field] = sp.getAll(field)
+  return out
 }
 
 export function useBrowseFilters() {
@@ -66,7 +76,7 @@ export function useBrowseFilters() {
    */
 
   /** 整组改写一个重复键（词表 chip 用）。`values` 为空就是删掉这个键。 */
-  function setMulti(key: string, values: string[]) {
+  function setMulti(key: VocabField, values: string[]) {
     const next = new URLSearchParams(searchParams)
     next.delete(key)
     values.forEach((v) => next.append(key, v))
@@ -99,9 +109,11 @@ export function useBrowseFilters() {
     filtersKey,
     hasFilters: filtersKey !== '',
     activeCount: countActive(searchParams),
-    emotions: searchParams.getAll('emotions'),
-    scenes: searchParams.getAll('scenes'),
-    tags: searchParams.getAll('tags'),
+    /**
+     * 六个维度当前选中的值，**一个对象而不是六个字段**。
+     * 摊成六个返回值的话，加一维就要同时改这里和每个调用点，而漏掉不报错。
+     */
+    labels: readLabels(searchParams),
     isAnimated: searchParams.get('isAnimated') === 'true',
     favorited: searchParams.get('favorited') === 'true',
     uploader: searchParams.get('uploader'),

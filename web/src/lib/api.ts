@@ -1,5 +1,6 @@
 import { hc, type InferResponseType } from 'hono/client'
 import type { AppType } from '@api/app'
+import { VOCAB_FIELDS, type VocabField } from './vocab'
 
 /**
  * **唯一发请求的地方。** 组件里不出现 fetch。
@@ -92,7 +93,7 @@ export type Meme = InferResponseType<typeof api.api.v1.memes.$get>['items'][numb
 export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
 
 /**
- * `PATCH /memes/{id}` 的请求体，**只认这四个字段**（SPEC §6.4.1）。
+ * `PATCH /memes/{id}` 的请求体，**只认描述 + 六个词表维度**（SPEC §6.4.1 / §4.3）。
  *
  * 三种传法含义不同，调用点别混：
  *   - 字段不出现 → 不改这个字段（所以只发改过的那些）
@@ -108,18 +109,14 @@ export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
  * 一个 `VALIDATION_FAILED`。补法是 api 端给这条路由挂一个校验器让 RPC 能推导，
  * 那是 api 的实现约束（见 api/agents/rules/database.md 一类的本端规则），
  * 不是这一端能决定的——已回报总管，见 joint-tasks/2026-09-19-browse-meme-actions.md。
+ *
+ * ⚠️ 这个缺口在 v0.2.0 拆维度那次**真的咬了一口**：六个维度里漏发任何一个，
+ * 编译期一声不响，运行时也不报错——服务端只是没收到那个字段，于是按「不改」处理。
+ * 所以六维写成 `Partial<Record<VocabField, string[]>>` 而不是六行手写字段。
  */
-export type MemePatch = {
-  description?: string | null
-  emotions?: string[]
-  scenes?: string[]
-  tags?: string[]
-}
+export type MemePatch = { description?: string | null } & Partial<Record<VocabField, string[]>>
 
-export type FetchMemesParams = {
-  emotions?: string[]
-  scenes?: string[]
-  tags?: string[]
+export type FetchMemesParams = Partial<Record<VocabField, string[]>> & {
   isAnimated?: boolean
   favorited?: boolean
   uploader?: string
@@ -141,9 +138,9 @@ export async function fetchMemes(
   params: FetchMemesParams = {},
 ): Promise<{ items: Meme[]; nextCursor: string | null }> {
   const qs = new URLSearchParams()
-  params.emotions?.forEach((v) => qs.append('emotions', v))
-  params.scenes?.forEach((v) => qs.append('scenes', v))
-  params.tags?.forEach((v) => qs.append('tags', v))
+  // 六个维度各自是**可重复键**（`?emotions=无语&emotions=疲惫`），所有值之间是 AND。
+  // 遍历 `VOCAB_FIELDS` 而不是手写六行：漏掉一行不会报错，只是那一维的筛选静默失效。
+  for (const field of VOCAB_FIELDS) params[field]?.forEach((v) => qs.append(field, v))
   if (params.isAnimated !== undefined) qs.set('isAnimated', String(params.isAnimated))
   if (params.favorited) qs.set('favorited', 'true')
   if (params.uploader) qs.set('uploader', params.uploader)

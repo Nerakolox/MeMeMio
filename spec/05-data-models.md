@@ -48,10 +48,13 @@ memes(
   -- AI 产出
   ocr_text      text,
   description   text,
-  emotions      text[],
-  scenes        text[],
-  tags          text[],
-  search_text   text,                 -- 上述字段拼接
+  expressions   text[],              -- 面部表情，视觉事实
+  emotions      text[],              -- 情绪
+  tones         text[],              -- 表达语气
+  purposes      text[],              -- 聊天用途
+  scenes        text[],              -- 生活情境
+  tags          text[],              -- 主体与风格
+  search_text   text,                -- 上述字段拼接，供 embedding 使用
   embedding     vector(1024),
 
   -- 溯源
@@ -82,13 +85,15 @@ memes(
 
 ### §5.2.3 AI 产出字段
 
-单次视觉调用产出全部五个字段，不做独立 OCR 链路。三个数组字段的取值必须落在 [§4](04-vocabulary.md) 的词表内。
+单次视觉调用产出全部字段，不做独立 OCR 链路。**六个数组字段的取值必须落在 [§4](04-vocabulary.md) 对应维度的词表内**，且维度之间不互相推导——判据见 [§4.3.1](04-vocabulary.md#431-维度之间不能互相推导)。
 
-`search_text` 是 `ocr_text` + `description` + 三个数组拼接的结果，供 embedding 与 `pg_trgm` 子串匹配使用。它是派生字段，任何一个来源字段变更时必须重算。
+`search_text` 是 `ocr_text` + `description` + 六个数组拼接的结果，**供 embedding 使用**。它是派生字段，任何一个来源字段变更时必须重算。
 
-> ⚠️ **`original_filename` 参与 `pg_trgm` 匹配，但不进 `search_text`，因此不进 embedding。**
+> ⚠️ **`pg_trgm` 匹配的是 `ocr_text` + `description` + `original_filename`，不是 `search_text`。**
 >
-> 存下来的理由：从网上保存的表情包，文件名里常常带着梗名，那是梗名最便宜的来源之一（见 [§9.18](09-decisions.md)）。不进 embedding 的理由：大量文件名是 `IMG_1234.jpg`、`微信图片_20240101.jpg` 这类纯噪声，混进向量只会稀释语义。**两条路径待遇不同是有意的。**
+> 两者刻意不同。标签值已经由标签通路精确命中一次，如果再让它们出现在文本通路的匹配目标里，同一个词会在 RRF 融合前被两条通路各算一次分——一张靠标签沾边的图会压过一张原文精确命中的图。**文本通路只管文本，标签通路只管标签。** 见 [§9.21](09-decisions.md)。
+>
+> `original_filename` 的待遇则相反：**它参与 `pg_trgm`，但不进 `search_text`，因此不进 embedding。** 存下来的理由是从网上保存的表情包文件名里常带梗名，那是梗名最便宜的来源之一（见 [§9.18](09-decisions.md)）；不进 embedding 的理由是大量文件名是 `IMG_1234.jpg`、`微信图片_20240101.jpg` 这类纯噪声，混进向量只会稀释语义。
 
 `original_filename` 是用户提供的字符串，**和 `mime` 一样不可信**：不据此判断格式、不用于构造任何路径、入库前限长并去掉控制字符。它对应 §5.2.6 的 `originalFilename`，前端在图片加载失败时用它兜底显示。
 
@@ -105,7 +110,7 @@ memes(
 
 全站固定 1024 维。**不是每条记录的属性**，所以表里没有 `embed_dim` 字段。
 
-`embed_model` 保留，用于管理员更换模型后找出待重算的记录。全站统一 embedding 的理由见 [§9.6](09-decisions.md)——这是共享库带来的硬约束，不是可调参数。
+`embed_model` 保留，用于管理员更换模型后找出待重算的记录，**同时是向量通路的召回条件**——见 [§6.3.1](06-endpoints.md#631-搜索) 与 [§9.20](09-decisions.md)。全站统一 embedding 的理由见 [§9.6](09-decisions.md)——这是共享库带来的硬约束，不是可调参数。
 
 ### §5.2.5 软删
 
@@ -120,7 +125,8 @@ R2 上的原图延迟清理：软删满 30 天后由定时任务物理删除，�
   id, uploaderId, uploaderName,
   url, thumbUrl,            // 由 storageKey 派生的访问地址，不返回 storageKey 本身
   mime, width, height, sizeBytes, isAnimated, originalFilename,
-  ocrText, description, emotions[], scenes[], tags[],
+  ocrText, description,
+  expressions[], emotions[], tones[], purposes[], scenes[], tags[],
   tagStatus, visionModel,
   favorited,                // 当前登录用户是否收藏，见 §5.4
   editedBy?, editedAt?, createdAt

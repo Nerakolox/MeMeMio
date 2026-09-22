@@ -72,13 +72,13 @@ describe('GET /search', () => {
     // 顺序因此完全由「被几路召回」决定，不牵扯两边的相似度谁更高。
     const bothPaths = await makeMeme(db, {
       uploaderId: alice.id,
-      searchText: '无语 猫 的表情',
+      ocrText: '无语 猫 的表情',
       emotions: ['无语'],
       tags: ['猫'],
     })
     const tagOnly = await makeMeme(db, {
       uploaderId: alice.id,
-      searchText: '一只面无表情的猫',
+      ocrText: '一只面无表情的猫',
       emotions: ['无语'],
       tags: ['猫'],
     })
@@ -102,7 +102,7 @@ describe('GET /search', () => {
 
   it('embedding 未配置时 degraded: true，OCR + 标签仍然出结果，不报错', async () => {
     const alice = await createUser(db)
-    const hit = await makeMeme(db, { uploaderId: alice.id, searchText: '一只趴在桌上的猫' })
+    const hit = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只趴在桌上的猫' })
 
     const res = await search('?q=趴在桌上的猫')
     expect(res.status).toBe(200)
@@ -123,8 +123,8 @@ describe('GET /search', () => {
 
   it('软删的记录不出现在结果里', async () => {
     const alice = await createUser(db)
-    const alive = await makeMeme(db, { uploaderId: alice.id, searchText: '一只很生气的猫' })
-    const deleted = await makeMeme(db, { uploaderId: alice.id, searchText: '一只很生气的猫' })
+    const alive = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只很生气的猫' })
+    const deleted = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只很生气的猫' })
     await softDeleteMeme(deleted.id, alice, db)
 
     const body = (await (await search('?q=生气的猫')).json()) as { items: { id: string }[] }
@@ -137,7 +137,7 @@ describe('GET /search', () => {
   it('结果带 favorited（当前登录用户）', async () => {
     const alice = await createUser(db)
     const bob = await createUser(db)
-    const meme = await makeMeme(db, { uploaderId: alice.id, searchText: '一只打哈欠的猫' })
+    const meme = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只打哈欠的猫' })
     await favoriteMeme(db, bob.id, meme.id)
 
     // 这个测试挂载的 app 不带鉴权中间件，所以 currentUser 恒为 null → favorited 恒 false。
@@ -163,7 +163,7 @@ describe('GET /search', () => {
 
     const alice = await createUser(db)
     for (let i = 0; i < 3; i += 1) {
-      await makeMeme(db, { uploaderId: alice.id, searchText: '一只睡觉的猫' })
+      await makeMeme(db, { uploaderId: alice.id, ocrText: '一只睡觉的猫' })
     }
 
     const body = (await (await search('?q=睡觉的猫&limit=999')).json()) as {
@@ -175,7 +175,7 @@ describe('GET /search', () => {
 
   it('没有任何一路召回时返回空数组，不是 404', async () => {
     const alice = await createUser(db)
-    await makeMeme(db, { uploaderId: alice.id, searchText: '一只狗' })
+    await makeMeme(db, { uploaderId: alice.id, ocrText: '一只狗' })
 
     const res = await search('?q=完全不相干的一句话')
     expect(res.status).toBe(200)
@@ -188,7 +188,7 @@ describe('GET /search', () => {
 
   it('响应里不含 storageKey', async () => {
     const alice = await createUser(db)
-    await makeMeme(db, { uploaderId: alice.id, searchText: '一只很开心的猫' })
+    await makeMeme(db, { uploaderId: alice.id, ocrText: '一只很开心的猫' })
 
     const body = (await (await search('?q=开心的猫')).json()) as { items: Record<string, unknown>[] }
     expect(body.items.length).toBeGreaterThan(0)
@@ -202,11 +202,18 @@ describe('GET /search', () => {
 describe('向量路可用时', () => {
   it('unitVector 造的数据在向量路上能被召回', async () => {
     // 这个用例不经过 HTTP（上面挂的 app 没有 embedding 配置），直接验证
-    // 「塞了向量的记录，查询向量能找到它」这条链路在真库上成立
+    // 「塞了向量的记录，查询向量能找到它」这条链路在真库上成立。
+    // `embedModel` 两边必须是同一个：向量路按它过滤（SPEC §9.20），
+    // 种子不写的话这里会查出空数组，而那不是这条用例想测的东西。
+    const model = 'test-embed-model'
     const alice = await createUser(db)
-    const meme = await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(7) })
+    const meme = await makeMeme(db, {
+      uploaderId: alice.id,
+      embedding: unitVector(7),
+      embedModel: model,
+    })
 
     const { vectorPathCandidates } = await import('../src/data/search.js')
-    expect(await vectorPathCandidates(unitVector(7), db)).toContain(meme.id)
+    expect(await vectorPathCandidates(unitVector(7), model, [], db)).toContain(meme.id)
   })
 })

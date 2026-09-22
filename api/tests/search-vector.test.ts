@@ -34,6 +34,16 @@ const { searchMemes } = await import('../src/services/search.js')
 
 const { sql, db } = createTestDb()
 
+/**
+ * 种子记录的 `embed_model` **必须和 `DEFAULT_EMBED_MODEL` 一模一样**。
+ *
+ * 向量路按 `embed_model` 过滤（SPEC §9.20）：换模型期间库里会同时存在两代向量，
+ * 而两个模型的向量不在同一个空间里，它们之间的余弦距离只是噪声。种子不写这个字段
+ * 的表现是**向量路一条都召不回**，而接口仍然 200、degraded 仍然 false——
+ * 于是这一整个文件都在测一条根本没跑的通路。
+ */
+const EMBED_MODEL = 'qwen3-embedding-0.6b'
+
 /** 假服务收到的请求体，用来断言查询侧真的带了 instruct 前缀。 */
 const received: { embeddings: { input: string; dimensions?: number }[]; chat: unknown[] } = {
   embeddings: [],
@@ -125,8 +135,16 @@ beforeEach(async () => {
 describe('向量路跑起来时', () => {
   it('降级为 false，结果带 vector 标记', async () => {
     const alice = await createUser(db)
-    const nearest = await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1) })
-    const farther = await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(2) })
+    const nearest = await makeMeme(db, {
+      uploaderId: alice.id,
+      embedding: unitVector(1),
+      embedModel: EMBED_MODEL,
+    })
+    const farther = await makeMeme(db, {
+      uploaderId: alice.id,
+      embedding: unitVector(2),
+      embedModel: EMBED_MODEL,
+    })
 
     const outcome = await searchMemes('随便搜点什么', 10, null, 'test-request-id', db)
 
@@ -139,21 +157,37 @@ describe('向量路跑起来时', () => {
     expect(ids.indexOf(nearest.id)).toBeLessThan(ids.indexOf(farther.id))
   })
 
-  it('rewritten 是 HyDE 的产物，向量检索用的是改写后的文本', async () => {
+  it('rewritten 是 HyDE 的产物，**原查询和改写一起**送去 embedding', async () => {
     const alice = await createUser(db)
-    await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1) })
+    await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1), embedModel: EMBED_MODEL })
 
     const outcome = await searchMemes('不想上班', 10, null, 'test-request-id', db)
 
     expect(outcome.rewritten).toBe(rewriteText)
-    // 送去 embedding 的必须是改写后的文本，而不是用户原话（retrieval.md §3）
+
+    // ⚠️ 这条 2026-09-22 反过来了。原先断言的是「送去 embedding 的**不含**用户原话」，
+    //    即改写**替换**原查询。那是个 bug：HyDE 的假设是「用户查询和文档不在一个表述层面，
+    //    拿一段假文档去比更准」，但改写是模型的猜测，猜歪了整条向量路就跟着歪——
+    //    而用户真正打的那几个字已经被丢掉了，没有任何东西能把它拉回来。
+    //    实测里「不想上班」被改写成一段橘猫打瞌睡的描述，召回的全是猫。
+    //    现在是拼接：原查询在前、改写在后（`services/search.ts` 的 embedInput）。
     expect(received.embeddings[0]?.input).toContain(rewriteText)
-    expect(received.embeddings[0]?.input).not.toContain('不想上班')
+    expect(received.embeddings[0]?.input).toContain('不想上班')
+  })
+
+  it('⚠️ 拼接顺序是原查询在前 —— 截断发生在尾部，该被砍的是猜测那一半', async () => {
+    const alice = await createUser(db)
+    await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1), embedModel: EMBED_MODEL })
+
+    await searchMemes('不想上班', 10, null, 'test-request-id', db)
+
+    const input = received.embeddings[0]?.input ?? ''
+    expect(input.indexOf('不想上班')).toBeLessThan(input.indexOf(rewriteText))
   })
 
   it('查询侧带 instruct 前缀，文档侧不带', async () => {
     const alice = await createUser(db)
-    await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1) })
+    await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1), embedModel: EMBED_MODEL })
 
     await searchMemes('不想上班', 10, null, 'test-request-id', db)
 
@@ -164,7 +198,11 @@ describe('向量路跑起来时', () => {
 
   it('HyDE 失败时用原查询兜底，向量路照常出结果', async () => {
     const alice = await createUser(db)
-    const nearest = await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1) })
+    const nearest = await makeMeme(db, {
+      uploaderId: alice.id,
+      embedding: unitVector(1),
+      embedModel: EMBED_MODEL,
+    })
 
     chatFails = true
     const outcome = await searchMemes('不想上班', 10, null, 'test-request-id', db)
@@ -180,12 +218,13 @@ describe('向量路跑起来时', () => {
     const alice = await createUser(db)
     const byText = await makeMeme(db, {
       uploaderId: alice.id,
-      searchText: '不想上班的表情',
+      ocrText: '不想上班的表情',
       embedding: unitVector(1),
+      embedModel: EMBED_MODEL,
     })
     const byTag = await makeMeme(db, {
       uploaderId: alice.id,
-      searchText: '完全无关的正文',
+      ocrText: '完全无关的正文',
       emotions: ['无语'],
     })
 
@@ -211,7 +250,12 @@ describe('向量路跑起来时', () => {
   it('limit 生效：超过 limit 的结果被截断', async () => {
     const alice = await createUser(db)
     for (let i = 0; i < 5; i += 1) {
-      await makeMeme(db, { uploaderId: alice.id, searchText: '不想上班', embedding: unitVector(i + 1) })
+      await makeMeme(db, {
+        uploaderId: alice.id,
+        ocrText: '不想上班',
+        embedding: unitVector(i + 1),
+        embedModel: EMBED_MODEL,
+      })
     }
 
     const outcome = await searchMemes('不想上班', 2, null, 'test-request-id', db)

@@ -150,13 +150,23 @@ async function workUntilSettled(memeId: string, timeoutMs = 15_000): Promise<voi
   }
 }
 
+/**
+ * 一次合法的视觉产出。**六个维度都填上，而且各自填的是只属于那一维的词**。
+ *
+ * 这张图正是拆维度的理由：脸上是「翻白眼」（看得见的事实），心里是「无语」（内心状态），
+ * 语气是「无所谓」（怎么说的），交流用途是「吐槽」（想完成什么）。拆之前这四个只能
+ * 一起挤进 emotions / scenes，挤完就分不清哪个是脸哪个是心了（SPEC §4.3.1）。
+ */
 const OK_CONTENT = JSON.stringify({
   ocrText: '我服了',
   description: '一只猫翻着白眼，一脸无话可说的表情，配着「我服了」三个大字',
+  expressions: ['翻白眼'],
   // 「服了」不在 emotions 里，靠别名归一化成「无语」——这条断言顺便钉住了
   // 「alias 归一化排在校验词表之前」（ai-providers.md §5）
   emotions: ['服了'],
-  scenes: ['吐槽'],
+  tones: ['无所谓'],
+  purposes: ['吐槽'],
+  scenes: [],
   tags: { subject: ['猫'], style: ['真人'] },
 })
 
@@ -181,7 +191,7 @@ afterAll(async () => {
 // ── 正常路径 ───────────────────────────────────────────────────────
 
 describe('打标成功', () => {
-  it('五个字段 + search_text + embedding 一次写完，任务标 done', async () => {
+  it('八个字段 + search_text + embedding 一次写完，任务标 done', async () => {
     const { id, userId } = await seedMeme()
     await enqueue(id, userId)
 
@@ -191,17 +201,22 @@ describe('打标成功', () => {
     expect(row.tagStatus).toBe('ok')
     expect(row.ocrText).toBe('我服了')
     expect(row.description).toContain('翻着白眼')
+    // 六个维度逐个断言：漏掉某一维的写入，表现是那一维永远是空数组而打标仍然 ok
+    expect(row.expressions).toEqual(['翻白眼'])
     // alias 归一化：「服了」→「无语」（shared/vocab/vocab.json）
     expect(row.emotions).toEqual(['无语'])
-    expect(row.scenes).toEqual(['吐槽'])
+    expect(row.tones).toEqual(['无所谓'])
+    expect(row.purposes).toEqual(['吐槽'])
+    expect(row.scenes).toEqual([])
     // tags 是扁平的 text[]，subject 和 style 合到一起
     expect(row.tags).toEqual(['猫', '真人'])
     expect(row.visionModel).toBe('test-vision')
 
-    // search_text 必须和五个来源字段同一条 UPDATE 写进去，否则文本检索搜不到这张图
+    // search_text 必须和八个来源字段同一条 UPDATE 写进去，否则文本检索搜不到这张图
     expect(row.searchText).not.toBeNull()
     expect(row.searchText).toContain('我服了')
     expect(row.searchText).toContain('吐槽')
+    expect(row.searchText).toContain('翻白眼')
     // original_filename **不进** search_text（SPEC §5.2.3）
     expect(row.searchText).not.toContain('.png')
 
@@ -242,6 +257,39 @@ describe('打标成功', () => {
     expect(row.tagStatus).toBe('ok')
     expect(row.emotions).toEqual(['开心'])
     expect(row.tags).toEqual(['狗'])
+  })
+
+  it('⚠️ 填错维度的词条也被丢掉 —— 校验按维度，不是按全表', async () => {
+    // 这是拆维度**唯一**要挡住的那个错误，也是模型最爱犯的：看见一张笑脸就往
+    // emotions 里写「微笑」。「微笑」是 expressions 的正式词条，按全表校验会照单全收，
+    // 于是那张图被标成一个视觉事实推不出来的情绪——而没有任何地方会报错（SPEC §4.3.1）。
+    visionReplies = [
+      chat(
+        JSON.stringify({
+          ocrText: '你说得都对',
+          description: '一个角色在微笑',
+          expressions: ['微笑'],
+          emotions: ['微笑'], // 越界：这是表情不是情绪
+          tones: ['开心'], // 越界：这是情绪不是语气
+          purposes: ['敷衍'], // 越界：这是语气不是用途
+          scenes: [],
+          tags: { subject: [], style: ['动漫'] },
+        }),
+      ),
+    ]
+    const { id, userId } = await seedMeme()
+    await enqueue(id, userId)
+    await workUntilSettled(id)
+
+    const row = await memeRow(id)
+    expect(row.tagStatus).toBe('ok')
+    expect(row.expressions).toEqual(['微笑'])
+    // 三个越界的词各自被打回，而不是搬到它该在的那一维——
+    // 数据层不替模型做「表情推情绪」这种判断（data/memes.ts 的 TagResult）
+    expect(row.emotions).toEqual([])
+    expect(row.tones).toEqual([])
+    expect(row.purposes).toEqual([])
+    expect(row.tags).toEqual(['动漫'])
   })
 })
 

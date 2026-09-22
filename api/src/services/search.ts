@@ -6,7 +6,7 @@ import { fuseRankings, type RankedPath } from '../lib/rrf.js'
 import { matchVocabTerms } from '../lib/vocab-match.js'
 import type { Db } from '../data/db.js'
 import type { MemeRow } from '../data/memes.js'
-import { hasUnfinishedReindexJobs } from '../data/reindex-jobs.js'
+import { hasReindexBacklog } from '../data/reindex-jobs.js'
 import {
   findMemesForSearch,
   ocrPathCandidates,
@@ -44,17 +44,20 @@ export type SearchHit = MemeRow & {
 export type SearchOutcome = {
   items: SearchHit[]
   /**
-   * 结果可能不全，前端提示但不阻断展示。两种原因共用这一个布尔：
+   * 结果可能不全，前端提示但不阻断展示。两类原因共用这一个布尔：
    *
-   *   1. 向量路没参与（没配 embedding 或调用失败）；
-   *   2. 还有未完成的重算任务——一部分图的向量是旧模型算的，和查询向量不在同一个
-   *      空间里，召回会偏（SPEC §6.5.4）。
+   *   1. 向量路没跑（没配 embedding 或编码失败）；
+   *   2. 向量路跑了，但**只在当前模型的向量里跑**——队列里还有没走完的重算任务，
+   *      旧模型那部分召不回来（SPEC §6.3.1、§9.20）。
    *
    * 不拆成两个字段是因为前端的动作是同一个（挂一条「结果可能不全」的提示），
    * 而拆开会让「两个都为真」时的文案变成一道组合题。具体原因写在日志里。
    */
   degraded: boolean
-  /** HyDE 改写后的查询，失败时为 null。 */
+  /**
+   * HyDE 改写后的查询，失败时为 null。**只是给用户看的**——它不是结构化的查询理解
+   * 结果，也不参与过滤（SPEC §6.3.1）。
+   */
   rewritten: string | null
 }
 
@@ -77,16 +80,20 @@ export async function searchMemes(
   //   - 标签路只做词表精确匹配，改写对它没有意义；
   //   - OCR 路要的是「用户还记得的那句原文」，改写反而会把它抹掉。
   // 只有向量路用改写结果——语义检索才是 HyDE 真正帮上忙的地方（retrieval.md §3）。
-  const terms = matchVocabTerms(query)
-  const vector = startVectorPath(query, actorId, requestId)
+  //
+  // `exclude` 是用户明说不要的词条（「猫 不要 真人」）。它**三路都要带**：
+  // 排除是过滤不是负分（SPEC §6.3.1），而且必须发生在各路取 top-N **之前**——
+  // 融合完再滤的话，被剔掉的名额不会有别的图补上，用户看到的是一个莫名其妙变短的列表。
+  const { include, exclude } = matchVocabTerms(query)
+  const vector = startVectorPath(query, exclude, actorId, requestId, db)
 
-  const [vectorResult, ocrResult, tagResult, reindexResult] = await Promise.allSettled([
+  const [vectorResult, ocrResult, tagResult, backlogResult] = await Promise.allSettled([
     vector.candidates,
-    ocrPathCandidates(query, db),
-    tagPathCandidates(terms, db),
+    ocrPathCandidates(query, exclude, db),
+    tagPathCandidates(include, exclude, db),
     // 和三路一起出发，不串在后面：它是存在性查询（`limit 1` 命中 claim 索引，
-    // 见 `hasUnfinishedReindexJobs` 的注释），但再便宜的查询串行也是加一个往返
-    hasUnfinishedReindexJobs(db),
+    // 见 `hasReindexBacklog` 的注释），但再便宜的查询串行也是加一个往返
+    hasReindexBacklog(db),
   ])
 
   const paths: RankedPath[] = []
@@ -115,13 +122,20 @@ export async function searchMemes(
     )
   }
 
-  // 重算在跑：向量路**照常参与**（旧向量也是向量，能召回总比召不回强），只是标记结果不全。
-  // 查询本身失败时按「没在重算」处理——为了一个提示字段让整次搜索 500 是不划算的
-  if (reindexResult.status === 'rejected') {
-    log.warn({ requestId, err: reindexResult.reason }, 'search: reindex 进度查询失败，按未降级处理')
-  } else if (reindexResult.value) {
+  // 队列里还有没走完的重算任务：向量路**照常参与，但只在当前模型的向量里参与**
+  // （`vectorPathCandidates` 的 `embed_model` 过滤）。旧模型那部分这次召不回来，
+  // 所以要如实标记。
+  //
+  // ⚠️ 这里以前写的是「旧向量也是向量，能召回总比召不回强」，那句话是错的：
+  //    两个模型的向量不在同一个空间里，它们之间的余弦距离不是「更像」只是噪声，
+  //    混进 RRF 等于把随机排名当成有效排名，挤掉的是另外两路的真结果（SPEC §9.20）。
+  //
+  // 查询本身失败时按「没降级」处理——为了一个提示字段让整次搜索 500 是不划算的
+  if (backlogResult.status === 'rejected') {
+    log.warn({ requestId, err: backlogResult.reason }, 'search: reindex 进度查询失败，按未降级处理')
+  } else if (backlogResult.value) {
     degraded = true
-    log.info({ requestId }, 'search degraded: 还有未完成的重算任务')
+    log.info({ requestId }, 'search degraded: 队列里还有没走完的重算任务，向量路只覆盖当前模型')
   }
 
   const fused = fuseRankings(paths, effectiveLimit)
@@ -169,7 +183,13 @@ type VectorPath = {
  *    **不报错，只是每个搜索请求多一个往返**。所以配置解析留成 Promise，两个产物
  *    各自 `await` 它。
  */
-function startVectorPath(query: string, actorId: string | null, requestId: string): VectorPath {
+function startVectorPath(
+  query: string,
+  exclude: string[],
+  actorId: string | null,
+  requestId: string,
+  db: Db,
+): VectorPath {
   const configured = resolveEmbedConfig()
 
   const rewritten = configured
@@ -185,19 +205,34 @@ function startVectorPath(query: string, actorId: string | null, requestId: strin
     const config = await configured
     if (config === null) return null
 
-    // 改写失败（null）时退回原查询：改写只是锦上添花，不该让整条向量路跟着消失
-    const text = (await rewritten) ?? query
+    const input = embedInput(query, await rewritten)
 
     // 查询侧要 instruct 前缀，文档侧不要。两边都加或都不加会掉点（retrieval.md §4）
     // 配置显式传下去，不让 embedText 再解析一次（同一请求里查两次库，还可能拿到不同结果）
-    const embedded = await embedText(withInstructPrefix(text, config.model), config)
+    const embedded = await embedText(withInstructPrefix(input, config.model), config)
     if (!embedded.ok) {
       log.warn({ requestId, reason: embedded.reason }, 'search: embed failed, vector path skipped')
       return null
     }
 
-    return vectorPathCandidates(embedded.vector)
+    return vectorPathCandidates(embedded.vector, config.model, exclude, db)
   })()
 
   return { candidates, rewritten }
+}
+
+/**
+ * 喂给 embedding 的文本：**原查询 + 改写，不是只有改写**。
+ *
+ * 改写是补充不是替代。只编码改写的代价是「改写丢掉的东西就永久丢掉了」，而它最爱丢的
+ * 正是否定和语气——「不要真人」被改写成「一个真人在摆手」之后，向量路会兴高采烈地召回
+ * 一整屏用户明说不要的图，**没有任何地方会报错**。原查询留在输入里，至少那几个字还在。
+ *
+ * 拼接顺序是原查询在前：它是用户真正打的字，改写是模型的猜测；截断发生在尾部
+ * （见 lib/vector.ts），该被砍掉的应该是猜测那一半。
+ *
+ * 改写失败（null）时退回原查询，向量路照跑——改写只是锦上添花，不该让整条路跟着消失。
+ */
+function embedInput(query: string, rewritten: string | null): string {
+  return rewritten === null ? query : `${query} ${rewritten}`
 }

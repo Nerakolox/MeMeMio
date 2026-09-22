@@ -3,9 +3,8 @@ import { X } from 'lucide-react'
 import type { Meme } from '../../lib/api'
 import { formatBytes, formatDate } from '../../lib/format'
 import { tagStatusLabel } from '../../lib/tag-status'
-import { emotionOptions, sceneOptions, tagOptions } from '../../lib/vocab'
 import { TOUCH } from '../../lib/touch'
-import { VocabPicker } from '../../components/VocabPicker'
+import { VocabSections } from '../../components/VocabSections'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -195,25 +194,14 @@ export function MemeEditPanel({
             />
           </section>
 
-          <VocabPicker
-            title="情绪"
-            options={emotionOptions}
-            selected={draft.emotions}
-            onChange={(next) => update('emotions', next)}
-            disabled={saving}
-          />
-          <VocabPicker
-            title="场景"
-            options={sceneOptions}
-            selected={draft.scenes}
-            onChange={(next) => update('scenes', next)}
-            disabled={saving}
-          />
-          <VocabPicker
-            title="标签"
-            options={tagOptions}
-            selected={draft.tags}
-            onChange={(next) => update('tags', next)}
+          {/*
+            六个词表维度（SPEC §4.3）。折叠、**有值的默认展开**，所以打开面板第一眼
+            看到的就是模型给这张图打了什么，空的那几维收着不占版面。
+            分区清单在 `lib/vocab.ts`，这里不重复一遍维度名。
+          */}
+          <VocabSections
+            values={draft}
+            onChange={(field, next) => update(field, next)}
             disabled={saving}
           />
 

@@ -52,7 +52,10 @@ export type SerializeMemeInput = {
   isAnimated: boolean
   ocrText: string | null
   description: string | null
+  expressions: string[] | null
   emotions: string[] | null
+  tones: string[] | null
+  purposes: string[] | null
   scenes: string[] | null
   tags: string[] | null
   tagStatus: string
@@ -82,8 +85,12 @@ export function serializeMeme(row: SerializeMemeInput) {
     originalFilename: row.originalFilename,
     ocrText: row.ocrText,
     description: row.description,
-    // 三个数组字段在库里可为 null，对外一律是数组。客户端不该处理 null 和 [] 两种空
+    // 六个数组字段在库里可为 null，对外一律是数组。客户端不该处理 null 和 [] 两种空。
+    // 顺序跟 SPEC §5.2.6 的清单一致：表情 → 情绪 → 语气 → 用途 → 情境 → 主体风格。
+    expressions: row.expressions ?? [],
     emotions: row.emotions ?? [],
+    tones: row.tones ?? [],
+    purposes: row.purposes ?? [],
     scenes: row.scenes ?? [],
     tags: row.tags ?? [],
     tagStatus: row.tagStatus,
