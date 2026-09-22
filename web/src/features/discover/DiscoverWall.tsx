@@ -4,6 +4,7 @@ import { RefreshCw, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
+import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { ApiError, fetchMemes, toStateError, toggleFavorite, type Meme } from '../../lib/api'
 import { TOUCH } from '../../lib/touch'
@@ -154,19 +155,22 @@ export function DiscoverWall() {
       )}
 
       {state.kind === 'ok' && state.items.length > 0 && (
-        <div className={WALL_GRID}>
-          {/* 这一屏只有收藏一个动作，**没有复制 / 下载 / 分享**，是有意的：
-              发送路径的入口至今只做到搜索结果与浏览页（见
-              joint-tasks/2026-09-19-browse-meme-actions.md 的「明确不做」——
-              图墙卡片上那片位置留给后续的「复制 / 发送」）。
-              真流程在 src/lib/clipboard.ts，接的时候直接用它，别在这里另写一份。
+        // 全屏里 ←/→ 翻的就是这一屏随机出来的那批
+        <MemeGallery items={state.items}>
+          <div className={WALL_GRID}>
+            {/* 这一屏只有收藏一个动作，**没有复制 / 下载 / 分享**，是有意的：
+                发送路径的入口至今只做到搜索结果与浏览页（见
+                joint-tasks/2026-09-19-browse-meme-actions.md 的「明确不做」——
+                图墙卡片上那片位置留给后续的「复制 / 发送」）。
+                真流程在 src/lib/clipboard.ts，接的时候直接用它，别在这里另写一份。
 
-              要接的时候**不用改卡片**：`MemeCard` 的 `actions` 那个槽就是给它的，
-              浏览页往同一个槽里放了「⋯」（components/MemeCard.tsx）。 */}
-          {state.items.map((meme) => (
-            <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
-          ))}
-        </div>
+                要接的时候**不用改卡片**：`MemeCard` 的 `actions` 那个槽就是给它的，
+                浏览页往同一个槽里放了「⋯」（components/MemeCard.tsx）。 */}
+            {state.items.map((meme) => (
+              <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
+            ))}
+          </div>
+        </MemeGallery>
       )}
     </section>
   )

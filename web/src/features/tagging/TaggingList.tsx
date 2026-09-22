@@ -3,6 +3,7 @@ import { TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
+import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { ApiError, fetchMemes, toStateError, toggleFavorite, type Meme } from '../../lib/api'
 import { TOUCH } from '../../lib/touch'
@@ -122,13 +123,16 @@ export function TaggingList({ status }: { status: string }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className={GRID}>
-        {/* 角标是这个列表的全部信息量——它的用途就是**看哪张卡卡在哪个状态上**
-            （styling.md「状态的视觉表达」）。角标在卡片里（components/MemeCard.tsx）。 */}
-        {items.map((meme) => (
-          <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
-        ))}
-      </div>
+      {/* 全屏里 ←/→ 翻的就是已经翻出来的这几页（加载更多之后接着往下翻） */}
+      <MemeGallery items={items}>
+        <div className={GRID}>
+          {/* 角标是这个列表的全部信息量——它的用途就是**看哪张卡卡在哪个状态上**
+              （styling.md「状态的视觉表达」）。角标在卡片里（components/MemeCard.tsx）。 */}
+          {items.map((meme) => (
+            <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
+          ))}
+        </div>
+      </MemeGallery>
 
       {/* 翻页用按钮而不是无限滚动：这是个清点用的列表，用户想知道「还有没有」，
           而不是滑到哪算哪。 */}

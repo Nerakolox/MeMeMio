@@ -138,6 +138,30 @@
    * （同上面圆角刻度那份副本的理由）。
    */
   --app-header-h: 3.5rem;
+
+  /*
+   * 全屏阅览器让出去的两条边（2026-09-23 改成左图右栏那次）。
+   * **窄屏是 0**：左右那种布局在手机上放不下，那一档仍是「图铺满屏幕 + 底部一条信息卡」
+   * （`ImageViewer.tsx` 里 `lg:` 那几处与 `viewerStyles` 一起看）。
+   *
+   * 同样必须是 `:root` 里的变量，而且这次的理由更强——它**跨了两套东西**：
+   * 一边是 JS 给 YARL 的 `styles.container` 宽高（那边只能给值或 `var(...)`），
+   * 另一边是右栏与缩略图轨道自己的 `w-(--viewer-aside-w)` / `h-(--viewer-rail-h)`。
+   * 两边各写一个数不会报错，只会差出一条缝：图片区让出的宽度和信息栏实际占的宽度对不上。
+   */
+  --viewer-aside-w: 0px;
+  --viewer-rail-h: 0px;
+}
+
+/*
+ * `lg`（Tailwind v4 默认 64rem = 1024px）那一档才摆右栏与缩略图轨道。
+ * 数值改了要留意：`ImageViewer.tsx` 里配对的 `lg:flex` / `lg:hidden` 也得跟着改。
+ */
+@media (min-width: 64rem) {
+  :root {
+    --viewer-aside-w: 22rem;
+    --viewer-rail-h: 5.5rem;
+  }
 }
 
 @media (prefers-color-scheme: dark) {

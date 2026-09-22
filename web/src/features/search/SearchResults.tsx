@@ -2,6 +2,7 @@ import { TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
+import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { MATCHED_BY_LABELS, type Meme, type SearchResult } from '../../lib/api'
 import { SEND_LABELS, detectSendPath } from '../../lib/clipboard'
@@ -108,19 +109,22 @@ export function SearchResults({
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">没有找到相关的图，换个说法试试</p>
       ) : (
-        <div className={RESULT_GRID} role="listbox" aria-label="搜索结果">
-          {items.map((meme, index) => (
-            // 服务端 RRF 已排好序，不要按 matchedBy 重排。见 SPEC §6.3.1
-            <ResultItem
-              key={meme.id}
-              meme={meme}
-              index={index}
-              selected={index === selectedIndex}
-              onActivate={onActivate}
-              onFavorite={onFavorite}
-            />
-          ))}
-        </div>
+        // 这一批就是「用户看的那一批」：全屏里 ←/→ 翻的就是这次搜索的结果
+        <MemeGallery items={items}>
+          <div className={RESULT_GRID} role="listbox" aria-label="搜索结果">
+            {items.map((meme, index) => (
+              // 服务端 RRF 已排好序，不要按 matchedBy 重排。见 SPEC §6.3.1
+              <ResultItem
+                key={meme.id}
+                meme={meme}
+                index={index}
+                selected={index === selectedIndex}
+                onActivate={onActivate}
+                onFavorite={onFavorite}
+              />
+            ))}
+          </div>
+        </MemeGallery>
       )}
 
       {copyNote && (

@@ -32,6 +32,7 @@ import {
 } from 'masonic'
 import { TriangleAlert } from 'lucide-react'
 import * as React from 'react'
+import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
@@ -135,22 +136,26 @@ export function BrowseResults({
       )}
 
       {items.length > 0 && (
-        <BrowseWall
-          // 换 key 强制重挂，位置器从零重建（删除让 items 缩短时必需，见 use-browse-list 的 epoch）
-          key={epoch}
-          scrollEl={scrollEl ?? null}
-          items={items.map((meme) => ({
-            meme,
-            favorite: () => list.applyFavorite(meme),
-            send: (t: SendTarget) => void onSend(t),
-            edit: () => onEdit(meme),
-            remove: () => onRemove(meme),
-            // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
-            // 前端判断只是体验，服务端仍会独立判一次。
-            canDelete: user?.role === 'admin' || meme.uploaderId === user?.id,
-          }))}
-          itemKey={(item) => item.meme.id}
-        />
+        // 给的是**原始那批**，不是下面 `map` 出来的那份：全屏只认图，多出来的几个回调
+        // 是图墙自己的事。滚到底新加载的那一批会接在后面，所以「翻到下一张」能一直翻下去。
+        <MemeGallery items={items}>
+          <BrowseWall
+            // 换 key 强制重挂，位置器从零重建（删除让 items 缩短时必需，见 use-browse-list 的 epoch）
+            key={epoch}
+            scrollEl={scrollEl ?? null}
+            items={items.map((meme) => ({
+              meme,
+              favorite: () => list.applyFavorite(meme),
+              send: (t: SendTarget) => void onSend(t),
+              edit: () => onEdit(meme),
+              remove: () => onRemove(meme),
+              // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
+              // 前端判断只是体验，服务端仍会独立判一次。
+              canDelete: user?.role === 'admin' || meme.uploaderId === user?.id,
+            }))}
+            itemKey={(item) => item.meme.id}
+          />
+        </MemeGallery>
       )}
 
       {/* sentinel —— 无限滚动观察它。`h-px` 不能写成 0 高：`threshold: 0.1` 对零面积元素
