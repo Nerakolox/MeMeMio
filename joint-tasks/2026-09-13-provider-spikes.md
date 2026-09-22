@@ -1,6 +1,6 @@
 # 供应商探测
 
-**状态：`planning`** · 创建 2026-09-13
+**状态：`in_progress`** · 创建 2026-09-13 · **2026-09-22 更正**：此前写 `planning` 是过期的，探测早就开工了——[`docs/fixtures/responses/`](../docs/fixtures/responses/) 里已有两份真实响应转储（2026-09-14，`api.codexzh.com` / `api.deepseek.com`）。按任务板的口径是「持续优化」类，转 `in_progress`。**「做完的标准」那 8 条一条都还没勾**，其中「至少测 3 个供应商」才走完 2 个；最重要的是第三项拒绝形态——它决定 `AI_REFUSED` 的判定怎么写，没测出来之前那段判定仍然是推测。
 
 ## 为什么
 

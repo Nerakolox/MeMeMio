@@ -38,6 +38,8 @@ export function ReindexPanel({ refreshToken }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
+  /** 这一次点击排进去几条的反馈。**必须两个分支都有话**，理由见 `handleStart`。 */
+  const [startNote, setStartNote] = useState<string | null>(null)
   const [manualTick, setManualTick] = useState(0)
 
   useEffect(() => {
@@ -72,9 +74,19 @@ export function ReindexPanel({ refreshToken }: Props) {
 
   async function handleStart() {
     setStartError(null)
+    setStartNote(null)
     setStarting(true)
     try {
-      await startReindex()
+      const { enqueuedCount } = await startReindex()
+      // **两个分支都要给一句话，这不是文案讲究。** `enqueuedCount` 为 0 时界面会和点击前
+      // 逐像素相同——徽标还是「空闲」、进度还是 100%、三个计数一动不动——用户只能靠猜
+      // 按钮生效没有，然后反复点。0 也不是失败：全库已是最新、或该排的早就排上了
+      // （`onConflictDoNothing` 的幂等，SPEC §6.5.4），所以它不能写成错误。
+      setStartNote(
+        enqueuedCount > 0
+          ? `已排队 ${enqueuedCount} 条，进度见上方。`
+          : '没有新排队的记录——全库已是最新，或是该排的已经在队列里了。',
+      )
       setManualTick((n) => n + 1)
     } catch (err) {
       setStartError(
@@ -140,6 +152,17 @@ export function ReindexPanel({ refreshToken }: Props) {
       </div>
       {/* 幂等，重复点不会让同一条记录重算两遍（SPEC §6.5.4），所以跑着的时候也不禁用 */}
       <p className="text-sm text-muted-foreground">重复触发是安全的：服务端幂等，不会重复排队。</p>
+
+      {/*
+        这一次点击的结果，和下面的 `startError` 是一对（互斥，都在点击时先清空）。
+        用行内 `role="status"` 而不是 toast：设置页的反馈一律不自动消失，
+        `http.md §5` 明确写了「不弹错误 toast」，同族的还有 EmbedSettings 的 `已保存`。
+      */}
+      {startNote && (
+        <p role="status" className="text-sm">
+          {startNote}
+        </p>
+      )}
 
       {startError && (
         <Alert variant="destructive">

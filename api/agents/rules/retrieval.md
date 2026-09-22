@@ -9,7 +9,7 @@
 ```
 q → HyDE 改写
   ├─ pg_trgm 子串匹配（ocr_text + description，外加 original_filename）  → top 50
-  ├─ 标签过滤（六个维度任一命中）                  → top 50
+  ├─ 标签过滤（七个维度任一命中）                  → top 50
   └─ 向量 HNSW（cosine，按 embed_model 过滤）      → top 50
   → RRF 融合 → 前 N 条（默认 50，最大 100）
 ```
@@ -20,7 +20,7 @@ q → HyDE 改写
 
 三条各自的约束写在旁边的括号里，但有两条是**改错了不报错**的，单独说：
 
-- **文本路不匹配 `search_text`**（SPEC §9.21）。`search_text` 里拼着六个数组的标签值，让 trgm 也匹配它就等于同一个信号被文本路和标签路各计一次分——靠标签沾边的图会压过原文精确命中的图。`original_filename` 反过来：它**参与 trgm 但不进 `search_text`**（SPEC §5.2.3），所以要单独提出来匹配。
+- **文本路不匹配 `search_text`**（SPEC §9.21）。`search_text` 里拼着七个数组的标签值，让 trgm 也匹配它就等于同一个信号被文本路和标签路各计一次分——靠标签沾边的图会压过原文精确命中的图。`original_filename` 反过来：它**参与 trgm 但不进 `search_text`**（SPEC §5.2.3），所以要单独提出来匹配。
 - **向量路按 `embed_model` 过滤**（SPEC §9.20）。换模型期间库里同时存在两代向量，而它们不在同一个空间里，余弦距离只是噪声。过滤掉旧的那批会让召回变少，所以这条**必须和 `degraded: true` 一起出现**，否则用户看到的是一个静默变差的搜索。
 
 ## 2. RRF

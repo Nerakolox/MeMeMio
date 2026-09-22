@@ -1,12 +1,12 @@
 /**
- * 六个语义维度的多选分区，筛选面板与编辑面板共用。
+ * 词表七个维度（六个语义 + `ratings` 分级，SPEC §4.3）的多选分区，筛选面板与编辑面板共用。
  *
  * ## 为什么是折叠的
  *
  * v0.2.0 把语义维度从两个拆成五个（SPEC §4.3），候选词从 163 个涨到 190 个。全部摊开的话
  * 这一版面在 220px 的筛选列里有两千多像素高——**用户要滚四屏才能看见「标签」那一节**，
  * 而他多半只想按其中一维筛。产品负责人 2026-09-22 已经为这一栏的体量提过两次
- * （「所有的标签、按钮都太大了，浏览页的筛选板块是最佳实例」），把三段直接变成六段
+ * （「所有的标签、按钮都太大了，浏览页的筛选板块是最佳实例」），段数只增不减
  * 等于把那句话再放大一倍。
  *
  * 折叠的代价是**可发现性**：收起来的维度用户不知道里面有什么。两处补偿：
@@ -40,7 +40,7 @@ export function VocabSections({
   disabled = false,
   className,
 }: {
-  /** 六个维度当前的值。筛选面板给的是 URL 里的，编辑面板给的是草稿里的。 */
+  /** 七个维度当前的值。筛选面板给的是 URL 里的，编辑面板给的是草稿里的。 */
   values: Record<VocabField, string[]>
   onChange: (field: VocabField, next: string[]) => void
   disabled?: boolean
@@ -58,7 +58,7 @@ export function VocabSections({
         const selected = values[field]
         return (
           <AccordionItem key={field} value={field}>
-            {/* 注册表默认 `p-4`（16px）+ `items-start`。六段叠起来那 32px 的竖直内边距
+            {/* 注册表默认 `p-4`（16px）+ `items-start`。七段叠起来那 32px 的竖直内边距
                 很显眼，而这一行的可点性由 `TOUCH` 兜（粗指针 44、细指针回到库自己的密度）。 */}
             <AccordionTrigger
               className={cn(TOUCH, 'items-center gap-2 px-3 py-2')}
@@ -67,7 +67,7 @@ export function VocabSections({
               <span className="flex min-w-0 items-center gap-2">
                 {label}
                 {/* 收起状态下这是唯一能看出「这一维筛过」的东西，所以数字不能省。
-                    选中的**词**不在这里列：六维全摊开就是另一个太长的版面。 */}
+                    选中的**词**不在这里列：全摊开就是另一个太长的版面。 */}
                 {selected.length > 0 && (
                   <Badge variant="secondary" className="shrink-0">
                     {selected.length}

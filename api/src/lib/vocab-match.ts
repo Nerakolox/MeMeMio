@@ -11,7 +11,7 @@ import { isKnownTerm, vocabulary } from '../vocab.js'
  *
  * **这一层不知道词属于哪个维度。** 用户搜「微笑」时不会声明那是 `expressions`，
  * 所以命中判定走 `isKnownTerm`（任一维度有就算），过滤条件由 `data/search.ts` 展开成
- * 六个数组的 OR。维度是打标和筛选 UI 的事，不是查询分词的事。
+ * 七个数组的 OR。维度是打标和筛选 UI 的事，不是查询分词的事。
  */
 
 /**

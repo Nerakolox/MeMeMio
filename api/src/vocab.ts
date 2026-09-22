@@ -10,6 +10,12 @@ import { VOCAB_PATH } from './paths.js'
  * v0.2.0 起是**六个维度**：五个语义维度 + 一个内容维度。它们**不能互相推导**——
  * 微笑是 expressions、开心是 emotions，前者看得见后者看不见（SPEC §4.3.1、§9.22）。
  *
+ * v0.3.0 加的是 `ratings`：**它不是第七个语义维度**，回答的是「这张图适不适合在这儿
+ * 出现」而不是「这张图在说什么」，所以**不适用 §4.3.1 的互不推导**——一张图可以有任意
+ * 的表情 / 情绪 / 语气 / 用途 / 情境，同时是成人向（SPEC §4.3、§9.23）。
+ * 它和其余六维的共同点只有两条：走同一套词表校验、走同一套筛选与编辑 UI。
+ * 所以它在下面的结构里和六维并列，在提示词的「不要互相推导」那一段里不出现。
+ *
  * ⚠️ 词条现在还是 proposed，代码只能把它当数据读，不能 `if (emotion === '无语')`。
  *    见 joint-tasks/2026-09-13-skeleton.md 的注意事项。
  */
@@ -24,6 +30,8 @@ export type Vocabulary = {
   purposes: string[]
   scenes: string[]
   tags: { subject: string[]; style: string[] }
+  /** 内容分级，扁平数组（没有 tags 那种分组）。目前只有「成人向」一个词条。 */
+  ratings: string[]
   aliases?: Record<string, string>
 }
 
@@ -35,8 +43,11 @@ function load(): Vocabulary {
 export const vocabulary: Vocabulary = load()
 
 /**
- * 六个维度的取值集合。**顺序就是提示词和前端筛选区的展示顺序**，
+ * 七个维度的取值集合。**顺序就是提示词和前端筛选区的展示顺序**，
  * 从「看得见」排到「要推断」：表情 → 情绪 → 语气 → 用途 → 情境 → 主体风格。
+ *
+ * `ratings` 排在**最后**：它不在那条「看得见 → 要推断」的轴上（它不是语义维度），
+ * 排末尾是为了让前六个的顺序保持原样——那个顺序本身是有含义的，新维度不该插进去。
  */
 const sets: Record<VocabField, ReadonlySet<string>> = {
   expressions: new Set(vocabulary.expressions),
@@ -45,9 +56,10 @@ const sets: Record<VocabField, ReadonlySet<string>> = {
   purposes: new Set(vocabulary.purposes),
   scenes: new Set(vocabulary.scenes),
   tags: new Set([...vocabulary.tags.subject, ...vocabulary.tags.style]),
+  ratings: new Set(vocabulary.ratings),
 }
 
-/** 六个维度的字段名，**有序**。需要遍历全部维度的地方都从这里取，不要各处手写数组。 */
+/** 七个维度的字段名，**有序**。需要遍历全部维度的地方都从这里取，不要各处手写数组。 */
 export const VOCAB_FIELDS = [
   'expressions',
   'emotions',
@@ -55,6 +67,7 @@ export const VOCAB_FIELDS = [
   'purposes',
   'scenes',
   'tags',
+  'ratings',
 ] as const satisfies readonly VocabField[]
 
 /** 某个维度的全部词条，按 JSON 里的顺序。 */
@@ -86,6 +99,7 @@ export const vocabularySize = {
   purposes: sets.purposes.size,
   scenes: sets.scenes.size,
   tags: sets.tags.size,
+  ratings: sets.ratings.size,
 }
 
 /**

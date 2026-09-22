@@ -14,7 +14,7 @@ import { VOCAB_FIELDS, type VocabField } from '../../lib/vocab'
 /** 把当前 query 解析成接口参数。游标在外部传入，**不放 URL**（SPEC §6.3.2，分页游标不是筛选条件）。 */
 function buildParams(sp: URLSearchParams): FetchMemesParams {
   const p: FetchMemesParams = {}
-  // 六个维度遍历 `VOCAB_FIELDS`，不手写六遍（SPEC §4.3）。漏掉一维不会报错：
+  // 七个维度遍历 `VOCAB_FIELDS`，不逐维手写（SPEC §4.3）。漏掉一维不会报错：
   // URL 里明明有那个参数、角标也数进去了，取数时却不带上——用户看到的是
   // 「我明明筛了表情，结果里还有别的」，而控制台一片干净。
   for (const field of VOCAB_FIELDS) {
@@ -49,7 +49,7 @@ function countActive(sp: URLSearchParams): number {
   return n
 }
 
-/** 六个维度当前选中的值，键一个不少——`VocabSections` 要的就是这个形状。 */
+/** 七个维度当前选中的值，键一个不少——`VocabSections` 要的就是这个形状。 */
 function readLabels(sp: URLSearchParams): Record<VocabField, string[]> {
   const out = {} as Record<VocabField, string[]>
   for (const field of VOCAB_FIELDS) out[field] = sp.getAll(field)
@@ -110,8 +110,8 @@ export function useBrowseFilters() {
     hasFilters: filtersKey !== '',
     activeCount: countActive(searchParams),
     /**
-     * 六个维度当前选中的值，**一个对象而不是六个字段**。
-     * 摊成六个返回值的话，加一维就要同时改这里和每个调用点，而漏掉不报错。
+     * 七个维度当前选中的值，**一个对象而不是逐维字段**。
+     * 摊开成一个个返回值的话，加一维就要同时改这里和每个调用点，而漏掉不报错。
      */
     labels: readLabels(searchParams),
     isAnimated: searchParams.get('isAnimated') === 'true',

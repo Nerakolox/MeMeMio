@@ -19,9 +19,13 @@
 /**
  * 单次视觉调用产出的全部字段，**不做独立 OCR 链路**（SPEC §5.2.3）。
  *
- * 六个数组是六个**互不推导**的维度（SPEC §4.3.1）：`expressions` 是脸上什么样，
+ * 前六个数组是六个**互不推导**的维度（SPEC §4.3.1）：`expressions` 是脸上什么样，
  * `emotions` 是心里什么感受，两者不能互相补齐——一张微笑角色配「你说得都对」的图，
  * 正确答案是 `expressions: ['微笑']` 加上 `emotions: []`，不是 `emotions: ['开心']`。
+ *
+ * `ratings` **不在那六个里**：它是分级不是语义，不适用互不推导（SPEC §4.3）——
+ * 任何表情 / 情绪 / 语气的图都可能是成人向，反之亦然。它和其余六维并排只是
+ * 因为**走同一套校验与编辑 UI**。
  */
 export type TagFields = {
   ocrText: string
@@ -32,15 +36,25 @@ export type TagFields = {
   purposes: string[]
   scenes: string[]
   tags: string[]
+  ratings: string[]
 }
 
-export type VocabField = 'expressions' | 'emotions' | 'tones' | 'purposes' | 'scenes' | 'tags'
+export type VocabField =
+  | 'expressions'
+  | 'emotions'
+  | 'tones'
+  | 'purposes'
+  | 'scenes'
+  | 'tags'
+  | 'ratings'
 
 /**
- * 六个维度，**有序**，顺序即语义强度：看得见的排前面，要推断的排后面。
+ * 七个维度，**有序**。前六个的顺序即语义强度：看得见的排前面，要推断的排后面；
+ * `ratings` 在末尾，它不在这条轴上（SPEC §4.3）。
  *
- * 本文件里所有「对每个维度做一遍」的地方都遍历它，不手写六次——加第七个维度时
- * 漏掉一处的表现是那一维静默不校验，模型输出什么就存什么。
+ * 本文件里所有「对每个维度做一遍」的地方都遍历它，不手写七次——漏掉一处的表现是
+ * **那一维静默不校验，模型输出什么就存什么**。v0.2.0 拆维度时这句还是假设，
+ * v0.3.0 加 `ratings` 时它就是实际要防的东西了。
  */
 const LABEL_FIELDS = [
   'expressions',
@@ -49,6 +63,7 @@ const LABEL_FIELDS = [
   'purposes',
   'scenes',
   'tags',
+  'ratings',
 ] as const satisfies readonly VocabField[]
 
 /**
@@ -247,7 +262,7 @@ type RawFields = {
 /**
  * 第二步：校验结构。返回 null 表示「解析出来的不是我们要的那个东西」。
  *
- * 八个字段**全部可缺席**（缺席按空处理），但**出现就必须是对的类型**。
+ * 九个字段**全部可缺席**（缺席按空处理），但**出现就必须是对的类型**。
  * 全都缺席也算结构不对——那说明模型回的是另一个 JSON，不是我们要的。
  *
  * 实测样本里 `ocrText` 经常整个不出现（deepseek 那 7 条合法 JSON 全都没有它），
@@ -255,6 +270,7 @@ type RawFields = {
  *
  * **老模型 / 老提示词只会回 `emotions` / `scenes` / `tags` 三个维度**，缺席的
  * `expressions` / `tones` / `purposes` 按空处理即可——那是「这次没标」，不是结构错误。
+ * `ratings` 同理：不认识这一维的模型不回这个键，缺席即空（SPEC §5.2.3 明写「允许缺席」）。
  */
 function validateStructure(value: unknown): RawFields | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
@@ -269,7 +285,7 @@ function validateStructure(value: unknown): RawFields | null {
 
   const labels = {} as Record<VocabField, string[]>
   for (const field of LABEL_FIELDS) {
-    // tags 多收一种形状（{ subject, style }），其余五维只收扁平数组
+    // tags 多收一种形状（{ subject, style }），其余六维只收扁平数组
     const parsed = field === 'tags' ? parseTags(raw[field]) : parseLabelArray(raw[field])
     if (parsed === null) return null
     labels[field] = parsed
@@ -411,7 +427,7 @@ function firstLine(text: string): string {
 // ── 派生字段 ────────────────────────────────────────────────────────
 
 /**
- * `search_text` = `ocr_text` + `description` + 六个数组（SPEC §5.2.3）。
+ * `search_text` = `ocr_text` + `description` + 七个数组（SPEC §5.2.3）。
  *
  * **派生字段，任何一个来源字段变更时必须重算**，所以拼接只有这一个实现——
  * `PATCH /memes/:id` 改标签时用的也是它。两处各拼一份的表现是

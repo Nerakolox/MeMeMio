@@ -9,8 +9,11 @@ import { TAG_JOB_FAILURES, type TagJobFailure } from '../lib/retry-policy.js'
  * 这一层只做三件事：定口径（算谁的范围）、把失败前缀折成契约里的五个类别、
  * 并发取数。权限判断在路由，SQL 在 `data/`（project-structure.md）。
  *
- * **它不回答「该怎么办」**：`needs_manual` 的图这一版只能看不能改（§6.6.2），
- * 补标动作随 §6.4 那批接口一起做。这里多一个「重试」的口子就是同一个语义的第二条实现。
+ * **它不回答「该怎么办」。** `needs_manual` 的图现在能重跑了，但动作在
+ * `POST /memes/retag`（§6.4.3，`filter.tagStatus` 指到 `needs_manual` 就是「重试这批」）。
+ * 这里多一个「重试」的口子就是同一个语义的第二条实现——§6.6.2 明令禁止。
+ *
+ * 换句话说本接口是**只读的**：它给出计数，客户端拿计数去画进度、去决定要不要调 retag。
  */
 
 /** `mine` = 调用者自己的图；`all` = 全站，仅管理员可用（权限在路由判）。 */

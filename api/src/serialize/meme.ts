@@ -58,6 +58,7 @@ export type SerializeMemeInput = {
   purposes: string[] | null
   scenes: string[] | null
   tags: string[] | null
+  ratings: string[] | null
   tagStatus: string
   visionModel: string | null
   editedBy: string | null
@@ -85,14 +86,15 @@ export function serializeMeme(row: SerializeMemeInput) {
     originalFilename: row.originalFilename,
     ocrText: row.ocrText,
     description: row.description,
-    // 六个数组字段在库里可为 null，对外一律是数组。客户端不该处理 null 和 [] 两种空。
-    // 顺序跟 SPEC §5.2.6 的清单一致：表情 → 情绪 → 语气 → 用途 → 情境 → 主体风格。
+    // 七个数组字段在库里可为 null，对外一律是数组。客户端不该处理 null 和 [] 两种空。
+    // 顺序跟 SPEC §5.2.6 的清单一致：表情 → 情绪 → 语气 → 用途 → 情境 → 主体风格 → 内容分级。
     expressions: row.expressions ?? [],
     emotions: row.emotions ?? [],
     tones: row.tones ?? [],
     purposes: row.purposes ?? [],
     scenes: row.scenes ?? [],
     tags: row.tags ?? [],
+    ratings: row.ratings ?? [],
     tagStatus: row.tagStatus,
     visionModel: row.visionModel,
     favorited: row.favorited,

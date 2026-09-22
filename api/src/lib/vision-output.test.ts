@@ -57,6 +57,7 @@ type VocabJson = {
   purposes: string[]
   scenes: string[]
   tags: { subject: string[]; style: string[] }
+  ratings: string[]
   aliases?: Record<string, string>
 }
 
@@ -71,6 +72,7 @@ const sets: Record<VocabField, Set<string>> = {
   purposes: new Set(vocabJson.purposes),
   scenes: new Set(vocabJson.scenes),
   tags: new Set([...vocabJson.tags.subject, ...vocabJson.tags.style]),
+  ratings: new Set(vocabJson.ratings),
 }
 
 const vocab: VocabAdapter = {
@@ -79,10 +81,14 @@ const vocab: VocabAdapter = {
 }
 
 /**
- * 补齐八个字段的 `TagFields`，只写用例关心的那几个。
+ * 补齐九个字段的 `TagFields`，只写用例关心的那几个。
  *
  * 不用 `as TagFields` 硬转：维度以后还会加，漏掉一维时这里要**编译不过**，
  * 而不是在某个断言里悄悄拿到 undefined。
+ *
+ * ⚠️ 上面 `VocabJson` 那处对**同一个坑没有这层保护**——它是 `as` 强转，少写一个键
+ *    不会报错，只会让 `sets.ratings` 变成 `new Set(undefined)`（**空集**），
+ *    于是那一维在测试里静默不校验。加维度时两处都要手动看一眼。
  */
 function fields(partial: Partial<TagFields> = {}): TagFields {
   return {
@@ -94,6 +100,7 @@ function fields(partial: Partial<TagFields> = {}): TagFields {
     purposes: [],
     scenes: [],
     tags: [],
+    ratings: [],
     ...partial,
   }
 }
@@ -183,7 +190,7 @@ describe('拒绝形态二：200 但正文是拒绝措辞', () => {
 // ── 形态三：结构完整但内容全空 ──────────────────────────────────────
 
 describe('拒绝形态三：JSON 结构完整但内容全空', () => {
-  it('五个字段全空判为 refused/empty_output', () => {
+  it('全部字段都空判为 refused/empty_output', () => {
     const content = JSON.stringify({
       ocrText: '',
       description: '',
@@ -213,13 +220,17 @@ describe('拒绝形态三：JSON 结构完整但内容全空', () => {
     expect(interpretVisionContent(content, 'stop', vocab).kind).toBe('ok')
   })
 
-  it('isEmptyTagFields 只在八个字段全空时为真', () => {
+  it('isEmptyTagFields 只在九个字段全空时为真', () => {
     expect(isEmptyTagFields(fields())).toBe(true)
     expect(isEmptyTagFields(fields({ emotions: ['无语'] }))).toBe(false)
     // 新拆出来的三维同样算数：只标出了语气也不是「什么都没标出来」
     expect(isEmptyTagFields(fields({ tones: ['敷衍'] }))).toBe(false)
     expect(isEmptyTagFields(fields({ expressions: ['微笑'] }))).toBe(false)
     expect(isEmptyTagFields(fields({ purposes: ['表面附和'] }))).toBe(false)
+    // ratings 也算数：**只标出「成人向」、其余全空，是一次成功的打标**。
+    // 这一条尤其要留着——它是唯一一个「模型可能整张图只回了这一维」的维度，
+    // 判空时漏掉它，那张图会被判成 refused，而它明明标出来了东西（SPEC §4.3）
+    expect(isEmptyTagFields(fields({ ratings: ['成人向'] }))).toBe(false)
   })
 })
 
@@ -316,7 +327,7 @@ describe('解析与结构校验', () => {
     expect(interpretVisionContent('{"description":42}', 'stop', vocab).kind).toBe('invalid_output')
   })
 
-  it('五个字段一个都不出现判结构不符——那是另一个 JSON', () => {
+  it('已知字段一个都不出现判结构不符——那是另一个 JSON', () => {
     expect(interpretVisionContent('{"foo":"bar"}', 'stop', vocab).kind).toBe('invalid_output')
   })
 
@@ -344,7 +355,7 @@ describe('解析与结构校验', () => {
 })
 
 describe('search_text 拼接', () => {
-  it('ocrText + description + 六个数组，空的部分不留空格', () => {
+  it('ocrText + description + 七个数组，空的部分不留空格', () => {
     expect(
       buildSearchText(
         fields({
@@ -361,8 +372,13 @@ describe('search_text 拼接', () => {
    * 顺序不是随便定的：`migrations/0006_split_label_dimensions.sql` 里的 search_text
    * 重算按同一个顺序拼。两边不一致的表现是——迁移过的图和之后重打标的图，
    * search_text 排列不同，diff 看起来像内容变了，其实只是顺序。
+   *
+   * ⚠️ `ratings` 排在**最后**（`LABEL_FIELDS` 的末尾，SPEC §4.3：它不是语义维度，
+   *    不该插进「看得见 → 要推断」那条轴）。`0007` 只加列、不重算存量 search_text，
+   *    所以这个位置只对**之后**的打标与 PATCH 生效——但一旦有人把 `ratings` 挪到中间，
+   *    新老记录的拼接顺序就会不一致，而这不报错。
    */
-  it('六个数组按 expressions → emotions → tones → purposes → scenes → tags 拼', () => {
+  it('七个数组按 expressions → emotions → tones → purposes → scenes → tags → ratings 拼', () => {
     expect(
       buildSearchText(
         fields({
@@ -373,9 +389,10 @@ describe('search_text 拼接', () => {
           purposes: ['表面附和'],
           scenes: ['上班'],
           tags: ['动漫'],
+          ratings: ['成人向'],
         }),
       ),
-    ).toBe('你说得都对 一个角色在微笑 微笑 敷衍 表面附和 上班 动漫')
+    ).toBe('你说得都对 一个角色在微笑 微笑 敷衍 表面附和 上班 动漫 成人向')
   })
 
   it('全空时是空串，不是一串空格', () => {

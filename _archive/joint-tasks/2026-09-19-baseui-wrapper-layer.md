@@ -6,7 +6,7 @@
 > （`src/components/ui/`、`src/tokens.css`、`@base-ui/react` 均不存在），即该路线实际未落地；
 > 现正式废止，不再继续。
 
-状态：~~`in_progress`（web 单端）~~ → **废止**
+状态：~~`in_progress`（web 单端）~~ → **废止**（2026-09-19）· **归档 2026-09-22**
 开始：2026-09-19
 
 ## 为什么要做
@@ -20,12 +20,12 @@
 
 | 原语 | 位置 | 缺什么 |
 |---|---|---|
-| ⋯ 卡片菜单 | [`features/manage/MemeActions.tsx:23-187`](../web/src/features/manage/MemeActions.tsx) | 无 roving tabindex、无方向键、无焦点陷阱 |
-| 编辑侧栏 | [`features/manage/MemeEditPanel.tsx:23-201`](../web/src/features/manage/MemeEditPanel.tsx) | 有 `aria-modal="true"`，但 Tab 能跑到背后的页面上 |
-| 换模型确认 | [`features/settings/EmbedSettings.tsx:171-187`](../web/src/features/settings/EmbedSettings.tsx) | 有 `role="alertdialog"`，无 Esc、无焦点管理、非模态 |
-| 导入三页签 | [`routes/import.tsx:77-102`](../web/src/routes/import.tsx) | 用 `aria-current` 冒充页签，无 `role="tablist"`、无方向键 |
-| 打标子筛选 | [`features/tagging/TagStatusView.tsx:77-93`](../web/src/features/tagging/TagStatusView.tsx) | 同上。**与导入页签是两份复制粘贴** |
-| 搜索结果列表 | [`routes/home.tsx:147-190`](../web/src/routes/home.tsx) | 手写 roving focus，用 `document.querySelector` 命令式找元素 |
+| ⋯ 卡片菜单 | [`features/manage/MemeActions.tsx:23-187`](../../web/src/features/manage/MemeActions.tsx) | 无 roving tabindex、无方向键、无焦点陷阱 |
+| 编辑侧栏 | [`features/manage/MemeEditPanel.tsx:23-201`](../../web/src/features/manage/MemeEditPanel.tsx) | 有 `aria-modal="true"`，但 Tab 能跑到背后的页面上 |
+| 换模型确认 | [`features/settings/EmbedSettings.tsx:171-187`](../../web/src/features/settings/EmbedSettings.tsx) | 有 `role="alertdialog"`，无 Esc、无焦点管理、非模态 |
+| 导入三页签 | [`routes/import.tsx:77-102`](../../web/src/routes/import.tsx) | 用 `aria-current` 冒充页签，无 `role="tablist"`、无方向键 |
+| 打标子筛选 | [`features/tagging/TagStatusView.tsx:77-93`](../../web/src/features/tagging/TagStatusView.tsx) | 同上。**与导入页签是两份复制粘贴** |
+| 搜索结果列表 | [`routes/home.tsx:147-190`](../../web/src/routes/home.tsx) | 手写 roving focus，用 `document.querySelector` 命令式找元素 |
 
 **最硬的证据是 `MemeActions.tsx:11-15` 的作者注释**：它明确写着不用 `role="menu"`，
 因为菜单要求的键盘契约没实现。也就是说——作者知道契约存在，知道自己在违反它，
@@ -77,7 +77,7 @@ B 档 18 个 —— `autocomplete` `avatar` `checkbox-group` `combobox` `context
 `scroll-area` `separator` `slider` `switch` `toolbar`
 
 > `toast` 与 `tooltip` 现在是**净新增**（代码里一个都没有）。`toast` 要特别小心：
-> [`settings-ux.md`](../web/agents/rules/settings-ux.md) 要求契约文案不能被呈现成
+> [`settings-ux.md`](../../web/agents/rules/settings-ux.md) 要求契约文案不能被呈现成
 > 「看起来可忽略的提示」，简单套一个右下角自动消失的 toast 会直接违反它。详见「明确不做」。
 
 ---
@@ -113,7 +113,7 @@ B 档 18 个 —— `autocomplete` `avatar` `checkbox-group` `combobox` `context
 3. 浏览器里真开一次
 
 **任何一步红了就先停下来报总管，不要自己升 React。** 升 React 是跨端影响（`api` 的
-类型链会把 `web` 一起编译，见[骨架任务](../_archive/joint-tasks/2026-09-13-skeleton.md)第 10 条），
+类型链会把 `web` 一起编译，见[骨架任务](2026-09-13-skeleton.md)第 10 条），
 不是本任务能顺手做的事。
 
 ### 1. token 层
@@ -145,7 +145,7 @@ src/styles.css    ← 手写 BEM，只引用 --color-*
 
 ### 2. 包装层
 
-目录与约定见 [`project-structure.md`](../web/agents/rules/project-structure.md) 的
+目录与约定见 [`project-structure.md`](../../web/agents/rules/project-structure.md) 的
 「`src/components/ui/`：组件库包装层」一节。三条要点重申：
 
 - **`render` 而不是 `asChild`**。`<DialogTrigger render={(props) => <Button {...props} />}>`。

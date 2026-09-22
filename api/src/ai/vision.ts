@@ -17,7 +17,7 @@ import {
 } from './provider.js'
 
 /**
- * 视觉打标调用。**单次调用产出全部五个字段，不做独立 OCR 链路**（SPEC §5.2.3）。
+ * 视觉打标调用。**单次调用产出全部字段，不做独立 OCR 链路**（SPEC §5.2.3）。
  *
  * 只允许出现 OpenAI 兼容的请求形状（`/v1/chat/completions`）。
  * **禁止任何供应商特有的分支**，尤其禁止按 `baseUrl` 猜能力——`baseUrl` 是用户填的
@@ -86,15 +86,20 @@ export async function isVisionConfigured(): Promise<boolean> {
  * （`docs/fixtures/responses/api.deepseek.com-2026-09-14.json`）里探测用的提示词只说了
  * 「标签必须来自项目词表」却没给词表，模型在 reasoning 里反复纠结「用户没有提供词表」，
  * 结果 30 条里 23 条把输出预算烧光、正文全空，剩下 7 条的词表命中率是 **0**。
- * 163 个词条的开销远小于一次废掉的调用。（v0.2.0 拆成六个维度后约 285 条，结论不变。）
+ * 词条数的开销远小于一次废掉的调用。v0.1.0 是 163 条，v0.2.0 拆成六个维度后约 285 条，
+ * v0.3.0 加到七个维度是 **191 条**（拆维度时做了同义词合并，总数反而比 v0.1.0 只多一点），结论不变。
+ *
+ * ⚠️ **加 `ratings` 是与「不重试 vs 重试」那条规则无关的独立风险**：对这一维的提问本身
+ *    可能抬高整体的拒绝率（SPEC §9.23 记了这条，且**没有实测支撑**）。真出现的话，
+ *    按 §9.23 的推翻条件处理——把这一维从提示词里撤掉，只保留人工编辑。
  *
  * **提示词是本端实现约束，不是 SPEC**，随便调——但改完必须跑评测集（api/AGENTS.md §5）。
  */
 function buildSystemPrompt(): string {
-  const { expressions, emotions, tones, purposes, scenes, tags } = vocabulary
+  const { expressions, emotions, tones, purposes, scenes, tags, ratings } = vocabulary
   return [
-    '你是表情包库的打标器。看图，输出一个 JSON 对象，只包含下面八个键：',
-    'ocrText、description、expressions、emotions、tones、purposes、scenes、tags。',
+    '你是表情包库的打标器。看图，输出一个 JSON 对象，只包含下面九个键：',
+    'ocrText、description、expressions、emotions、tones、purposes、scenes、tags、ratings。',
     '',
     'ocrText：图里出现的全部文字，原样抄写，多行用空格连接；没有文字就给空字符串。',
     'description：一句话描述画面，中文，30 到 60 字，写清楚主体、表情和动作。',
@@ -110,6 +115,11 @@ function buildSystemPrompt(): string {
     'scenes（生活情境）：和什么现实场合有关（上班、考试、没钱这类），跟交流动作无关。',
     'tags（主体与风格）：图里是什么、长什么样。',
     '',
+    '还有一个**不在这六个里**的维度：',
+    'ratings（内容分级）：这张图适不适合在公开场合出现。词表里只有「成人向」一个词条——',
+    '  画面本身是成人向内容时才填，**拿不准就留空**。它和上面六维互不影响：填了它不代表',
+    '  别的维度要跟着改，别的维度是空也不代表这一维该填。它不参与上面那条「互相推导」的规则。',
+    '',
     '选词规则：',
     '1. **只能从下面的词表里原样选词**，不在词表里的词一个都不要写，也不要自造。',
     '2. 一个词只属于一个维度，不要把某一维的词填到另一维里。',
@@ -117,6 +127,7 @@ function buildSystemPrompt(): string {
     '   完全不相干的东西时冒出来，而没人知道那个标签是猜的。',
     '4. expressions / emotions / scenes / tags 每维最多 4 个。',
     '5. **tones 和 purposes 每维最多 2 个**，只填最有把握的。这两维靠推断，宁缺毋滥。',
+    '6. **ratings 最多 1 个**，它只有这一个词条；留空是常态。',
     '',
     '词表（闭集，不可扩展）：',
     `expressions = ${expressions.join('、')}`,
@@ -126,10 +137,11 @@ function buildSystemPrompt(): string {
     `scenes = ${scenes.join('、')}`,
     `tags.subject = ${tags.subject.join('、')}`,
     `tags.style = ${tags.style.join('、')}`,
+    `ratings = ${ratings.join('、')}`,
     '',
     '输出格式（严格照抄这个形状）：',
     '{"ocrText":"","description":"","expressions":[],"emotions":[],"tones":[],'
-      + '"purposes":[],"scenes":[],"tags":{"subject":[],"style":[]}}',
+      + '"purposes":[],"scenes":[],"tags":{"subject":[],"style":[]},"ratings":[]}',
     '',
     '只输出这个 JSON，不要解释、不要 markdown 围栏、不要任何前后缀。',
     '不确定就给空字符串或空数组——看不清就别标，比编一个更有用。',

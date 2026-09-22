@@ -54,6 +54,7 @@ memes(
   purposes      text[],              -- 聊天用途
   scenes        text[],              -- 生活情境
   tags          text[],              -- 主体与风格
+  ratings       text[],              -- 内容分级（成人向），不是语义维度
   search_text   text,                -- 上述字段拼接，供 embedding 使用
   embedding     vector(1024),
 
@@ -85,9 +86,9 @@ memes(
 
 ### §5.2.3 AI 产出字段
 
-单次视觉调用产出全部字段，不做独立 OCR 链路。**六个数组字段的取值必须落在 [§4](04-vocabulary.md) 对应维度的词表内**，且维度之间不互相推导——判据见 [§4.3.1](04-vocabulary.md#431-维度之间不能互相推导)。
+单次视觉调用产出全部字段，不做独立 OCR 链路。**七个数组字段的取值必须落在 [§4](04-vocabulary.md) 对应维度的词表内**，且五个语义维度之间不互相推导——判据见 [§4.3.1](04-vocabulary.md#431-维度之间不能互相推导)；`ratings` 不是语义维度、不适用那条判据（[§4.3](04-vocabulary.md)）。**`ratings` 允许缺席**：老提示词 / 不认识这一维的模型不会回这个键，缺席按空数组处理，不是失败。
 
-`search_text` 是 `ocr_text` + `description` + 六个数组拼接的结果，**供 embedding 使用**。它是派生字段，任何一个来源字段变更时必须重算。
+`search_text` 是 `ocr_text` + `description` + 七个数组拼接的结果，**供 embedding 使用**。它是派生字段，任何一个来源字段变更时必须重算。
 
 > ⚠️ **`pg_trgm` 匹配的是 `ocr_text` + `description` + `original_filename`，不是 `search_text`。**
 >
@@ -126,7 +127,7 @@ R2 上的原图延迟清理：软删满 30 天后由定时任务物理删除，�
   url, thumbUrl,            // 由 storageKey 派生的访问地址，不返回 storageKey 本身
   mime, width, height, sizeBytes, isAnimated, originalFilename,
   ocrText, description,
-  expressions[], emotions[], tones[], purposes[], scenes[], tags[],
+  expressions[], emotions[], tones[], purposes[], scenes[], tags[], ratings[],
   tagStatus, visionModel,
   favorited,                // 当前登录用户是否收藏，见 §5.4
   editedBy?, editedAt?, createdAt

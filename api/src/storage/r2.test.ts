@@ -43,6 +43,7 @@ function memeRow(storageKey: string): SerializeMemeInput {
     purposes: null,
     scenes: null,
     tags: null,
+    ratings: null,
     tagStatus: 'pending',
     visionModel: null,
     editedBy: null,

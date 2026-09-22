@@ -6,6 +6,7 @@ import { Separator } from '../components/ui/separator'
 import { EmbedSettings } from '../features/settings/EmbedSettings'
 import { InviteSettings } from '../features/settings/InviteSettings'
 import { ReindexPanel } from '../features/settings/ReindexPanel'
+import { RetagPanel } from '../features/settings/RetagPanel'
 import { UsersSettings } from '../features/settings/UsersSettings'
 import { TOUCH } from '../features/settings/settings-ui'
 import { useHashScroll } from '../features/settings/use-hash-scroll'
@@ -23,7 +24,10 @@ import { VisionSettings } from '../features/settings/VisionSettings'
  * 「两个页面」和 SPEC §9.9 的「分成两个页面」是按旧结构写的，见
  * `joint-tasks/2026-09-18-settings-merge.md`。
  *
- * 统计面板（settings-ux.md §9）本次仍不做，它要另外的端点。
+ * 统计面板（settings-ux.md §9）仍未做——**它要的端点已经有了**（`GET /memes/tag-status?scope=all`
+ * 早就支持），只是没人把「全站：已完成 / 待处理 / 需人工 / 索引过期」这一行画出来。
+ * 目前全站计数只在 `RetagPanel` 里露了三个（作为重打标的进度），索引过期那一个仍无从查看。
+ * 待办留在 `joint-tasks/2026-09-19-tagging-status.md`。
  *
  * 2026-09-21：整页换成 shadcn 组件（原来是一套手写 BEM）。**结构一个字没动**——
  * 分段、顺序、锚点、折叠、管理员可见性都是契约，换的是它们长什么样。
@@ -92,6 +96,13 @@ export function SettingsPage() {
             管理员看着进度还能继续干别的（settings-ux.md §8）。
           */}
           <ReindexPanel refreshToken={reindexToken} />
+
+          {/*
+            重打标与重建索引是**并列**的两件事，不是一件事的两个阶段：重建索引只重算
+            向量、不调视觉；重打标反过来只调视觉、且不幂等（SPEC §6.4.3）。所以它们是
+            两张卡，各有各的按钮和确认流程。
+          */}
+          <RetagPanel refreshToken={reindexToken} />
 
           <UsersSettings />
         </>

@@ -1,5 +1,6 @@
 import type { InferResponseType } from 'hono/client'
-import { api, type TagStatusSummary } from './api'
+import { api, type RetagResult, type TagStatusSummary } from './api'
+import type { ReindexTriggered } from './api-config'
 
 /**
  * 骨架任务的**验证点 1**，留在仓库里当编译期断言：
@@ -48,15 +49,16 @@ const _searchShape: SearchResponse = {
       originalFilename: 'a.png',
       ocrText: null,
       description: null,
-      // 六个数组字段一个不少（SPEC §4.3）。少写一个这里就编译不过——
-      // v0.2.0 新增的 expressions / tones / purposes 正是靠这条断言证明
-      // 「服务端真的把新维度序列化出来了」，而不是前端自己以为有。
+      // 七个数组字段一个不少（SPEC §4.3）。少写一个这里就编译不过——
+      // v0.2.0 新增的 expressions / tones / purposes、v0.3.0 新增的 ratings
+      // 正是靠这条断言证明「服务端真的把新维度序列化出来了」，而不是前端自己以为有。
       expressions: [],
       emotions: [],
       tones: [],
       purposes: [],
       scenes: [],
       tags: [],
+      ratings: [],
       tagStatus: 'ok',
       visionModel: null,
       favorited: false,
@@ -93,3 +95,45 @@ const _tagStatusShape: TagStatusSummary = {
 }
 
 void _tagStatusShape
+
+/**
+ * 手动触发重建索引的编译期断言（SPEC §6.5.4）。
+ *
+ * 为什么值得单列一条：响应是 `{ enqueuedCount, ...ReindexStatus }`，而 `ReindexPanel`
+ * 的反馈**整句都压在这个数上**——`> 0` 显示「已排队 N 条」，否则显示「没有新排队的记录」。
+ * 字段一旦改名或消失，**前端不会报错**，只会永远走 else 那一支，也就是永远告诉管理员
+ * 「没排上队」，而实际排了。这类静默在类型层拦一次比在界面上发现便宜。
+ *
+ * `enqueuedCount` 是**条数不是布尔**（`enqueued` 这个名字会诱导人写 `=== true`），
+ * `0` 合法且常见：全库已是最新、或该排的已经排上了（幂等）。
+ */
+const _reindexTriggeredShape: ReindexTriggered = {
+  enqueuedCount: 0,
+  running: false,
+  total: 0,
+  done: 0,
+  stale: 0,
+  failed: 0,
+}
+
+void _reindexTriggeredShape
+
+/**
+ * 批量重打标的编译期断言（SPEC §6.4.3）。
+ *
+ * 为什么值得单列一条：`RetagPanel` 点完的反馈**整句都压在这三个数上**
+ * （`enqueuedCount > 0` → 「已排上 N 张」，否则要分「全被跳过」和「本来就都在队列里」
+ * 两种），而它们一旦改名前端**不会报错**，只会全部读到 `undefined`——
+ * `undefined > 0` 是 false，于是永远走「没排上」那一支，**而实际排了**。
+ *
+ * 三个都是**条数不是布尔**（`enqueued` 这种名字会诱导人写 `=== true`），
+ * `enqueuedCount` 为 `0` 合法且常见。手写请求体那个类型（`RetagInput`）推不出来，
+ * 但**响应这一侧是推出来的**——所以这份断言盯的正是「服务端真的把三个计数都序列化出来了」。
+ */
+const _retagShape: RetagResult = {
+  enqueuedCount: 74,
+  skippedEditedCount: 1,
+  skippedUnconfiguredCount: 0,
+}
+
+void _retagShape

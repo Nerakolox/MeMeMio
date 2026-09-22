@@ -27,6 +27,9 @@ function allTerms(): string[] {
     ...vocabulary.scenes,
     ...vocabulary.tags.subject,
     ...vocabulary.tags.style,
+    // ratings 也要在池子里，否则它永远不进 `pick()` 的样本——
+    // 加维度时漏掉这一行的表现是那一维在检索里**没有任何用例覆盖**，而套件全绿
+    ...vocabulary.ratings,
   ]
 }
 

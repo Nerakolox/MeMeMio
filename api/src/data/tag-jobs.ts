@@ -44,6 +44,95 @@ export async function enqueueTagJob(memeId: string, userId: string, tx: Db): Pro
 }
 
 /**
+ * 重打标的入队：**把已有的行重置回 `pending`**，而不是插一条新的。
+ *
+ * 这是 `POST /memes/retag` 唯一需要新写一个助手的原因（SPEC §6.4.3）。
+ * `enqueueTagJob` 在这里**必然静默失效**：`tag_jobs_meme_id_key` 是 `meme_id` 上的
+ * 唯一索引，而 `markTagJobDone` **保留 done 行**（与 `reindex_jobs` 的完成即删行相反），
+ * 所以对一张已经打完的图再调一次 `enqueueTagJob` 是 `onConflictDoNothing` —— 什么都不发生，
+ * 也不报错。库里的图全部 `tag_status = ok` 时，重打就变成了一个彻头彻尾的空操作。
+ *
+ * ⚠️ **`running` 的行绝对不能碰。** `claimTagJob` 只看 `status = 'pending'`，
+ *    把一个正在跑的行改回 `pending`，第二个 worker 会认领同一条、
+ *    **同一张图付两次钱**。所以更新带 `setWhere`：不满足条件的行既不更新、
+ *    也不出现在 `RETURNING` 里——正好就是我们要的计数口径。
+ *    （`setWhere` 是 drizzle-orm 0.38 里的非废弃字段，本文件是全仓唯一一处用它；
+ *    它和已废弃的 `where` **不能同时传**，会抛。）
+ *
+ * ⚠️ **`attempts: 0` 是承重的。** `decideRetry(failure, attempts)` 拿它当重试预算，
+ *    留着上一轮的终局值（最多的那个是 5）会让重打的图在**第一次**网络抖动时
+ *    就直接判 `needs_manual`，而它本该还有五次机会。
+ *
+ * `lastError: null` 一并清掉：新一轮的失败计数该从零开始。**代价是上一轮的失败诊断
+ * 不再留档**，这是有意的取舍（SPEC §6.4.3 记了这条）。
+ *
+ * **返回两个东西**，它们回答的是两个不同的问题：
+ *
+ *   - `scheduledMemeIds` —— 真的被（重）排上的。调用方拿它去翻 `memes.tag_status`，
+ *     而那个写入**必须依据更新真的命中了哪些行**：用传进来的 id 列表的话，
+ *     某个 id 因为 `running` 被跳过时它的图仍会被翻成 `pending`，
+ *     两个写入互相矛盾，而且没人看得出来。
+ *   - `alreadyPendingCount` —— 其中**原本就已在 `pending`** 的条数。它们没有被
+ *     「新排上」，本来就在等着跑。响应里的 `enqueuedCount` 要减掉这一批，
+ *     否则「连点两次、第二次 0 条」这个幂等口径就不成立（SPEC §6.4.3），
+ *     而客户端拿它当进度基线用（`web` 的 `RetagPanel`）。
+ *
+ * ⚠️ **先读一次旧状态，是因为 `RETURNING` 只能给新行。** `ON CONFLICT DO UPDATE`
+ *    的 `RETURNING` 里 `tag_jobs.status` 是**写完之后**的值，看不出某一行
+ *    原本是不是就已经是 `pending`。这一次 select 走 `tag_jobs_meme_id_key`
+ *    （`meme_id` 上的唯一索引），每批一次，代价可以忽略。
+ *
+ * ⚠️ **必须在「翻 tag_status」的同一个事务里调用**（queue.md §2）。
+ *
+ * @param rows 每项都要带 `userId`。它是 NOT NULL 且**不能 join `memes` 取**
+ *             （queue.md §8 禁在本表 join `memes`），所以只能由调用方从
+ *             `data/memes.ts` 的查询结果里带过来。
+ *             调用方负责分批，见 `services/retag.ts` 的 `RETAG_BATCH`。
+ */
+export type RetagQueueResult = {
+  scheduledMemeIds: string[]
+  alreadyPendingCount: number
+}
+
+export async function requeueTagJobsForRetag(
+  rows: { memeId: string; userId: string }[],
+  tx: Db = defaultDb,
+): Promise<RetagQueueResult> {
+  if (rows.length === 0) return { scheduledMemeIds: [], alreadyPendingCount: 0 }
+
+  const memeIds = rows.map((row) => row.memeId)
+
+  const pending = await tx
+    .select({ memeId: tagJobs.memeId })
+    .from(tagJobs)
+    .where(and(inArray(tagJobs.memeId, memeIds), eq(tagJobs.status, 'pending')))
+  const wasPending = new Set(pending.map((row) => row.memeId))
+
+  const updated = await tx
+    .insert(tagJobs)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: tagJobs.memeId,
+      set: {
+        // userId 也一起写：图在上传者之间不可能转移，但万一重打时拿到的
+        // 归属和行里存的不一致，留着一份对不上的冗余列比写一次更坏。
+        userId: sql`excluded.user_id`,
+        status: 'pending',
+        attempts: 0,
+        runAfter: new Date(),
+        lastError: null,
+      },
+      setWhere: sql`${tagJobs.status} <> 'running'`,
+    })
+    .returning({ memeId: tagJobs.memeId })
+
+  return {
+    scheduledMemeIds: updated.map((row) => row.memeId),
+    alreadyPendingCount: updated.filter((row) => wasPending.has(row.memeId)).length,
+  }
+}
+
+/**
  * 取一条待处理任务并置为 running。**自带一个短事务。**
  *
  * `FOR UPDATE SKIP LOCKED` 是整个方案成立的基础——**多个 worker 不会取到同一条**。

@@ -8,11 +8,14 @@ import {
   removeFavorite,
   softDeleteMeme,
   updateMemeContent,
+  TAG_STATUSES,
+  type Actor,
   type MemeContentPatch,
 } from '../data/memes.js'
 import type { VocabField } from '../lib/vision-output.js'
 import { VOCAB_FIELDS, vocabAdapter } from '../vocab.js'
 import { getTagStatusSummary } from '../services/tag-status.js'
+import { retagMemes, type RetagInput } from '../services/retag.js'
 import { serializeMeme } from '../serialize/meme.js'
 
 // 序列化器搬到了 `serialize/meme.ts`：搜索接口要输出同一批字段，
@@ -40,7 +43,7 @@ type Vars = OptionalAuthVariables
 const EDITABLE_FIELDS = ['description', ...VOCAB_FIELDS] as const
 
 /**
- * 六个数组字段的元素校验。**按维度校验**——一个词只属于一个维度（SPEC §4.3.2），
+ * 七个数组字段的元素校验。**按维度校验**——一个词只属于一个维度（SPEC §4.3.2），
  * 把 `微笑` 传进 `emotions` 和传一个不存在的词一样会被拒，这正是拆维度要挡住的错误。
  * **走 `vocab.ts` 的 `vocabAdapter`**（`alias()` 归一化 →
  * `isKnownLabel()` 判定），和打标写回同一套——另写一份的表现是模型输出过得去、
@@ -109,6 +112,128 @@ function parseEditBody(raw: unknown): MemeContentPatch {
   return patch
 }
 
+// ── POST /memes/retag 的请求体（SPEC §6.4.3） ──────────────────────
+
+/** uuid 的形状。**挡的是 Postgres 的转换错误，不是业务规则。** */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * `{ memeIds: [...] }` 或 `{ filter: {...} }`——**恰好给一个**（SPEC §6.4.3）。
+ *
+ * 未知键一律拒绝，与 `parseEditBody` 同一条规则。**这包括 `useDefaultConfig`**：
+ * 契约里那个参数在 v1 不实现（配置按上传者解析，见 §6.4.3），而接受一个不生效的
+ * 参数比拒绝它更坏——管理员会以为「用部署方通道重打」生效了。拒绝的写法让它立刻可见。
+ *
+ * ⚠️ **`memeIds: []` 是合法的空集，不是「没给」。** 把它当缺省会让
+ *    「想重打一张、结果全库付了一遍钱」——而这两个在客户端看起来一模一样
+ *    （都是「这个字段没内容」）。所以判的是字段**在不在**，不是数组**空不空**。
+ *
+ * ⚠️ **uuid 形状要在这里挡掉。** 不挡的话 `inArray(memes.id, ['abc'])` 会撞
+ *    Postgres 的 `invalid input syntax for type uuid`，那是 500 而不是 400
+ *    （`app.onError` 把非 `AppError` 一律当 `INTERNAL`）。客户端传了个错字，
+ *    得到的是「服务器内部错误」。
+ */
+function parseRetagBody(raw: unknown, actor: Actor): RetagInput {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON 对象')
+  }
+  const body = raw as Record<string, unknown>
+
+  for (const key of Object.keys(body)) {
+    if (key !== 'memeIds' && key !== 'filter') {
+      throw new AppError('VALIDATION_FAILED', `无法识别的字段：${key}`)
+    }
+  }
+
+  const hasIds = body['memeIds'] !== undefined
+  const hasFilter = body['filter'] !== undefined
+  if (hasIds === hasFilter) {
+    throw new AppError('VALIDATION_FAILED', 'memeIds 与 filter 必须恰好给一个')
+  }
+
+  if (hasIds) {
+    const value = body['memeIds']
+    if (!Array.isArray(value)) {
+      throw new AppError('VALIDATION_FAILED', 'memeIds 必须是数组')
+    }
+    // 去重放在服务层（它要拿去重后的数量比对查回来的行数），这里只校验形状
+    for (const item of value) {
+      if (typeof item !== 'string' || !UUID_RE.test(item)) {
+        throw new AppError('VALIDATION_FAILED', 'memeIds 的每一项必须是 uuid')
+      }
+    }
+    return { kind: 'ids', memeIds: value }
+  }
+
+  const rawFilter = body['filter']
+  if (typeof rawFilter !== 'object' || rawFilter === null || Array.isArray(rawFilter)) {
+    throw new AppError('VALIDATION_FAILED', 'filter 必须是 JSON 对象')
+  }
+  const filter = rawFilter as Record<string, unknown>
+  for (const key of Object.keys(filter)) {
+    if (key !== 'uploader' && key !== 'tagStatus') {
+      throw new AppError('VALIDATION_FAILED', `filter 里无法识别的字段：${key}`)
+    }
+  }
+
+  const rawUploader = filter['uploader']
+  if (rawUploader !== undefined && typeof rawUploader !== 'string') {
+    throw new AppError('VALIDATION_FAILED', 'filter.uploader 必须是字符串')
+  }
+
+  /*
+   * ⚠️ **枚举校验必须在角色判断之前。** 顺序反了的话 `tagStatus: 'foo'` 对
+   *    非管理员会掉进「不是 all」那一支、对管理员会掉进「没有这个条件」那一支，
+   *    两种都变成「静默放宽」——`GET /tag-status` 的 `scope=foo` 就是同一个坑
+   *    （routes/memes.ts 里那段注释）。非法输入不论谁传都是 400。
+   */
+  const rawTagStatus = filter['tagStatus']
+  if (rawTagStatus !== undefined) {
+    if (typeof rawTagStatus !== 'string') {
+      throw new AppError('VALIDATION_FAILED', 'filter.tagStatus 必须是字符串')
+    }
+    if (!(TAG_STATUSES as readonly string[]).includes(rawTagStatus)) {
+      throw new AppError(
+        'VALIDATION_FAILED',
+        `filter.tagStatus 只能是 ${TAG_STATUSES.join(' / ')}`,
+      )
+    }
+  }
+
+  /*
+   * 收窄到调用者自己，是**本接口与 `GET /memes?tagStatus=` 的一处刻意不同**。
+   *
+   * 那个接口在缺 `uploader` 时 `tagStatus` 是**全库**过滤，所以非管理员必须被
+   * 挡成 `FORBIDDEN`（否则能查到别人的待处理图）。这里反过来：**缺省就收窄**，
+   * 于是根本不存在「查到了别人的」这个中间状态，也就不需要那条 403。
+   * 两种写法都对，差别是这里可以更宽——用户会自然地传 `filter: {}` 说
+   * 「重打我的图」，为此报 403 只会让他去猜参数。
+   *
+   * 显式指向**别人**仍然 `FORBIDDEN`，**不是静默收窄**：静默收窄的表现是
+   * 「请求成功了，但只重打了自己的」——那个人以为别人的图也重打了。
+   */
+  let uploaderId: string | null
+  if (rawUploader === undefined) {
+    // 不传 = 「我管得着的那些」：管理员是全库，其他人是自己的图
+    uploaderId = actor.role === 'admin' ? null : actor.id
+  } else if (rawUploader === 'me') {
+    uploaderId = actor.id
+  } else {
+    // 形状先于角色，和上面 tagStatus 那条同一个道理：`uploader: 'everyone'` 是
+    // **参数写错了**，不是「权限不够」。判成 403 会把用户送去要管理员权限，
+    // 而他要改的是一个错字。
+    if (!UUID_RE.test(rawUploader)) {
+      throw new AppError('VALIDATION_FAILED', 'filter.uploader 必须是 "me" 或 uuid')
+    }
+    if (actor.role !== 'admin') {
+      throw new AppError('FORBIDDEN', '只有管理员能重打别人的图')
+    }
+    uploaderId = rawUploader
+  }
+
+  return { kind: 'filter', uploaderId, tagStatus: rawTagStatus ?? null }
+}
+
 export const memesRoutes = new Hono<{ Variables: Vars }>()
   .use('*', optionalAuth)
 
@@ -124,7 +249,7 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
   .get('/', async (c) => {
     const actor = c.get('currentUser')
 
-    // 六个语义维度各自可重复，所有值之间都是 AND（SPEC §6.3.2）。
+    // 七个维度各自可重复，所有值之间都是 AND（SPEC §6.3.2）。
     // 这里**不校验词表**：浏览筛选传了词表外的词，结果就是搜不到，不是请求错误。
     const labels = {} as Record<VocabField, string[] | undefined>
     for (const field of VOCAB_FIELDS) labels[field] = c.req.queries(field)
@@ -207,6 +332,39 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     }
 
     return c.json(await getTagStatusSummary(scope, actor.id))
+  })
+
+  /**
+   * POST /api/v1/memes/retag —— 批量重打标。SPEC §6.4.3
+   *
+   * 用途：让已有的图按**当前**的提示词与词表重跑一遍视觉模型。改提示词或词表之后
+   * 存量图不会自己更新，没有这个接口就只能人工逐张 `PATCH`。
+   *
+   * ⚠️ **它不幂等。** 再点一次就是再花一遍全库的视觉调用，花的是**图片上传者**的预算
+   *    （配置按 `uploader_id` 解析）。`enqueuedCount: 0` 只说明「没有新排上的」——
+   *    上一轮跑完之后再点，全库会重新排上。**不要照抄 `/admin/reindex` 的
+   *    「重复触发是安全的」**：那条幂等且免费，这条不是。
+   *
+   * 进度**不在这里报**：重打没有自己的任务表，跑完库里也没有痕迹。界面轮询
+   * `GET /memes/tag-status?scope=all`（§6.6.2：「不另做接口」）。
+   *
+   * 权限是「上传者或 admin」，逐行判在 `services/retag.ts` 里走 `assertCanMutate`
+   * ——**handler 不自己拼归属条件**（AGENTS.md §5）。这里只判登录。
+   *
+   * ⚠️ **路由顺序在这里不是承重的。** Hono 按注册顺序匹配，但那条只对**同方法**
+   *    的路由成立：`/retag` 与 `GET /:id` 方法不同，注册在它后面照样命中。
+   *    （`/tag-status` 上面那段警告说的是 GET 之间的事，别照抄过来。）
+   *    所以这里不靠顺序，靠一条**请求级测试**盯着它别变成 404。
+   */
+  .post('/retag', async (c) => {
+    const actor = c.get('currentUser')
+    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+
+    const raw: unknown = await c.req.json().catch(() => {
+      throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
+    })
+
+    return c.json(await retagMemes(parseRetagBody(raw, actor), actor))
   })
 
   /**

@@ -1,0 +1,21 @@
+-- 新增第七维 `ratings`（内容分级，SPEC §4.3、§4.4、§9.23，词表 v0.3.0）。
+--
+-- 按 SPEC §4.4 的「新增维度」处理：**新列全空，旧记录没有值可搬**，所以这次只有 DDL。
+--
+-- ⚠️ **和 0006 的关键区别：这里没有数据迁移，也不重算 search_text。** 两个理由：
+--    1. `ratings` 是全新的维度，存量记录的该列只能是 NULL / {}——没有「旧值」可搬。
+--    2. `search_text` 是派生字段（SPEC §5.2.3），它的七个来源里 `ratings` 对所有存量
+--       记录都是空的，`buildSearchText` 的输出因此逐字节不变，重算一次纯属白跑。
+--       （0006 必须重算，是因为那一次真的把值从旧列搬到了新列。）
+--
+-- ⚠️ **也不要动 `memes_search_text_trgm_idx`。** 0006 里 DROP 它是那一次的一次性动作
+--    （文本通路改成只匹配 ocr_text + description，SPEC §9.21），和本迁移无关。
+--
+-- ⚠️ 新列**刻意没有 NOT NULL / DEFAULT**，和其余七个数组列保持一致：
+--    NULL = 从没打过标，`{}` = 标过且这一维为空。两者在 `serializeMeme` 里都归成 `[]`。
+--
+-- 存量数据要拿到这一维的值，只能靠**重新打标**（`POST /admin/reindex` 那种是全量重算
+-- embedding，不是重打标）或**人工编辑**——考虑到境内模型对这类内容大概率在 API 层就拒
+-- （§9.23），人工编辑才是主路径。
+ALTER TABLE "memes" ADD COLUMN "ratings" text[];--> statement-breakpoint
+CREATE INDEX "memes_ratings_idx" ON "memes" USING gin ("ratings");

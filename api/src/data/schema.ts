@@ -112,7 +112,7 @@ export const memes = pgTable(
     // AI 产出，SPEC §5.2.3
     ocrText: text('ocr_text'),
     description: text('description'),
-    // 六个语义维度。**不能互相推导**：微笑是 expressions、开心是 emotions，
+    // 前六个是语义维度。**不能互相推导**：微笑是 expressions、开心是 emotions，
     // 一张微笑角色配「你说得都对」的图是 expressions=微笑 / emotions=空 /
     // tones=敷衍 / purposes=表面附和。见 SPEC §4.3.1 与 §9.22。
     /** 面部表情，视觉事实 */
@@ -128,7 +128,13 @@ export const memes = pgTable(
     /** 主体与风格 */
     tags: text('tags').array(),
     /**
-     * 派生字段：ocr_text + description + 六个数组。任一来源变更时必须重算。
+     * 内容分级（目前只有「成人向」）。**不是第七个语义维度**，是分级——
+     * 任何表情 / 情绪的图都可能是成人向，所以不适用上面那条互不推导（SPEC §4.3、§9.23）。
+     * 真实来源是人工编辑：境内模型大概率在 API 层就拒这类内容，打标那一维经常是空的。
+     */
+    ratings: text('ratings').array(),
+    /**
+     * 派生字段：ocr_text + description + 七个数组。任一来源变更时必须重算。
      *
      * ⚠️ **它只喂 embedding，不再是 trgm 的匹配目标**（SPEC §5.2.3 / §9.21）——
      * 标签值已经由标签通路精确命中一次，再让 trgm 匹配它们就是同一个信号计两遍分。
@@ -173,13 +179,14 @@ export const memes = pgTable(
     ),
     index('memes_original_filename_trgm_idx')
       .using('gin', sql`${table.originalFilename} gin_trgm_ops`),
-    // 2) 标签过滤，六个维度各一个（SPEC §4.3）
+    // 2) 标签过滤，七个维度各一个（SPEC §4.3）
     index('memes_tags_idx').using('gin', table.tags),
     index('memes_expressions_idx').using('gin', table.expressions),
     index('memes_emotions_idx').using('gin', table.emotions),
     index('memes_tones_idx').using('gin', table.tones),
     index('memes_purposes_idx').using('gin', table.purposes),
     index('memes_scenes_idx').using('gin', table.scenes),
+    index('memes_ratings_idx').using('gin', table.ratings),
     // 3) 向量。共享库没有 WHERE uploader_id = ? 这个过滤条件，HNSW 跑在最舒服的状态；
     //    deleted_at is null 选择率接近 1，不构成同类问题。见 agents/rules/database.md §2
     //    embed_model = 当前模型 是同一类过滤：稳态下选择率也≈1，只有换模型期间才下降，

@@ -110,11 +110,23 @@ export function MemeEditPanel({
           只让中间这段滚，头尾常驻——底部的「保存」在最长的字段清单下也要够得着。
           没用 `ScrollArea`：它的 viewport 内容层是 `display: table`，对表单布局是错工具，
           而原生滚动还白送 iOS 的惯性滚动与 `scrollIntoView`。
+
+          ⚠️ **`[&>*]:shrink-0` 不是装饰，是这一栏能不能看见东西的前提。** 这是一个
+          **高度确定**的 flex 列（`flex-1` + `min-h-0`，父级 `inset-y-0`），而 flex 子项
+          默认 `flex-shrink: 1`：内容比它高时，子项按比例被压缩而不是溢出滚动。
+          绝大多数子项缩不动——它们的 `min-height: auto` 等于内容高（img / dl / section 都是），
+          但**带 `overflow-hidden` 的子项自动最小尺寸是 0**，于是全部负空间落在它身上。
+          2026-09-22 就是这个形态：六个词表维度那一块（注册表 accordion 根自带
+          `overflow-hidden`）被压成 **2px**（自身内容 329px，全被剪掉），
+          「描述以下什么都没有」，不报错、不告警。定高 flex 列里的 `overflow-hidden` 组件
+          都会被这样吃掉，所以修在容器上而不是某一个子组件上——将来往这里加 `Card`
+          （同样自带 `overflow-hidden`）不用再想一遍。实测数字见
+          joint-tasks/2026-09-22-语义维度拆分.md 的 web 端验收。
         */}
         <div
           ref={bodyRef}
           tabIndex={-1}
-          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-6 py-4 outline-none"
+          className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-6 py-4 outline-none [&>*]:shrink-0"
         >
           <img
             className="mx-auto max-h-60 w-full rounded-2xl bg-white object-contain"

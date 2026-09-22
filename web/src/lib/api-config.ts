@@ -58,6 +58,15 @@ export type EmbedTestResult = InferResponseType<typeof api.api.v1.config.embed.t
 export type ReindexStatus = InferResponseType<typeof api.api.v1.admin.reindex.status.$get>
 
 /**
+ * `POST /admin/reindex` 的响应：`{ enqueuedCount, ...status }`（SPEC §6.5.4）。
+ *
+ * `enqueuedCount` 是**这一次点击**新排进队列的条数，**`0` 不是错误**——它要么表示全库
+ * 已是最新，要么表示该排的早就排上了（`onConflictDoNothing`，幂等）。它是**数字不是布尔**，
+ * 判真值必须写 `> 0`：写成 `=== true` 不报错，只是那一下的反馈永远是「一条都没排」。
+ */
+export type ReindexTriggered = InferResponseType<typeof api.api.v1.admin.reindex.$post>
+
+/**
  * `PUT /config/<scope>` 与 `POST /config/<scope>/test` 的请求体同形，只有这三个字段——
  * **探测结果字段不出现在请求体里**（SPEC §6.5.3，探测结果不接受客户端写入）。
  *
@@ -138,13 +147,16 @@ export async function putEmbedConfig(
 /**
  * 手动补触发，幂等——换模型时由 `PUT /config/embed` 自动入队（SPEC §6.5.4）。
  *
- * 不读响应体：SPEC §6.5.4 的 `{ enqueuedCount, ...status }` 里 `enqueuedCount` 是
- * 「这一次点击」排进去的条数，而这个按钮要显示的是全局进度，一律以
- * `GET /admin/reindex/status` 为准（那才是库里的真实计数），调用方触发完重新拉一次状态。
+ * **响应体要读。** 进度条仍然以 `GET /admin/reindex/status` 为准（那才是库里的真实计数，
+ * 而且会被 worker 和并发触发改写），`enqueuedCount` 只回答「**这一下**排进去几条」，
+ * 两者不是一回事。
+ *
+ * 这里原先合并成了「所以不读响应体」，代价是 `enqueuedCount` 为 0 时**点完的界面和点之前
+ * 逐像素相同**（徽标还是「空闲」、进度还是 100%、三个计数一动不动），用户无从判断按钮
+ * 生效没有——而这不报错、不告警，只是让人反复点。把条数交给调用方，它才能给一句反馈。
  */
-export async function startReindex(): Promise<void> {
-  const res = await postJson('/api/v1/admin/reindex', {})
-  if (!res.ok) throw await toApiError(res)
+export async function startReindex(): Promise<ReindexTriggered> {
+  return readJson<ReindexTriggered>(await postJson('/api/v1/admin/reindex', {}))
 }
 
 export async function fetchReindexStatus(): Promise<ReindexStatus> {

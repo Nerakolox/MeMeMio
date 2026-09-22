@@ -97,7 +97,7 @@ async function errorCode(res: Response): Promise<string> {
 }
 
 /**
- * 六个数组维度都填上的样本，用来测「不传 / null / []」三种传法的差别。
+ * 七个数组维度都填上的样本，用来测「不传 / null / []」三种传法的差别。
  *
  * **每一维都给一个不同的值**：只填其中三维的话，「PATCH 漏改某一维」这种错误
  * 会被另外几维的值盖过去——那一维本来就是空的，改没改不出来（SPEC §4.3.1）。
@@ -114,7 +114,8 @@ async function richMeme(uploaderId: string) {
     purposes: ['打招呼'],
     scenes: ['加班'],
     tags: ['猫'],
-    searchText: '图上的字 原来的描述 微笑 开心 敷衍 打招呼 加班 猫',
+    ratings: ['成人向'],
+    searchText: '图上的字 原来的描述 微笑 开心 敷衍 打招呼 加班 猫 成人向',
   })
 }
 
@@ -134,7 +135,7 @@ describe('PATCH /memes/:id 的权限（SPEC §9.1 / §3.3）', () => {
     expect(row?.editedAt).toBeInstanceOf(Date)
   })
 
-  it('非上传者改六个数组也成功', async () => {
+  it('非上传者改七个数组也成功', async () => {
     const alice = await signIn()
     const bob = await signIn()
     const meme = await richMeme(alice.id)
@@ -148,6 +149,7 @@ describe('PATCH /memes/:id 的权限（SPEC §9.1 / §3.3）', () => {
         purposes: ['吐槽'],
         scenes: [],
         tags: ['狗'],
+        ratings: [],
       },
       bob,
     )
@@ -160,6 +162,8 @@ describe('PATCH /memes/:id 的权限（SPEC §9.1 / §3.3）', () => {
     expect(row?.purposes).toEqual(['吐槽'])
     expect(row?.scenes).toEqual([])
     expect(row?.tags).toEqual(['狗'])
+    // 清空也走得通：`[]` 和「不传」是两件事，后者保留库里的值
+    expect(row?.ratings).toEqual([])
   })
 
   it('未登录是 UNAUTHENTICATED，不是 FORBIDDEN', async () => {
@@ -238,7 +242,7 @@ describe('PATCH 的请求体（SPEC §6.4.1）', () => {
     expect((await readRow(meme.id))?.tags).toEqual(['猫'])
   })
 
-  it('六个数组各拒一次词表外的值', async () => {
+  it('七个数组各拒一次词表外的值', async () => {
     const alice = await signIn()
     const meme = await richMeme(alice.id)
 
@@ -250,6 +254,7 @@ describe('PATCH 的请求体（SPEC §6.4.1）', () => {
       { purposes: ['不存在'] },
       { scenes: ['不存在'] },
       { tags: ['不存在'] },
+      { ratings: ['不存在'] },
     ]) {
       const res = await patch(meme.id, body, alice)
       expect(res.status).toBe(400)
@@ -335,9 +340,9 @@ describe('PATCH 的写入（SPEC §5.2.3 / §9.19）', () => {
 
     const row = await readRow(meme.id)
     // 精确值，不是「包含」：漏掉某个来源字段、或者用旧值拼，都会在这里露出来。
-    // ocr_text 不可编辑，所以它照原样留在文本里；没传的三维（expressions / tones /
-    // purposes）拿库里的旧值参与拼接，顺序仍是 buildSearchText 那一个。
-    expect(row?.searchText).toBe('图上的字 新描述 微笑 无语 敷衍 打招呼 狗')
+    // ocr_text 不可编辑，所以它照原样留在文本里；没传的四维（expressions / tones /
+    // purposes / ratings）拿库里的旧值参与拼接，顺序仍是 buildSearchText 那一个。
+    expect(row?.searchText).toBe('图上的字 新描述 微笑 无语 敷衍 打招呼 狗 成人向')
     // 被移除的标签不能留在 search_text 里——留着就是「文本与标签对不上」，
     // 那张图会被一个它已经没有的标签搜出来
     expect(row?.searchText).not.toContain('开心')
@@ -360,6 +365,7 @@ describe('PATCH 的写入（SPEC §5.2.3 / §9.19）', () => {
             purposes: [],
             scenes: [],
             tags: [],
+            ratings: [],
           },
           alice,
         )
@@ -412,7 +418,7 @@ describe('PATCH 的写入（SPEC §5.2.3 / §9.19）', () => {
 
     // 断言终值而不是「包含」：加锁之后两种先后顺序的终值**相同**，所以这条是确定性的。
     // 少了锁就会在这里露出来——某个来源字段已经改了，它的词却不在 search_text 里。
-    expect(row?.searchText).toBe('图上的字 B 的描述 微笑 开心 敷衍 打招呼 加班 狗')
+    expect(row?.searchText).toBe('图上的字 B 的描述 微笑 开心 敷衍 打招呼 加班 狗 成人向')
   })
 
   it('响应是更新后的完整 Meme，与 GET /memes/:id 同形', async () => {

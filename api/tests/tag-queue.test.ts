@@ -151,11 +151,16 @@ async function workUntilSettled(memeId: string, timeoutMs = 15_000): Promise<voi
 }
 
 /**
- * 一次合法的视觉产出。**六个维度都填上，而且各自填的是只属于那一维的词**。
+ * 一次合法的视觉产出。**七个维度都填上，而且各自填的是只属于那一维的词**。
  *
  * 这张图正是拆维度的理由：脸上是「翻白眼」（看得见的事实），心里是「无语」（内心状态），
  * 语气是「无所谓」（怎么说的），交流用途是「吐槽」（想完成什么）。拆之前这四个只能
  * 一起挤进 emotions / scenes，挤完就分不清哪个是脸哪个是心了（SPEC §4.3.1）。
+ *
+ * ⚠️ `ratings` 也填一个**真词条**（它是唯一一个）。这一维只有一条路能进库——
+ *    `data/memes.ts` 的 `TagResult` 和 `applyTagResult` 是**手写列**，不走 `VOCAB_FIELDS`。
+ *    这里留空的话，那两处漏写 `ratings` 就**测不出来**：打标照样 ok、其余六维照样对，
+ *    只有这一列永远是 NULL。见下面那条逐维断言的注释。
  */
 const OK_CONTENT = JSON.stringify({
   ocrText: '我服了',
@@ -168,6 +173,7 @@ const OK_CONTENT = JSON.stringify({
   purposes: ['吐槽'],
   scenes: [],
   tags: { subject: ['猫'], style: ['真人'] },
+  ratings: ['成人向'],
 })
 
 beforeEach(async () => {
@@ -191,7 +197,7 @@ afterAll(async () => {
 // ── 正常路径 ───────────────────────────────────────────────────────
 
 describe('打标成功', () => {
-  it('八个字段 + search_text + embedding 一次写完，任务标 done', async () => {
+  it('九个字段 + search_text + embedding 一次写完，任务标 done', async () => {
     const { id, userId } = await seedMeme()
     await enqueue(id, userId)
 
@@ -201,7 +207,9 @@ describe('打标成功', () => {
     expect(row.tagStatus).toBe('ok')
     expect(row.ocrText).toBe('我服了')
     expect(row.description).toContain('翻着白眼')
-    // 六个维度逐个断言：漏掉某一维的写入，表现是那一维永远是空数组而打标仍然 ok
+    // 七个维度逐个断言：漏掉某一维的写入，表现是那一维永远是空数组而打标仍然 ok。
+    // **这一条是 `ratings` 那个手写列漏点的唯一哨兵**——`TagResult` / `applyTagResult`
+    // 不是遍历 VOCAB_FIELDS，加维度时漏了不会编译错，只有这里会红。
     expect(row.expressions).toEqual(['翻白眼'])
     // alias 归一化：「服了」→「无语」（shared/vocab/vocab.json）
     expect(row.emotions).toEqual(['无语'])
@@ -210,13 +218,17 @@ describe('打标成功', () => {
     expect(row.scenes).toEqual([])
     // tags 是扁平的 text[]，subject 和 style 合到一起
     expect(row.tags).toEqual(['猫', '真人'])
+    // ratings 同样是扁平 text[]，没有 tags 那种分组
+    expect(row.ratings).toEqual(['成人向'])
     expect(row.visionModel).toBe('test-vision')
 
-    // search_text 必须和八个来源字段同一条 UPDATE 写进去，否则文本检索搜不到这张图
+    // search_text 必须和九个来源字段同一条 UPDATE 写进去，否则文本检索搜不到这张图
     expect(row.searchText).not.toBeNull()
     expect(row.searchText).toContain('我服了')
     expect(row.searchText).toContain('吐槽')
     expect(row.searchText).toContain('翻白眼')
+    // ratings 也在 search_text 里（SPEC §5.2.3 说的是七个数组，不是六个）
+    expect(row.searchText).toContain('成人向')
     // original_filename **不进** search_text（SPEC §5.2.3）
     expect(row.searchText).not.toContain('.png')
 

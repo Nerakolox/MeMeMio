@@ -50,6 +50,13 @@
       "when": 1790067797034,
       "tag": "0006_split_label_dimensions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790086392018,
+      "tag": "0007_add_ratings_dimension",
+      "breakpoints": true
     }
   ]
 }

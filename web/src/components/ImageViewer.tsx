@@ -1,11 +1,12 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import Lightbox from 'yet-another-react-lightbox'
-import type { SlideImage } from 'yet-another-react-lightbox'
+import type { RenderSlideFooterProps, SlideImage } from 'yet-another-react-lightbox'
 import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 // 只这一个：`plugins/zoom.css` 在 3.32.2 里**不存在**（exports 里只有 styles 与
 // captions / counter / thumbnails 四个），照习惯补一行会让构建失败。
 import 'yet-another-react-lightbox/styles.css'
 import type { Meme } from '../lib/api'
+import { VOCAB_DIMENSIONS } from '../lib/vocab'
 
 type OpenImage = (meme: Meme) => void
 
@@ -89,7 +90,7 @@ export function useImageViewer(): OpenImage {
 /**
  * 用**原图**而不是缩略图：全屏的意义就是看清，动图更是只有原图会动（缩略图是服务端转的
  * 静态首帧 WebP，见 `MemeImage`）。发送路径的依据是同一条——「展示和发送始终用原图」
- * （SPEC §9.2）。**网格仍然只加载缩略图**（styling.md「图片网格」），这里只影响全屏那一张。
+ * （SPEC §9.4:145）。**网格仍然只加载缩略图**（styling.md「图片网格」），这里只影响全屏那一张。
  */
 function toSlide(meme: Meme): SlideImage {
   return {
@@ -101,7 +102,90 @@ function toSlide(meme: Meme): SlideImage {
     ...(meme.width != null && meme.height != null
       ? { width: meme.width, height: meme.height }
       : {}),
+    // 整条记录一起挂上去，给底部的信息栏取元数据用。**`slideFooter` 拿到的 `slide` 就是
+    // 这个对象本身**，所以数据随 slide 走，`render` 不必依赖「当前是第几张」——
+    // 这是下面 `RENDER` 能继续当模块级常量的原因。字段名与类型见 `yarl-augment.d.ts`。
+    meme,
   }
+}
+
+/**
+ * 信息栏里要显示的标签值。**内容分级排最前**，其余按 `VOCAB_DIMENSIONS` 的顺序。
+ *
+ * 分级回答的是「这张图能不能在这儿出现」，不是「画面在表达什么」，所以它不在
+ * 「表情 → 情绪 → 语气 → 用途 → 情境」那条从外到内的轴上（`lib/vocab.ts` 的注释、
+ * SPEC §4.3）。排最前是它在界面上唯一的特殊待遇，也是它不被读成第七个语义维度的原因。
+ *
+ * 这里**不写死七次取值**：将来加维度时，漏掉一维的表现是这个词在信息栏里不出现，
+ * 而图片本身照常打开——不报错，所以要靠遍历 `VOCAB_DIMENSIONS` 来免疫。
+ */
+function labelValues(meme: Meme): string[] {
+  const described = VOCAB_DIMENSIONS.filter((d) => d.field !== 'ratings').flatMap(
+    (d) => meme[d.field],
+  )
+  return [...meme.ratings, ...described]
+}
+
+/**
+ * 阅览器底部的信息栏（2026-09-22 加，SPEC §9.24）。
+ *
+ * ## 它为什么存在
+ *
+ * 在此之前阅览器**一条元数据都不显示**——它只把原图铺满屏幕。而全屏的用途恰恰是
+ * 「图上压着的那行小字看不清，放大看看」，此时用户反而不知道自己看的是哪张、什么标签。
+ * 卡片上也从不显示标签值，于是「成人向」这类词在界面上根本没有露出的地方。
+ *
+ * ## 版式：贴合内容宽度，两侧留出可点的背景
+ *
+ * 外层铺满整宽但 `pointer-events-none`，内层那张卡才接事件。**这条不能省**：YARL 的
+ * 「点背景关闭」只认 `event.target` 本身是 `.yarl__slide` / `.yarl__slide_wrapper` 的点击，
+ * 一个铺满整宽、能接事件的底栏会把底部那条关闭区整条吃掉（左右两个翻页按钮当年就是这么
+ * 坏掉「点背景关闭」的，见下面 `RENDER`）。留出两侧之后，底部只剩中间一小块不可点，
+ * 而 `Esc` / `×` / 下拉关闭三条路都还在。
+ *
+ * ## 压在图上就得自己带对比度
+ *
+ * 底图可能是白的也可能是黑的，所以文字不借主题 token，走 `bg-black/70` + 白字 + 背景模糊
+ * ——和 `MemeCard` 的 `BADGE` 同一条思路。`bg-black/70` 压在最亮的图上是 `#4d4d4d`，
+ * 纯白字对它 8.1:1，降到 `text-white/75` 也还有 5.3:1，都过 AA。
+ *
+ * ## 四条库带来的约束（都在 `node_modules` 里实测过）
+ *
+ * 1. **阅览器里不能滚动**：`.yarl__container` 是 `touch-action: none`，且本仓开了
+ *    `closeOnPullDown`。所以描述**只能截断**，`line-clamp-2` 不是美观选择而是唯一选择
+ *    （与 YARL 官方 captions 插件同一档，它是 clamp-3）。
+ * 2. **`.yarl__*` 上写 Tailwind 类是静默失效的**（styling.md「库自带的 CSS 是无层的」）
+ *    ——这里全是自建元素，不受影响，但**不要**顺手给 `.yarl__slide` 加类。
+ * 3. `.yarl__container` 有 `user-select: none`，信息栏文字**选不中、复制不了**。接受。
+ * 4. `.yarl__slide` 是 `overflow: hidden`，超出会被裁掉，所以不做超出屏幕的横向排布。
+ *
+ * ## 有意不做的
+ *
+ * 上传者名**不可点**：会变成阅览器里的一个触摸目标（得按指针分档），而应用里并没有
+ * 「某个人的图」这个页面。整条信息栏是纯展示，44×44 那条约束管的是触摸目标，不适用。
+ * 也不声明任何标签的来源——SPEC §4.3 明确要求别把 `ratings` 呈现成「模型标好了的」，
+ * 一条不作声明的扁平标签行正合那条。
+ */
+function SlideFooter({ slide }: RenderSlideFooterProps) {
+  // 理论上 `slides` 里每个元素都挂着 meme；`undefined` 时宁可不显示也不要崩。
+  const meme = slide.meme
+  if (!meme) return null
+
+  const labels = labelValues(meme)
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3">
+      <div className="pointer-events-auto max-w-2xl rounded-xl bg-black/70 px-3.5 py-2.5 text-white backdrop-blur-sm">
+        {labels.length > 0 && (
+          <p className="text-sm font-medium leading-snug">{labels.join(' · ')}</p>
+        )}
+        {meme.description && (
+          <p className="line-clamp-2 text-sm leading-snug text-white/75">{meme.description}</p>
+        )}
+        <p className="text-xs leading-snug text-white/75">@{meme.uploaderName}</p>
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -127,10 +211,16 @@ const PLUGINS = [Zoom]
  * 40px 是箭头按钮本身）。拿掉之后左右才回到 `yarl__slide_wrapper` 上。
  *
  * ⚠️ **哪天接了「←/→ 翻上下一张」，这两行要一起删掉**，否则新功能会以「按钮不见了」的形式坏掉。
+ *
+ * `slideFooter` 能一样是常量：它的 props 是 `{ slide }`（`types.d.ts:328`），要的数据随
+ * slide 走，**与「当前是第几张」无关**，所以不存在「`slides` 换了、`render` 没换」的节奏问题。
+ * 这同时绕开了浅合并那个坑——`render` 一旦改写成 `useMemo`/内联对象，很容易在某条分支上
+ * 漏掉上面两个 `() => null`，左右箭头就悄悄回来了（上面刚说过的那个缺陷）。
  */
 const RENDER = {
   buttonPrev: () => null,
   buttonNext: () => null,
+  slideFooter: SlideFooter,
 }
 
 const LABELS = {

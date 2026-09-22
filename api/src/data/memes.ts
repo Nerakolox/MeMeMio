@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
 import { memes, users, userFavorites } from './schema.js'
@@ -46,8 +46,17 @@ export type MutateAction = 'edit' | 'delete' | 'retag'
  * ⚠️ edit 全员开放是有意的不对称，不是漏写。标签在共享库里是公共品，谁发现标错了
  *    顺手改掉对所有人都是净收益。**不要「顺手补一个归属检查」** —— 那会把共享库
  *    最核心的一条产品决策改掉。见 SPEC §9.1。
+ *
+ * 首个参数只要求 `uploaderId`，**不是 `MemeRow`**：批量重打标（§6.4.3）要按行判一遍
+ * 归属，而那一趟查询只取三个字段（`id` / `uploader_id` / `edited_by`）。
+ * 要求整个 `MemeRow` 会逼调用方要么多查九列，要么强转——而强转是把类型检查关掉，
+ * 不是把类型改对（code-style.md）。函数实现一个字没变。
  */
-export function assertCanMutate(meme: MemeRow, actor: Actor, action: MutateAction): void {
+export function assertCanMutate(
+  meme: Pick<MemeRow, 'uploaderId'>,
+  actor: Actor,
+  action: MutateAction,
+): void {
   if (action === 'edit') return
 
   const isUploader = meme.uploaderId === actor.id
@@ -72,7 +81,7 @@ export async function findMemeById(id: string, db: Db = defaultDb): Promise<Meme
  * 同 `findMemeById`，但**加行锁**（`select ... for update`），**只能在事务里用**。
  *
  * 存在的理由是 `updateMemeContent` 是一次**读-改-写**：没传的字段要保留原值，
- * 而 `search_text` 又必须按五个字段重算。不加锁的话会这样交错——
+ * 而 `search_text` 又必须按全部来源字段重算。不加锁的话会这样交错——
  * T1 读到旧标签 → T2 写完自己的标签 → T1 拿**旧标签**拼出 search_text 写回，
  * 库里于是留下 T2 的标签配 T1 的文本。那正是 SPEC §5.2.3 说的「文本与标签对不上」，
  * 而且**不报错**。撞上后台打标写回（`applyTagResult`）也是同一种交错。
@@ -195,11 +204,18 @@ export async function softDeleteMeme(
 // ── 打标写回（SPEC §5.2.3） ────────────────────────────────────────
 
 /**
- * 一次打标的全部产出。**八个字段一次写完**——单次视觉调用产出全部内容，
+ * 一次打标的全部产出。**九个字段一次写完**——单次视觉调用产出全部内容，
  * 没有独立的 OCR 链路（SPEC §5.2.3），也就不存在「先写 ocr_text 再补 description」。
  *
- * 六个数组是六个互不推导的维度（SPEC §4.3.1）。它们在这里是平行的，
+ * 前六个数组是六个互不推导的维度（SPEC §4.3.1）。它们在这里是平行的，
  * 这一层不做任何「表情推情绪」的补全——那是打标器的判断，不是数据层的。
+ * `ratings` 是分级不是语义维度，同样平行、同样不做推断（SPEC §4.3）。
+ *
+ * ⚠️ **这里是手写列，不是遍历 `VOCAB_FIELDS`。** 加维度时最容易漏的就是这两处
+ *    （这个类型和下面 `applyTagResult` 的 `.set`），漏了的表现是**那一列永远不写**：
+ *    打标照常成功、`tag_status` 照样是 `ok`，只有那一维静默地永远是 NULL。
+ *    加维度时请连带看一遍 `serialize/meme.ts` 的 `SerializeMemeInput`，
+ *    它是同一类手写清单。
  */
 export type TagResult = {
   ocrText: string
@@ -210,6 +226,7 @@ export type TagResult = {
   purposes: string[]
   scenes: string[]
   tags: string[]
+  ratings: string[]
   /** 派生字段，由 `lib/vision-output.ts` 的 `buildSearchText` 算。见下方警告。 */
   searchText: string
   visionModel: string
@@ -218,7 +235,7 @@ export type TagResult = {
 /**
  * 写回打标结果。
  *
- * ⚠️ **`search_text` 必须和八个来源字段在同一条 UPDATE 里**（schema 里那句「任一来源变更时
+ * ⚠️ **`search_text` 必须和九个来源字段在同一条 UPDATE 里**（schema 里那句「任一来源变更时
  *    必须重算」）。拆成两条语句的话，中间崩掉就留下一条 search_text 和标签对不上的记录，
  *    而这不报错——只是那张图在文本检索里搜不到或搜出错的东西。**将来的 `PATCH /memes/:id`
  *    改标签时同样要走这个函数，不要在 handler 里手写一遍 UPDATE。**
@@ -244,6 +261,7 @@ export async function applyTagResult(
       purposes: result.purposes,
       scenes: result.scenes,
       tags: result.tags,
+      ratings: result.ratings,
       searchText: result.searchText,
       visionModel: result.visionModel,
       tagStatus: 'ok',
@@ -357,7 +375,7 @@ export async function updateMemeContent(
     if (touches) {
       const description = patch.description === undefined ? meme.description : patch.description
 
-      // 六个维度逐个「传了就用传的，没传就留库里的」。遍历 VOCAB_FIELDS 而不是手写六行：
+      // 七个维度逐个「传了就用传的，没传就留库里的」。遍历 VOCAB_FIELDS 而不是手写七行：
       // 漏掉一维的表现是那一维改不动，而且 PATCH 会返回 200。
       const labels = {} as Record<VocabField, string[]>
       for (const field of VOCAB_FIELDS) labels[field] = patch[field] ?? meme[field] ?? []
@@ -468,6 +486,101 @@ export async function getSearchTextForEmbedding(
   return text === '' ? null : text
 }
 
+/** 重打标的候选行。只取归属判断与「跳过人工编辑过的」两件事要用的三个字段。 */
+export type RetagCandidate = { id: string; uploaderId: string; editedBy: string | null }
+
+/**
+ * 重打标的候选：按 `filter` 分页扫。
+ *
+ * 形状照 `listStaleEmbeddingMemeIds`，但有**三处刻意的不同**：
+ *
+ * 1. **`ORDER BY` 带 `id` 做 tiebreaker。** `created_at` 的默认值是 `now()`，
+ *    而 `now()` 在同一个事务里是同一个值——一次导入几百张图的 `created_at` 完全相同，
+ *    只按它排序时**每一页的顺序都不确定**，翻页会漏掉一批、重复另一批。
+ *    重建索引那边可以不管（它入队幂等，再点一次就能补），而**重打再点一次是重新花钱**，
+ *    这个容错不成立。`(created_at, id)` 是全序，翻页稳定。
+ *
+ * 2. **返回三列而不是只返回 id。** 归属判断（`assertCanMutate`）和「跳过人工编辑过的」
+ *    都要用，多一次查询等于把这两个判断拆到两个时刻。九列 AI 产出字段**不取**——
+ *    重打是重跑模型，不需要旧结果（那正是要被覆盖的东西）。
+ *
+ * 3. **不过滤 `edited_by`。** 那是策略不是数据（「跳过人工编辑过的图」是 §6.4.3 的裁定），
+ *    而且一趟翻页要同时产出「要排的」和「跳过了几张」——放进 WHERE 就得再查一遍。
+ *    过滤在 `services/retag.ts`。
+ *
+ * `tagStatus` 是**已校验过的**枚举值，调用方（服务层）负责先挡掉非法取值：
+ * 这一层不认识状态机，传错值就是查不到东西，不报错。同 `setTagStatus` 的口径。
+ *
+ * @param filter `uploaderId` 为 null 表示不按上传者收窄（仅 admin 会走到）。
+ */
+export async function listMemesForRetag(
+  filter: { uploaderId: string | null; tagStatus: string | null },
+  limit: number,
+  offset: number,
+  db: Db = defaultDb,
+): Promise<RetagCandidate[]> {
+  const conditions: SQL[] = [isNull(memes.deletedAt)]
+  if (filter.uploaderId !== null) conditions.push(eq(memes.uploaderId, filter.uploaderId))
+  if (filter.tagStatus !== null) conditions.push(eq(memes.tagStatus, filter.tagStatus))
+
+  return db
+    .select({ id: memes.id, uploaderId: memes.uploaderId, editedBy: memes.editedBy })
+    .from(memes)
+    .where(and(...conditions))
+    .orderBy(memes.createdAt, memes.id)
+    .limit(limit)
+    .offset(offset)
+}
+
+/**
+ * `POST /memes/retag` 的 `{ memeIds: [...] }` 那一支：按 id 取候选。
+ *
+ * ⚠️ **分块查，不是一条 `in (...)` 到底。** postgres.js 在 65534 个绑定参数处
+ *    硬抛 `MAX_PARAMETERS_EXCEEDED`，而且**不自动分块**——一次传十万个 id 的表现是
+ *    500，不是「慢」。块大小取 1000，和 `RETAG_BATCH` 同一个量级。
+ *
+ * 查不到的 id 由调用方比对数量发现（软删与不存在都表现为「查不到」），
+ * 那里返回 `NOT_FOUND`——**不静默跳过**，理由见 SPEC §6.4.3。
+ */
+export async function findMemesForRetagByIds(
+  ids: string[],
+  chunkSize: number,
+  db: Db = defaultDb,
+): Promise<RetagCandidate[]> {
+  const out: RetagCandidate[] = []
+  for (let start = 0; start < ids.length; start += chunkSize) {
+    const chunk = ids.slice(start, start + chunkSize)
+    const rows = await db
+      .select({ id: memes.id, uploaderId: memes.uploaderId, editedBy: memes.editedBy })
+      .from(memes)
+      .where(and(inArray(memes.id, chunk), isNull(memes.deletedAt)))
+    out.push(...rows)
+  }
+  return out
+}
+
+/**
+ * 批量把 `tag_status` 置回 `'pending'`。重打标入队时用（SPEC §6.4.3）。
+ *
+ * **取值不校验**，同 `setTagStatus`：这一层不认识状态机。
+ *
+ * ⚠️ **必须是「真的入队成功」的那批 id**，不能是「本来想入队」的那批。
+ *    某个 id 因为队列行正卡在 `running` 而被跳过时，它的图仍被翻成 `pending` 的话，
+ *    两个写入互相矛盾——而矛盾的表现只是「那张图一直显示待打标」，不报错。
+ *    所以调用方拿的是 upsert 的 `RETURNING`，不是自己的输入列表。
+ *
+ * ⚠️ 分块调用方的责任：一条 `in (...)` 上万参数会撞 postgres.js 的硬上限（见上）。
+ *
+ * 软删过滤照旧硬编（§3.4）：重打是异步的，翻状态时图可能已经被删了。
+ */
+export async function markTagStatusPending(ids: string[], tx: Db = defaultDb): Promise<void> {
+  if (ids.length === 0) return
+  await tx
+    .update(memes)
+    .set({ tagStatus: 'pending' })
+    .where(and(inArray(memes.id, ids), isNull(memes.deletedAt)))
+}
+
 export type EmbeddingProgress = { total: number; done: number; stale: number }
 
 /**
@@ -564,9 +677,9 @@ export async function removeFavorite(
 
 export type ListMemesParams = {
   /**
-   * 六个语义维度的筛选值（SPEC §4.3 / §6.3.2）。每维可多值，**所有值之间都是 AND**。
+   * 七个维度的筛选值（SPEC §4.3 / §6.3.2）。每维可多值，**所有值之间都是 AND**。
    *
-   * 写成 `Partial<Record<VocabField, ...>>` 而不是六个手写字段：加一维时漏掉一处的
+   * 写成 `Partial<Record<VocabField, ...>>` 而不是七个手写字段：加一维时漏掉一处的
    * 表现是那个筛选参数被静默忽略——接口返回 200，结果里混着不该出现的图。
    */
 } & Partial<Record<VocabField, string[]>> & {
@@ -628,7 +741,7 @@ export async function listMemes(
 
   const conditions: SQL[] = [isNull(memes.deletedAt)]
 
-  // 多值 AND 过滤——每个值必须在对应数组里出现。六维一视同仁，靠 GIN 索引走 @>。
+  // 多值 AND 过滤——每个值必须在对应数组里出现。七维一视同仁，靠 GIN 索引走 @>。
   for (const field of VOCAB_FIELDS) {
     for (const value of params[field] ?? []) {
       conditions.push(sql`${memes[field]} @> ARRAY[${value}]::text[]`)
@@ -746,6 +859,17 @@ export async function listMemes(
 //
 // `GET /memes/tag-status` 的 `counts`。**只有这一条查询在本文件里**：它只碰 `memes`。
 // 同一个接口的 `running` / `failures` 是以 `tag_jobs` 为驱动的聚合，在 `data/tag-jobs.ts`。
+
+/**
+ * `tag_status` 的四个取值（SPEC §5.2.3）。**这是全 api 唯一一份字面清单**——
+ * `TagStatusCounts` 的四个键、`GET /memes?tagStatus=` 的合法值、
+ * `POST /memes/retag` 的 `filter.tagStatus` 都指它。
+ *
+ * ⚠️ 它**不是**状态机的守卫：`setTagStatus` / `applyTagResult` 照样不校验取值
+ *    （那一层不认识状态机，传错值是调用方的 bug，加白名单只会把它藏起来）。
+ *    它唯一的用途是**校验客户端传进来的参数**——请求参数是外部输入，必须挡。
+ */
+export const TAG_STATUSES = ['pending', 'ok', 'refused', 'needs_manual'] as const
 
 export type TagStatusCounts = {
   ok: number

@@ -16,7 +16,7 @@ import { isKnownLabel, isKnownTerm, termsOf, vocabulary, VOCAB_FIELDS } from './
  */
 
 describe('词表结构', () => {
-  it('六个维度都非空', () => {
+  it('七个维度都非空', () => {
     for (const field of VOCAB_FIELDS) {
       expect(termsOf(field).length, field).toBeGreaterThan(0)
     }

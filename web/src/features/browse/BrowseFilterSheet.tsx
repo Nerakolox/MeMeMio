@@ -76,7 +76,7 @@ export function BrowseFilterSheet({
           </SheetClose>
         </SheetHeader>
 
-        {/* 只让中间这段滚、标题常驻（同 MemeEditPanel 的结构）：六个维度共 190 个 chip，
+        {/* 只让中间这段滚、标题常驻（同 MemeEditPanel 的结构）：七维共 191 个 chip，
             展开两三维就比屏幕长了（收起时不长，但常驻标题对两种情形都不亏） */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4">
           <BrowseFilters filters={filters} user={user} />

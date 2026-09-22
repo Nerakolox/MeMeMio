@@ -7,8 +7,15 @@ import vocabJson from '@shared/vocab/vocab.json'
  * ⚠️ 词条还是 proposed，代码只能把它当数据读，不能对具体词条做硬编码分支。
  */
 
-/** 六个数组字段的字段名。和 api 的 `VocabField` 同名同值（SPEC §4.3）。 */
-export type VocabField = 'expressions' | 'emotions' | 'tones' | 'purposes' | 'scenes' | 'tags'
+/** 七个数组字段的字段名。和 api 的 `VocabField` 同名同值（SPEC §4.3）。 */
+export type VocabField =
+  | 'expressions'
+  | 'emotions'
+  | 'tones'
+  | 'purposes'
+  | 'scenes'
+  | 'tags'
+  | 'ratings'
 
 export type Vocabulary = {
   version: string
@@ -20,6 +27,7 @@ export type Vocabulary = {
   purposes: string[]
   scenes: string[]
   tags: { subject: string[]; style: string[] }
+  ratings: string[]
 }
 
 export const vocabulary = vocabJson as Vocabulary
@@ -30,10 +38,11 @@ export const toneOptions = vocabulary.tones
 export const purposeOptions = vocabulary.purposes
 export const sceneOptions = vocabulary.scenes
 export const tagOptions = [...vocabulary.tags.subject, ...vocabulary.tags.style]
+export const ratingOptions = vocabulary.ratings
 
 /**
- * 六个维度的**展示顺序、名称与候选词**。筛选面板和编辑面板都遍历这张表，
- * 不各写一份六段重复的 JSX。
+ * 七个维度的**展示顺序、名称与候选词**。筛选面板和编辑面板都遍历这张表，
+ * 不各写一份七段重复的 JSX。
  *
  * ⚠️ 名称用 SPEC §4.3 的全称（「表达语气」而不是「语气」）。这不是啰嗦：五个语义维度
  * 里有三个单看两个字会被读成同一件事——「语气」「情绪」「表情」在日常说法里是通用的，
@@ -41,8 +50,16 @@ export const tagOptions = [...vocabulary.tags.subject, ...vocabulary.tags.style]
  * 判据，缩写掉它就等于把当初合成一维的那个错误在界面上重演一遍。
  *
  * 顺序照 SPEC §4.3 的表：视觉事实（表情）→ 内心状态（情绪）→ 怎么说（语气）→
- * 想完成什么（用途）→ 现实场合（情境）→ 内容维度（标签）。前五个是从外到内、
- * 从事实到推断，对着一张图从上往下填是顺的。
+ * 想完成什么（用途）→ 现实场合（情境）→ 内容维度（标签）→ **内容分级**。
+ * 前五个是从外到内、从事实到推断，对着一张图从上往下填是顺的。
+ *
+ * ⚠️ `ratings` 排在**最后**，不是随手放的：它**不是第七个语义维度**（SPEC §4.3），
+ * 不在上面那条「从外到内」的轴上——把它插进中间会让「表情 → 情绪」那个相邻关系断掉，
+ * 而那对相邻关系正是列头存在的理由。
+ *
+ * ⚠️ 这一维还有一个契约上的特殊处：它**打标不可靠**，真实来源是人工编辑
+ * （SPEC §4.3 的警示、§9.23）。所以界面上**不要把它呈现成「模型标好了的」**——
+ * 它和其余六维共用同一套 chip 控件，不作任何来源声明，这正是 SPEC 要的样子。
  */
 export const VOCAB_DIMENSIONS: { field: VocabField; label: string; options: string[] }[] = [
   { field: 'expressions', label: '面部表情', options: expressionOptions },
@@ -51,10 +68,11 @@ export const VOCAB_DIMENSIONS: { field: VocabField; label: string; options: stri
   { field: 'purposes', label: '聊天用途', options: purposeOptions },
   { field: 'scenes', label: '生活情境', options: sceneOptions },
   { field: 'tags', label: '标签', options: tagOptions },
+  { field: 'ratings', label: '内容分级', options: ratingOptions },
 ]
 
 /**
- * 只要字段名的那一份。**遍历它，不要手写六遍**——漏掉一维的表现是那个筛选参数
+ * 只要字段名的那一份。**遍历它，不要手写七遍**——漏掉一维的表现是那个筛选参数
  * 被静默忽略（接口照常 200，只是结果里混着不该出现的图），api 侧同名的 `VOCAB_FIELDS`
  * 就是为这件事存在的。
  */

@@ -93,7 +93,7 @@ export type Meme = InferResponseType<typeof api.api.v1.memes.$get>['items'][numb
 export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
 
 /**
- * `PATCH /memes/{id}` 的请求体，**只认描述 + 六个词表维度**（SPEC §6.4.1 / §4.3）。
+ * `PATCH /memes/{id}` 的请求体，**只认描述 + 七个词表维度**（SPEC §6.4.1 / §4.3）。
  *
  * 三种传法含义不同，调用点别混：
  *   - 字段不出现 → 不改这个字段（所以只发改过的那些）
@@ -110,9 +110,9 @@ export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
  * 那是 api 的实现约束（见 api/agents/rules/database.md 一类的本端规则），
  * 不是这一端能决定的——已回报总管，见 joint-tasks/2026-09-19-browse-meme-actions.md。
  *
- * ⚠️ 这个缺口在 v0.2.0 拆维度那次**真的咬了一口**：六个维度里漏发任何一个，
+ * ⚠️ 这个缺口在 v0.2.0 拆维度那次**真的咬了一口**：某一维漏发，
  * 编译期一声不响，运行时也不报错——服务端只是没收到那个字段，于是按「不改」处理。
- * 所以六维写成 `Partial<Record<VocabField, string[]>>` 而不是六行手写字段。
+ * 所以这七维写成 `Partial<Record<VocabField, string[]>>` 而不是手写字段。
  */
 export type MemePatch = { description?: string | null } & Partial<Record<VocabField, string[]>>
 
@@ -138,8 +138,8 @@ export async function fetchMemes(
   params: FetchMemesParams = {},
 ): Promise<{ items: Meme[]; nextCursor: string | null }> {
   const qs = new URLSearchParams()
-  // 六个维度各自是**可重复键**（`?emotions=无语&emotions=疲惫`），所有值之间是 AND。
-  // 遍历 `VOCAB_FIELDS` 而不是手写六行：漏掉一行不会报错，只是那一维的筛选静默失效。
+  // 每个维度各自是**可重复键**（`?emotions=无语&emotions=疲惫`），所有值之间是 AND。
+  // 遍历 `VOCAB_FIELDS` 而不是手写七行：漏掉一行不会报错，只是那一维的筛选静默失效。
   for (const field of VOCAB_FIELDS) params[field]?.forEach((v) => qs.append(field, v))
   if (params.isAnimated !== undefined) qs.set('isAnimated', String(params.isAnimated))
   if (params.favorited) qs.set('favorited', 'true')
@@ -164,11 +164,65 @@ export async function fetchMemes(
  */
 export type TagStatusSummary = InferResponseType<MemesClient['tag-status']['$get']>
 
-/** 本人的打标汇总。`scope=all` 是管理员那一段的事，界面还没接（任务里明确不做）。 */
-export async function fetchTagStatus(): Promise<TagStatusSummary> {
-  const res = await fetch('/api/v1/memes/tag-status')
+/**
+ * 打标汇总（SPEC §6.6.1）。
+ *
+ * `scope` 缺省是 `mine`（只看自己上传的）。`all` 是全站、**仅管理员**，非管理员传它
+ * 服务端返回 `FORBIDDEN`——所以只有管理员分段能传。
+ *
+ * 全库重打标的进度必须看 `all`：那个操作打的就是全库，只看自己那份会永远停在 0。
+ */
+export async function fetchTagStatus(scope?: 'mine' | 'all'): Promise<TagStatusSummary> {
+  const qs = scope === undefined ? '' : `?scope=${scope}`
+  const res = await fetch(`/api/v1/memes/tag-status${qs}`)
   if (!res.ok) throw await toApiError(res)
   return res.json() as Promise<TagStatusSummary>
+}
+
+// --- 批量重打标（仅管理员那一段用，权限在服务端） --------------------------
+
+/**
+ * `POST /memes/retag` 的请求体（SPEC §6.4.3）。**两个形状恰好给一个。**
+ *
+ * ⚠️ 这个类型**推不出来，只能手写**：api 侧的请求体是在 handler 里手工校验的
+ *    （`routes/memes.ts` 的 `parseRetagBody`），没走 validator，Hono RPC 的
+ *    `InferRequestType` 对它只能给出 `unknown`——同 `api-config.ts` 的 `ConfigInput`。
+ *    代价是「api 改字段名 → web 编译失败」那层保护在这里没有，改形状时要人工跟着改。
+ *
+ * ⚠️ 但**响应**类型仍然是推出来的（下面的 `RetagResult`），那条链路没断。
+ *
+ * `uploader` 的 `'me'` 是个**保留字面量**，其余取值是 uuid；`tagStatus` 取 §5.2.3 的四个值。
+ * 这里写成 `string` 不做联合：它们只在 `parseRetagBody` 里校验，写在类型里是假的精确。
+ */
+export type RetagInput =
+  | { memeIds: string[] }
+  | { filter: { uploader?: string; tagStatus?: string } }
+
+/**
+ * `POST /memes/retag` 的响应（SPEC §6.4.3）。
+ *
+ * `enqueuedCount` 是**这一次新排上**的条数，`0` 不是错误——连着点两次，第二次就是 0
+ * （上一轮还在队列里的行不再计入）。另外两个 `skipped*` 存在的意义是让「一条都没排上」
+ * 可解释：否则界面只能说「0 条」，而那有三种完全不同的成因。
+ */
+export type RetagResult = InferResponseType<MemesClient['retag']['$post']>
+
+/**
+ * 触发批量重打标（SPEC §6.4.3）。
+ *
+ * ⚠️ **与 `startReindex` 最要紧的差别：这个接口不幂等。** 重建索引重复点是安全的
+ *    （服务端 `onConflictDoNothing`，连说明都写着「重复触发是安全的」），重打标重复点
+ *    是把同一批图再送一遍视觉模型、**再花一遍图片上传者的钱**。所以调用方必须先弹确认框，
+ *    跑着的时候还要禁用——那句话在这里**不能复用**。
+ */
+export async function startRetag(body: RetagInput): Promise<RetagResult> {
+  const res = await fetch('/api/v1/memes/retag', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw await toApiError(res)
+  return res.json() as Promise<RetagResult>
 }
 
 /**

@@ -64,7 +64,7 @@ describe('OCR / trgm 路', () => {
 
   it('⚠️ 不匹配 search_text —— 标签值不该在这一路里再计一次分（SPEC §9.21）', async () => {
     const alice = await createUser(db)
-    // search_text 里拼着六个数组的标签值。这一路也匹配它的话，同一个「无语」会被
+    // search_text 里拼着七个数组的标签值。这一路也匹配它的话，同一个「无语」会被
     // 文本路和标签路各召回一次，RRF 融合时靠标签沾边的图会压过原文精确命中的图。
     // 表现是排序变差，不报错——所以要有一条用例把它钉住。
     const labelOnly = await makeMeme(db, {
@@ -141,7 +141,7 @@ describe('OCR / trgm 路', () => {
 })
 
 describe('标签路', () => {
-  it('六个数组都会被匹配', async () => {
+  it('七个数组都会被匹配', async () => {
     const alice = await createUser(db)
     const byExpression = await makeMeme(db, { uploaderId: alice.id, expressions: ['假笑'] })
     const byEmotion = await makeMeme(db, { uploaderId: alice.id, emotions: ['无语'] })
@@ -149,6 +149,7 @@ describe('标签路', () => {
     const byPurpose = await makeMeme(db, { uploaderId: alice.id, purposes: ['拒绝'] })
     const byScene = await makeMeme(db, { uploaderId: alice.id, scenes: ['加班'] })
     const byTag = await makeMeme(db, { uploaderId: alice.id, tags: ['猫'] })
+    const byRating = await makeMeme(db, { uploaderId: alice.id, ratings: ['成人向'] })
 
     // 一维一次：多词之间是 OR，混在一起查看不出哪一维没被匹配
     expect(await tagPathCandidates(['假笑'], [], db)).toContain(byExpression.id)
@@ -157,6 +158,9 @@ describe('标签路', () => {
     expect(await tagPathCandidates(['拒绝'], [], db)).toContain(byPurpose.id)
     expect(await tagPathCandidates(['加班'], [], db)).toContain(byScene.id)
     expect(await tagPathCandidates(['猫'], [], db)).toContain(byTag.id)
+    // ratings 走的是同一套 VOCAB_FIELDS 遍历，但**它不在前六个的语义轴上**，
+    // 加维度时如果哪里按维度手写了数组，这一条会红（SPEC §4.3）
+    expect(await tagPathCandidates(['成人向'], [], db)).toContain(byRating.id)
   })
 
   it('只匹配标签，不看 search_text —— 命中词表才进来', async () => {
