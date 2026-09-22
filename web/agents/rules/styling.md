@@ -63,8 +63,9 @@
   允许并存，但**新增代码一律写 Tailwind utility + shadcn 组件**，不再往 `styles.css`
   追加新的手写装饰。迁移是单独任务，不在引入 shadcn 这一次里做。
   进度：外壳（2026-09-21）、设置页（2026-09-21）、首页（2026-09-21）、
-  浏览页（2026-09-22）已迁完；**导入页、打标页仍是 BEM**，`styles.css` 里剩下的
-  `.import__*` / `.tagging__*` 是它们的。
+  浏览页（2026-09-22）、导入页含三个页签（2026-09-22）已迁完。
+  `styles.css` 里只剩登录页那套 `.auth-page` / `.auth-form__*`（加一条公共的 `.error`），
+  **它是最后一处**——那一页迁完这份样式表就该只剩 `:root` / `body` 两条基础声明。
 
 ## 移动端不是适配，是主场
 
@@ -108,8 +109,11 @@
   不受控件管的那四行也是（`BrowseFilters.tsx` 的 `ROW`）。
 - **浮层按钮照 `pointer-coarse` 抄**（卡片上的「⋯」与收藏：`size-8 pointer-coarse:size-11`），
   **不要用 `TOUCH`**：`min-h-11` 用在那里会把桌面卡片顶大。
-- `/import`、`/tagging` 还没迁，`styles.css` 里那几条**无条件**的 `min-height: 44px`
-  属于它们（`.import__*` / `.review-card__actions` / `.tagging__*`），迁移时按这条改。
+- **栅格里的方形图标按钮照 `size-8 pointer-coarse:size-11` 抄，不能套 `TOUCH`。**
+  导入页待上传列表的「移除」就是一条：`min-h-11` 只抬高度，会把 32×32 的方按钮拉成
+  32×44 的长方形（`.import__picked-remove` 那条旧 BEM 没有这个问题，因为它压根没写尺寸）。
+- `styles.css` 里那几条**无条件**的 `min-height: 44px` 现在只剩登录页那套 `.auth-form__*`
+  （导入页 2026-09-22 迁完时按这条改过了），那一页迁的时候照这条走。
 - 连手机也想再小，改 `lib/touch.ts` 那一行的 `min-h-8` 一个数，别去各调用点散着改。
 
 首页（2026-09-21 迁移）的四处落点，和设置页一样是**各调用点的 `TOUCH`**，

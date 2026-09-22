@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
+import { TriangleAlert } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
+import { Badge } from '../../components/ui/badge'
+import { Button } from '../../components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs'
 import { ApiError, fetchTagStatus, type TagStatusSummary } from '../../lib/api'
 import { tagStatusLabel } from '../../lib/tag-status'
+import { TOUCH } from '../../lib/touch'
+import { cn } from '../../lib/utils'
 import { FailureBreakdown } from './FailureBreakdown'
 import { TaggingList } from './TaggingList'
 import { TaggingSummary } from './TaggingSummary'
@@ -59,42 +66,61 @@ export function TagStatusView() {
   }
 
   return (
-    <section className="tagging">
+    <section className="flex flex-col gap-4">
       {summary && <TaggingSummary summary={summary} />}
 
       {/* 汇总是**附加**信息：它挂了不影响下面的列表，所以错误只报这一块，
           不把整个页签换成错误页（http.md「降级不是错误」的同一个思路）。 */}
       {summaryError && (
-        <div className="tagging__summary-error" role="alert">
-          <p>汇总加载失败：{summaryError.message}</p>
-          <p className="tagging__request-id">requestId：{summaryError.requestId}</p>
-          <button type="button" onClick={() => void loadSummary()}>
-            重试
-          </button>
-        </div>
+        <Alert variant="destructive">
+          <TriangleAlert />
+          <AlertTitle>汇总加载失败：{summaryError.message}</AlertTitle>
+          <AlertDescription>
+            <p className="font-mono text-xs">requestId：{summaryError.requestId}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className={cn(TOUCH, 'mt-2')}
+              onClick={() => void loadSummary()}
+            >
+              重试
+            </Button>
+          </AlertDescription>
+        </Alert>
       )}
 
-      <div className="tagging__subfilter">
-        {LIST_STATUSES.map((s) => {
-          const n = countFor(s)
-          return (
-            <button
-              key={s}
-              type="button"
-              className={`tagging__subfilter-btn${s === status ? ' tagging__subfilter-btn--active' : ''}`}
-              aria-current={s === status}
-              onClick={() => setStatus(s)}
-            >
-              {tagStatusLabel(s)}
-              {n !== null && n > 0 ? `（${n}）` : ''}
-            </button>
-          )
-        })}
-      </div>
+      {/* 与页面顶部那三个页签是同一套组件、同一条约定：值由 URL 给（`?tagStatus=`），
+          `onValueChange` 只把新值写回地址栏。`pointer-coarse:h-auto!` 的理由见
+          `routes/import.tsx`——注册表给列表写死 `h-9`，只有 `!` 压得住。 */}
+      <Tabs value={status} onValueChange={setStatus} className="gap-4">
+        <TabsList className="pointer-coarse:h-auto!">
+          {LIST_STATUSES.map((s) => {
+            const n = countFor(s)
+            return (
+              <TabsTrigger key={s} value={s} className={TOUCH}>
+                {tagStatusLabel(s)}
+                {n !== null && n > 0 ? (
+                  <Badge variant="secondary" className="tabular-nums">
+                    {n}
+                  </Badge>
+                ) : null}
+              </TabsTrigger>
+            )
+          })}
+        </TabsList>
 
-      {status === 'needs_manual' && summary && <FailureBreakdown failures={summary.failures} />}
+        <TabsContent value="pending">
+          <TaggingList status="pending" />
+        </TabsContent>
 
-      <TaggingList status={status} />
+        <TabsContent value="needs_manual">
+          <div className="flex flex-col gap-4">
+            {summary && <FailureBreakdown failures={summary.failures} />}
+            <TaggingList status="needs_manual" />
+          </div>
+        </TabsContent>
+      </Tabs>
     </section>
   )
 }

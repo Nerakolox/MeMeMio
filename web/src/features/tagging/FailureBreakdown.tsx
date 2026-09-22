@@ -16,8 +16,8 @@ export function FailureBreakdown({ failures }: { failures: TagStatusSummary['fai
   const embedFailed = failures.find((f) => f.reason === 'embed_failed')?.count ?? 0
 
   return (
-    <div className="tagging__failures">
-      <ul className="tagging__failure-list">
+    <section className="flex flex-col gap-2 rounded-2xl border bg-muted/30 px-4 py-3">
+      <ul className="flex flex-col gap-1 text-sm">
         {failures.map((f) => (
           <li key={f.reason}>
             {f.count} 张{tagFailureLabel(f.reason)}
@@ -25,11 +25,11 @@ export function FailureBreakdown({ failures }: { failures: TagStatusSummary['fai
         ))}
       </ul>
       {embedFailed > 0 && (
-        <p className="tagging__note">
+        <p className="text-xs text-muted-foreground">
           其中 {embedFailed} 张已经打标成功，只是没算出向量——它们能被文字搜到，
           但不会出现在按意思找的那一路结果里。这类不占「需人工」的张数。
         </p>
       )}
-    </div>
+    </section>
   )
 }
