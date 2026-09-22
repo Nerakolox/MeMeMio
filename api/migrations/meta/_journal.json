@@ -57,6 +57,13 @@
       "when": 1790086392018,
       "tag": "0007_add_ratings_dimension",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790100835800,
+      "tag": "0008_create_runtime_config",
+      "breakpoints": true
     }
   ]
 }

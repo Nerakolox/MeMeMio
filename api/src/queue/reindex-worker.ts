@@ -26,7 +26,11 @@ import { reindexMeme } from '../services/reindex.js'
  *   `GET /admin/reindex/status` 的 `failed` 里看得见。
  *
  * ⚠️ 同样**不假设单副本**（queue.md §1）：取任务靠 `FOR UPDATE SKIP LOCKED`。
- *    下面的并发数是**本进程**的在途数。
+ *    下面的并发数是**本进程**的在途数，不是全站的。
+ *
+ * ⚠️ 这里的 `CONCURRENCY` 与上面那个「每进程」是同一层意思，但它**不在 `runtime_config`
+ *    里**，这是有意的（SPEC §9.26）：本次只放开了打标与导入两条线的四个数，重建索引并发
+ *    没放。**别照着打标 worker 的样子顺手把它也搬进配置表**——那要先论证它为什么该放开。
  */
 
 /**

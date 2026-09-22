@@ -1,4 +1,5 @@
 import { isVisionConfigured } from '../ai/vision.js'
+import { loadRuntimeConfig } from '../data/runtime-config.js'
 import {
   claimTagJob,
   deferTagJob,
@@ -8,6 +9,8 @@ import {
   requeueStaleRunningJobs,
   type TagJobRow,
 } from '../data/tag-jobs.js'
+import { FFMPEG_CONCURRENCY } from '../image/constants.js'
+import { setFfmpegConcurrency } from '../image/probe.js'
 import { decideRetry } from '../lib/retry-policy.js'
 import { log } from '../logger.js'
 import { finalizeTagFailure, tagMeme } from '../services/tagging.js'
@@ -22,18 +25,32 @@ import { finalizeTagFailure, tagMeme } from '../services/tagging.js'
  * ⚠️ **不假设单副本**（queue.md §1）。首期只跑一个进程，但取任务靠
  *    `FOR UPDATE SKIP LOCKED`，多开几个进程同样正确。下面的并发计数是**本进程**的
  *    在途数，不是全局的——它控的是本进程别把连接池和 AI 账单打爆，不是分布式限流。
+ *
+ * ⚠️ **并发上限现在是运行期参数**（SPEC §5.6）：每轮 tick 开头现查一次库，改完不用重启
+ *    进程。下面两个 `*_DEFAULT` 只是「没配过」时的回落值。**别为了「立即生效」去打断
+ *    在途任务**——被砍掉的任务会永远停在 `running`，表现是「这几张图再也不会被打标」，
+ *    不报错不告警（见 `stopTagWorker` 的注释、§6.5.5）。
  */
-
-/** 本进程同时跑几个任务。视觉调用是纯 IO 等待，但每个都在烧钱，不宜开大。 */
-const CONCURRENCY = 2
 
 /**
- * 每个用户同时最多几个在途任务。
+ * 本进程同时跑几个任务。视觉调用是纯 IO 等待，但每个都在烧钱，不宜开大。
+ *
+ * ⚠️ **这只是一个默认值，不再是运行时用的值。** 实际上限来自 `runtime_config` 单行表
+ *    （SPEC §5.6），`admin` 在设置页改完对新任务生效、不用重启。这里留着的理由是
+ *    「没配过」要有行为（§5.6：空表是正常状态），以及保存时「等于默认值就落成 `NULL`」
+ *    需要一个比对对象——**默认值只有这一处**，`services/runtime-config.ts` import 的是
+ *    它本身，不是另抄的一份（任务 §陷阱四）。
+ */
+export const TAG_CONCURRENCY_DEFAULT = 2
+
+/**
+ * 每个用户同时最多几个在途任务。**同样是默认值**，理由见上。
  *
  * **这是 queue.md §4 的落点**：一个人导入一千张不该让别人刚传的一张排到后面。
- * 取 1 而不是 2：CONCURRENCY 本来就只有 2，取 2 等于没限制。
+ * 默认取 1 而不是 2：打标槽总共只有 2 个，取 2 等于没限制。**单用户库上这个默认值会把
+ * 吞吐压成 1 条/次**（第二个槽空转）——这正是本参数需要可调的原因，见 SPEC §9.26。
  */
-const PER_USER_INFLIGHT = 1
+export const TAG_PER_USER_INFLIGHT_DEFAULT = 1
 
 /**
  * 单个任务的**整体**超时，和单次调用超时（`ai/provider.ts`）叠加而不是替代。
@@ -83,7 +100,12 @@ export function startTagWorker(): void {
   }
   state = self
   self.loop = runLoop(self)
-  log.info({ concurrency: CONCURRENCY, perUser: PER_USER_INFLIGHT }, '打标 worker 已启动')
+  // 这里记的是**默认值**，不是当前生效值——真正生效的要等第一轮 tick 查完库才知道，
+  // 那时会把实际用的数记进日志。写死「已生效」会让人以为配置没被读到
+  log.info(
+    { defaultConcurrency: TAG_CONCURRENCY_DEFAULT, defaultPerUser: TAG_PER_USER_INFLIGHT_DEFAULT },
+    '打标 worker 已启动',
+  )
 }
 
 /**
@@ -128,7 +150,20 @@ async function runLoop(self: WorkerState): Promise<void> {
 }
 
 async function tick(self: WorkerState): Promise<void> {
-  if (self.inFlight.size >= CONCURRENCY) {
+  // ⚠️ **运行参数必须在开头读，在下面那个 early return 之前。** 放到 `isVisionConfigured()`
+  //    旁边的话，一轮已经卡在 `Promise.race` 上的 tick 仍按旧值判断，于是「调高并发」的
+  //    生效延迟会变成**一个在途任务的自然耗时**（最长 `JOB_TIMEOUT_MS` = 90 秒）。
+  //    现查库不缓存，读到的就是别的进程刚写的值——「改完不用重启」全靠这一条（§9.26）。
+  const runtime = await loadRuntimeConfig()
+  const tagConcurrency = runtime?.tagConcurrency ?? TAG_CONCURRENCY_DEFAULT
+  const perUserInflight = runtime?.tagPerUserInflight ?? TAG_PER_USER_INFLIGHT_DEFAULT
+
+  // ffmpeg 上限**必须在这里一起设**：打标那条路也过 ffmpeg（动图抽帧走
+  // `probeMetadata` / `extractFrames`），不设的话只改导入会「打标这边调了没用」。
+  // ⚠️ 上调时唤醒等待者在 `setFfmpegConcurrency` 内部做，见那个函数的注释
+  setFfmpegConcurrency(runtime?.ffmpegConcurrency ?? FFMPEG_CONCURRENCY)
+
+  if (self.inFlight.size >= tagConcurrency) {
     // 等任意一个跑完再来。这不是 sleep，是在等真实进度
     await Promise.race([...self.inFlight.values()])
     return
@@ -144,7 +179,7 @@ async function tick(self: WorkerState): Promise<void> {
   }
 
   const busy = [...self.perUser.entries()]
-    .filter(([, count]) => count >= PER_USER_INFLIGHT)
+    .filter(([, count]) => count >= perUserInflight)
     .map(([userId]) => userId)
 
   const job = await claimTagJob(busy)

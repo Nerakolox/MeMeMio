@@ -7,13 +7,13 @@ import {
   updateUser,
 } from '../data/admin.js'
 import { AppError } from '../lib/app-error.js'
+import { toIsoSecondsOrNull } from '../serialize/meme.js'
 import { enqueueAllStale, getReindexStatus } from '../services/ai-config.js'
-
-/** ISO 8601 UTC 精确到秒。SPEC §1.2 */
-function toIsoSeconds(d: Date | null): string | null {
-  if (d === null) return null
-  return `${d.toISOString().slice(0, 19)}Z`
-}
+import {
+  getRuntimeConfig,
+  saveRuntimeConfigChecked,
+  type RuntimeConfigView,
+} from '../services/runtime-config.js'
 
 function inviteStatus(row: {
   usedBy: string | null
@@ -34,8 +34,8 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
       status: inviteStatus(r),
       createdBy: r.createdBy,
       usedBy: r.usedBy,
-      usedAt: toIsoSeconds(r.usedAt),
-      expiresAt: toIsoSeconds(r.expiresAt),
+      usedAt: toIsoSecondsOrNull(r.usedAt),
+      expiresAt: toIsoSecondsOrNull(r.expiresAt),
     }))
     return c.json({ items })
   })
@@ -66,8 +66,8 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
         status: inviteStatus(row),
         createdBy: row.createdBy,
         usedBy: row.usedBy,
-        usedAt: toIsoSeconds(row.usedAt),
-        expiresAt: toIsoSeconds(row.expiresAt),
+        usedAt: toIsoSecondsOrNull(row.usedAt),
+        expiresAt: toIsoSecondsOrNull(row.expiresAt),
       },
       201,
     )
@@ -81,7 +81,7 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
       role: r.role,
       storageQuotaBytes: r.storageQuotaBytes.toString(),
       storageUsedBytes: r.storageUsedBytes.toString(),
-      createdAt: toIsoSeconds(r.createdAt)!,
+      createdAt: toIsoSecondsOrNull(r.createdAt)!,
     }))
     return c.json({ items })
   })
@@ -115,7 +115,7 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
       name: updated.name,
       role: updated.role,
       storageQuotaBytes: updated.storageQuotaBytes.toString(),
-      createdAt: toIsoSeconds(updated.createdAt)!,
+      createdAt: toIsoSecondsOrNull(updated.createdAt)!,
     })
   })
 
@@ -141,3 +141,41 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
   .get('/reindex/status', async (c) => {
     return c.json(await getReindexStatus())
   })
+
+  /**
+   * 运行参数（SPEC §6.5.5）。全站一份、仅 `admin`——它改的是**全站资源分配与 AI 账单**，
+   * 不是谁的偏好（§3.3），放普通用户的设置页等于让任何 member 把机器和账单打爆。
+   *
+   * ⚠️ **权限不在 handler 里判断**：整组已经 `.use('*', requireAdmin)`，在这里再写一遍
+   *    角色判断哪怕写对了也是错的（api/AGENTS.md §3）。挂进这个已有的路由组而不是新开一组，
+   *    是因为 `app.ts` 那条链断一次 RPC 类型就退化成 `any`。
+   *
+   * ⚠️ **返回的是生效值**，四个数都是**每个服务进程**的上限，不是全站的（§5.6）。
+   *    这里只做序列化：上下限、归一化、`cpuCount` 都在 `services/runtime-config.ts`。
+   */
+  .get('/runtime', async (c) => {
+    return c.json(serializeRuntime(await getRuntimeConfig()))
+  })
+
+  /**
+   * 一次性提交整组，**不做部分更新**——它本来就是一个四格表单，而部分更新会让界面
+   * 不知道该显示哪一次的值（§6.5.5）。
+   *
+   * 越界 / 缺字段 / `tagPerUserInflight > tagConcurrency` 都是 `VALIDATION_FAILED`，
+   * **不静默截断**：截断的表现是「填了 16、提示保存成功、回显 2」（§9.26）。
+   */
+  .put('/runtime', async (c) => {
+    const body = await c.req.json().catch(() => {
+      throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON')
+    })
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+      throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON 对象')
+    }
+
+    const admin = c.get('currentUser')
+    return c.json(serializeRuntime(await saveRuntimeConfigChecked(body as Record<string, unknown>, admin.id)))
+  })
+
+function serializeRuntime(view: RuntimeConfigView) {
+  return { ...view, updatedAt: toIsoSecondsOrNull(view.updatedAt) }
+}

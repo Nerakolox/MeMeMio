@@ -3,6 +3,7 @@ import { open } from 'node:fs/promises'
 import { FFMPEG_CONCURRENCY, FFMPEG_TIMEOUT_MS, FFPROBE_TIMEOUT_MS } from './constants.js'
 import { extractWebpFramePng } from './decode.js'
 import { AppError } from '../lib/app-error.js'
+import { createSlotPool, type SlotPool } from '../lib/slot-pool.js'
 import { parseWebp, type WebpInfo } from '../lib/webp.js'
 import { log } from '../logger.js'
 
@@ -15,22 +16,38 @@ import { log } from '../logger.js'
  * 而表现只是「导入进度条不动」——没有任何错误信息。
  */
 
-/** 同时运行的 ffmpeg 进程数。超时解决单个卡死，这个解决它们一起卡死。 */
-let running = 0
-const waiters: (() => void)[] = []
+/**
+ * 同时运行的 ffmpeg 进程数。超时解决单个卡死，这个解决它们一起卡死。
+ *
+ * 初值是常量默认值，运行期由 `setFfmpegConcurrency` 改成 `runtime_config` 里的值
+ * （SPEC §5.6）。**上限由调用方传入，这一层不读库**——`image/` 不认识 `db`
+ * （project-structure.md 分层），也不该认识「配置」这个概念。
+ *
+ * 槽池本身在 `lib/slot-pool.ts`：那段逻辑（尤其是「上调要主动唤醒等待者」）是本功能
+ * 最容易漏的地方，单独放一个没有 import 的模块才测得到。
+ */
+const slots: SlotPool = createSlotPool(FFMPEG_CONCURRENCY)
 
-async function acquireSlot(): Promise<void> {
-  if (running < FFMPEG_CONCURRENCY) {
-    running += 1
-    return
-  }
-  await new Promise<void>((resolve) => waiters.push(resolve))
-  running += 1
+/**
+ * 改 ffmpeg 并发上限。由打标 worker 每轮 tick 与导入批次开头调（SPEC §5.6）。
+ *
+ * ⚠️ **上调必须唤醒等待者**，否则新上限要等到某次 ffmpeg 自然结束才生效——表现是
+ *    「调了没用」，不报错、不告警。这段补足逻辑在 `slot-pool.ts` 的 `setLimit` 里，
+ *    有专门测试。下调什么都不用做：多出来的槽自然排走，在途任务不打断（§6.5.5）。
+ */
+export function setFfmpegConcurrency(next: number): void {
+  slots.setLimit(next)
 }
 
-function releaseSlot(): void {
-  running -= 1
-  waiters.shift()?.()
+/**
+ * 本进程此刻的 ffmpeg 上限。**给诊断与测试用**——「管理员调了没用」正是会来问的问题，
+ * 而这个问题有两个可能：值没写进库（看 `GET /admin/runtime`），或者写进去了但没传到这里。
+ * 它回答的是后者。
+ *
+ * **不要拿它当配置源**：真实来源是 `runtime_config`（`services/runtime-config.ts`）。
+ */
+export function ffmpegConcurrency(): number {
+  return slots.stats().limit
 }
 
 type RunResult = { ok: true; stdout: Buffer } | { ok: false; reason: 'timeout' | 'failed'; message: string }
@@ -47,7 +64,7 @@ async function run(
   timeoutMs: number,
   maxOutputBytes: number,
 ): Promise<RunResult> {
-  await acquireSlot()
+  await slots.acquire()
   try {
     return await new Promise<RunResult>((resolve) => {
       const child = execFile(
@@ -72,7 +89,7 @@ async function run(
       child.stdin?.end()
     })
   } finally {
-    releaseSlot()
+    slots.release()
   }
 }
 

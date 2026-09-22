@@ -7,14 +7,15 @@ import {
   type ItemOutcome,
   type ItemResult,
 } from '../data/imports.js'
+import { loadRuntimeConfig } from '../data/runtime-config.js'
 import { enqueueTagJob } from '../data/tag-jobs.js'
 import { detectFormat, isIngestible, SNIFF_BYTES, type DetectedFormat } from '../lib/magic-bytes.js'
 import { AppError, isAppError } from '../lib/app-error.js'
 import { log } from '../logger.js'
-import { MAX_FILE_BYTES, NEAR_DUP_DISTANCE } from '../image/constants.js'
+import { FFMPEG_CONCURRENCY, MAX_FILE_BYTES, NEAR_DUP_DISTANCE } from '../image/constants.js'
 import { computePhash, readSize, toThumbnail } from '../image/decode.js'
 import { extractFrames, isAnimatedByFrames } from '../image/frames.js'
-import { probeMetadata } from '../image/probe.js'
+import { probeMetadata, setFfmpegConcurrency } from '../image/probe.js'
 import { withTempFile } from '../image/temp-file.js'
 import { deleteObject, getObject, permanentKeyFor, putObject, thumbKeyFor } from '../storage/r2.js'
 import { publish } from './import-events.js'
@@ -33,8 +34,23 @@ import { publish } from './import-events.js'
  * 用户自带 key 之后，这是在省用户自己的钱。不要为了「快点看到标签」把顺序调过来。
  */
 
-/** 同时处理几个文件。ffmpeg 自己有并发上限（image-pipeline.md §8），这里不跟它对着干。 */
-const PIPELINE_CONCURRENCY = 2
+/**
+ * 同时处理几个文件的**默认值**。ffmpeg 自己有并发上限（image-pipeline.md §8），
+ * 这里不跟它对着干。
+ *
+ * ⚠️ **它不再是运行时用的值**：实际值来自 `runtime_config` 单行表（SPEC §5.6），
+ *    `admin` 在设置页改完，下一批生效——**已经在跑的批次整批用旧值**，不中途改
+ *    （§6.5.5）。默认值只有这一份，`services/runtime-config.ts` import 的是它。
+ *
+ * ⚠️ **它和其余三个数一样是「每进程」的**（SPEC §5.6）：多副本时实际全局上限 =
+ *    这个数 × 进程数。注释、接口文案、界面文案都**不能写成「全站同时处理几个文件」**。
+ *
+ * ⚠️ **调大它的收益低于预期**：`createHash('sha256')` 在下面处理每个文件时是**同步**
+ *    的 CPU 工作（20MB 文件几十毫秒），它会挡住本进程所有在途任务。
+ *    **不要为了绕过它去改 `content_hash` 的算法**——那是 `memes.content_hash` 唯一约束
+ *    的依据，改它等于换一套去重口径（任务 §陷阱六）。
+ */
+export const PIPELINE_CONCURRENCY_DEFAULT = 2
 
 export type FileToProcess = { fileName: string; tempKey: string }
 
@@ -52,9 +68,19 @@ export async function runBatch(
   log.info({ batchId, count: files.length }, '开始处理导入批次')
 
   try {
+    // 运行参数**在批次开头读一次**（SPEC §6.5.5）：已经在跑的批次整批用旧值，不中途改。
+    // 现查库不缓存，读到的就是别的进程刚写的值——「改完不用重启」全靠这一条（§9.26）
+    const runtime = await loadRuntimeConfig()
+    const pipelineConcurrency = runtime?.importConcurrency ?? PIPELINE_CONCURRENCY_DEFAULT
+
+    // ffmpeg 上限要一起设：导入这条线真正的旋钮是它在 `probe.ts` 里的进程级槽位，
+    // 只调管线并发的话「调完一点没变快」，而且不知道为什么（任务 §为什么要做）
+    setFfmpegConcurrency(runtime?.ffmpegConcurrency ?? FFMPEG_CONCURRENCY)
+    log.info({ batchId, pipelineConcurrency }, '导入批次使用运行参数')
+
     // 分批并发，不是一次性全开——一千张同时开一千个 ffmpeg 会把机器打满
-    for (let i = 0; i < files.length; i += PIPELINE_CONCURRENCY) {
-      const slice = files.slice(i, i + PIPELINE_CONCURRENCY)
+    for (let i = 0; i < files.length; i += pipelineConcurrency) {
+      const slice = files.slice(i, i + pipelineConcurrency)
       await Promise.all(slice.map((file) => processOneFile(batchId, userId, file)))
     }
 

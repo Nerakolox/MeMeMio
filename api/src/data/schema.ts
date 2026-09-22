@@ -233,6 +233,35 @@ export const embedConfig = pgTable(
 )
 
 /**
+ * 运行参数，全站单行、仅 `admin` 可改（SPEC §5.6 / §6.5.5 / §9.26）。
+ *
+ * 装的是**保护机器**的那四个并发上限——`NULL` = 用代码里的默认值，空表是正常状态不是
+ * 「未初始化」。判据是「改它改变吞吐还是改变产出」（§9.26），所以帧数、送 AI 的长边、
+ * 去重阈值仍在 `image/constants.ts` 里。
+ *
+ * ⚠️ **上下限不写进 DDL。** `ffmpegConcurrency` 的上限是 `min(CPU 核数, 16)`，核数要
+ *    运行期才知道，写死在这里等于把上限钉成迁移那一刻的机器核数。越界在
+ *    `services/runtime-config.ts` 报 `VALIDATION_FAILED`。
+ *
+ * ⚠️ 与 `embedConfig` 的单行模式一致，但**没有 `source` 字段那一层**：那边的默认值来自
+ *    部署方环境变量，这里的默认值只有代码常量一处，所以 `GET` 直接返回生效值。
+ */
+export const runtimeConfig = pgTable(
+  'runtime_config',
+  {
+    id: integer('id').primaryKey().default(1),
+    /** 以下四个：`NULL` = 用 `services/runtime-config.ts` 里那份默认值，**每进程** */
+    tagConcurrency: integer('tag_concurrency'),
+    tagPerUserInflight: integer('tag_per_user_inflight'),
+    importConcurrency: integer('import_concurrency'),
+    ffmpegConcurrency: integer('ffmpeg_concurrency'),
+    updatedBy: uuid('updated_by').references(() => users.id),
+    updatedAt: timestamptz('updated_at'),
+  },
+  (table) => [check('runtime_config_singleton', sql`${table.id} = 1`)],
+)
+
+/**
  * 测试连接的结果，**存在服务端**（SPEC §6.5.2）。
  *
  * 为什么必须有这张表：探测结果字段不接受客户端写入（§5.3），所以「我刚测过了」

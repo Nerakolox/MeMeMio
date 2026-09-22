@@ -222,3 +222,40 @@ import_items(
 批次元信息 24 小时后清理，但 **`needs_review` 的条目在用户处理前不清理**——它是待办，不是日志，见 [§6.2.3](06-endpoints.md)。
 
 待确认的文件已经在 R2 上（前端预签名直传），暂存在 `temp/` 前缀下，`temp_storage_key` 指向它。用户选「仍然导入」时移到正式前缀并建 `memes` 记录；选「跳过」时删除该对象。**超过 7 天未处理的待确认条目连同暂存对象一起清理**，避免 temp 前缀无限增长——清理前不需要再问用户，跳过是默认行为。
+
+## §5.6 运行参数
+
+> **状态：`proposed`**（2026-09-23）。新增能力，两端确认后转 `accepted`。见[运行参数任务](../joint-tasks/2026-09-23-runtime-config.md)。
+
+全站单行表，仅 `admin` 可改（[§3.3](03-auth-permission.md)）。它装的是**保护机器**的那几个数——并发上限——**不装产品语义参数**：帧数、送 AI 的长边、去重阈值仍然留在代码常量里，判据见 [§9.26](09-decisions.md)。
+
+```sql
+runtime_config(
+  id                     int primary key default 1 check (id = 1),
+  tag_concurrency        int,        -- 本进程打标在途任务数上限
+  tag_per_user_inflight  int,        -- 本进程内每个用户的在途上限
+  import_concurrency     int,        -- 单批次导入管线并发
+  ffmpeg_concurrency     int,        -- 本进程 ffmpeg 子进程上限
+  updated_by             uuid,       -- 谁改的
+  updated_at             timestamptz
+);
+```
+
+**列可空，`NULL` 表示「用代码默认值」。** 空表、空行、空列都是正常状态，不是「未初始化」——刚部署的站一次都不配，行为与常量时代逐字相同。保存时**等于默认值的输入归一成 `NULL`**：显式存一个 `2` 会在将来默认值改成别的数时把它钉住，而界面上看不出「这是被钉住的旧默认值」。
+
+`GET /admin/runtime` 直接返回**生效值**，没有 `source` 字段。这与 [§5.3](#53-ai-配置) 的 AI 配置不同——那边有「用户自己的配置 vs 部署方环境变量默认」两层来源要区分，这里只有一层，默认值是代码里的常量，环境变量里根本没有这一项。
+
+| 字段 | 下限 | 上限 | 代码默认 |
+|---|---|---|---|
+| `tagConcurrency` | 1 | 16 | 2 |
+| `tagPerUserInflight` | 1 | 4 | 1 |
+| `importConcurrency` | 1 | 8 | 2 |
+| `ffmpegConcurrency` | 1 | `min(CPU 核数, 16)` | 2 |
+
+越界返回 `VALIDATION_FAILED`，**不是静默截断**——截断的表现是「填了 16、提示保存成功、回显还是 2」，管理员会以为没存上。`ffmpegConcurrency` 的上限取 CPU 核数，因为那是「这台机器同时能跑几个 ffmpeg」唯一有依据的判据。
+
+**交叉约束：`tagPerUserInflight ≤ tagConcurrency`。** 一个人最多能占多少槽，大于总槽数时这一项等于不存在——**静默无效的配置比报错更难查**，所以按越界处理。
+
+⚠️ **这里的每一个数都是「每个服务进程」的，不是全站的。** 多副本时实际全局上限 = 配置值 × 进程数。这与 [queue.md §1](../api/agents/rules/queue.md)「不假设单副本」相邻但不冲突：那张规则管的是**正确性**（不重复消费），这里的并发数管的是**节流**；改成真正的全局上限需要分布式限流，而本项目不引入 Redis（[§9.11](09-decisions.md)）。接口文案与界面措辞都必须按「每个服务进程」说。
+
+生效**不是事务性的「立即」**：打标 worker 在下一轮 tick 读到新值，而那一轮可能正卡在等一个在途任务完成上；导入按批次读一次，已经在跑的批次整批用旧值。见 [§6.5.5](06-endpoints.md)。
