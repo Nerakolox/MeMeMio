@@ -162,3 +162,57 @@ export async function startReindex(): Promise<ReindexTriggered> {
 export async function fetchReindexStatus(): Promise<ReindexStatus> {
   return readJson<ReindexStatus>(await fetch('/api/v1/admin/reindex/status'))
 }
+
+// --- 运行参数（仅管理员，全站一份配置、但每个数都是每进程的） ----------------
+
+/**
+ * `GET` / `PUT /admin/runtime`（SPEC §6.5.5）——**两者同形**：四个生效值 + `cpuCount`
+ * + 两个审计字段。形状断言在 `api-contract.ts`（`_runtimeShape`）。
+ *
+ * 三个字段含义不在类型里，读的时候要记得：
+ *   - 它是**生效值**，不是「存进去的值」。等于默认值的输入在服务端归一成了 `NULL`，
+ *     界面看到的就是当前真正在跑的那个数；
+ *   - `cpuCount` 是 **ffmpeg 上限的由来，不是上限本身**：上限 = `min(cpuCount, 16)`，
+ *     所以在 32 核的机器上不能把 `cpuCount` 直接当 `max` 用（见 `RuntimeSettings`）；
+ *   - `updatedAt` / `updatedBy` 为 `null` **只说明这张表没人保存过**（四个列全是 `NULL`，
+ *     四个数都还是代码默认值），**不是**「有哪一项是默认值」——接口刻意没有 `source`
+ *     字段，分不出单个字段的来源（SPEC §5.6）。
+ */
+export type RuntimeConfig = InferResponseType<typeof api.api.v1.admin.runtime.$get>
+
+/**
+ * `PUT /admin/runtime` 的请求体（SPEC §6.5.5）。**四个字段全部必填，一次性提交整组。**
+ *
+ * ⚠️ 这个类型**推不出来，只能手写**：api 侧的请求体是在 handler 里手工校验的
+ *    （同 `ConfigInput` / `RetagInput`），没走 validator，Hono RPC 的 `InferRequestType`
+ *    对它只能给出 `unknown`。它和上面的响应类型不同——**这一份不是阻塞期脚手架**，
+ *    换成 RPC 也推不出来，所以「api 改字段名 web 编译失败」那层保护在这里永久没有。
+ *
+ * 不做部分更新是有意的：它本来就是一张四格表单，而部分更新会让界面不知道该显示
+ * 哪一次的值（SPEC §6.5.5）。**不要把四个字段改成可选。**
+ */
+export type RuntimeInput = {
+  tagConcurrency: number
+  tagPerUserInflight: number
+  importConcurrency: number
+  ffmpegConcurrency: number
+}
+
+export async function fetchRuntimeConfig(): Promise<RuntimeConfig> {
+  return readJson<RuntimeConfig>(await fetch('/api/v1/admin/runtime'))
+}
+
+/**
+ * 保存整组运行参数。响应就是 `GET` 的那一份（回显**归一化之后的生效值**）。
+ *
+ * 越界（四组上下限、`tagPerUserInflight > tagConcurrency`）返回 `VALIDATION_FAILED`，
+ * **服务端不静默截断**、前端也不许替它截——表现是「填了 16、提示保存成功、回显 2」，
+ * 管理员会以为没存上（SPEC §5.6）。所以这里**不做前端 clamp**，把 `details` / `message`
+ * 交给调用点原样展示。
+ *
+ * 生效**不是「立即」**：承诺的措辞是「保存后**新开的**任务按新值跑」，打标 worker 下一轮
+ * tick 读到、导入按批次读（SPEC §6.5.5）。界面据此说话，别说「已立即生效」。
+ */
+export async function putRuntimeConfig(input: RuntimeInput): Promise<RuntimeConfig> {
+  return readJson<RuntimeConfig>(await postJson('/api/v1/admin/runtime', input, 'PUT'))
+}

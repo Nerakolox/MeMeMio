@@ -7,6 +7,7 @@ import { EmbedSettings } from '../features/settings/EmbedSettings'
 import { InviteSettings } from '../features/settings/InviteSettings'
 import { ReindexPanel } from '../features/settings/ReindexPanel'
 import { RetagPanel } from '../features/settings/RetagPanel'
+import { RuntimeSettings } from '../features/settings/RuntimeSettings'
 import { UsersSettings } from '../features/settings/UsersSettings'
 import { TOUCH } from '../features/settings/settings-ui'
 import { useHashScroll } from '../features/settings/use-hash-scroll'
@@ -33,11 +34,17 @@ import { VisionSettings } from '../features/settings/VisionSettings'
  * 分段、顺序、锚点、折叠、管理员可见性都是契约，换的是它们长什么样。
  */
 
-/** 锚点目录。`id` 落在各分段的卡片上（`SettingsCard`），加载中时锚点也要在。 */
+/**
+ * 锚点目录。`id` 落在各分段的卡片上（`SettingsCard`），加载中时锚点也要在。
+ *
+ * 「运行参数」排在 Embedding 之后、用户之前——它与 Embedding 同类（**全站一份的配置**，
+ * 由 admin 改），而 `ReindexPanel` / `RetagPanel` 是运维动作面板（没有 `id`，不进这张表）。
+ */
 const SECTIONS = [
   { id: 'vision', label: '视觉模型', adminOnly: false },
   { id: 'invites', label: '邀请码', adminOnly: true },
   { id: 'embedding', label: 'Embedding', adminOnly: true },
+  { id: 'runtime', label: '运行参数', adminOnly: true },
   { id: 'users', label: '用户', adminOnly: true },
 ]
 
@@ -90,6 +97,14 @@ export function SettingsPage() {
           <InviteSettings />
 
           <EmbedSettings onReindexTriggered={() => setReindexToken((n) => n + 1)} />
+
+          {/*
+            紧挨 Embedding 之后（同为「全站一份的配置」），在用户之前。它**插在**
+            Embedding 与重建索引之间是有意的：那两张卡不是一对必须相邻的东西——
+            重建进度是 Embedding 的附属动作面板，而运行参数是另一项配置
+            （settings-ux.md §2 的分段表里它与 Embedding、用户同列）。
+          */}
+          <RuntimeSettings />
 
           {/*
             重建进度和配置是**并列**的两张卡，不是弹窗套弹窗：换模型触发的重算要跑几分钟，

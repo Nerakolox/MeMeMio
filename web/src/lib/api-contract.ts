@@ -1,6 +1,6 @@
 import type { InferResponseType } from 'hono/client'
 import { api, type RetagResult, type TagStatusSummary } from './api'
-import type { ReindexTriggered } from './api-config'
+import type { ReindexTriggered, RuntimeConfig } from './api-config'
 
 /**
  * 骨架任务的**验证点 1**，留在仓库里当编译期断言：
@@ -137,3 +137,28 @@ const _retagShape: RetagResult = {
 }
 
 void _retagShape
+
+/**
+ * 运行参数的编译期断言（SPEC §6.5.5 / §5.6）。
+ *
+ * 为什么值得单列一条：两张卡片**四个格子之外的东西全压在这三个字段上**——
+ *  - `cpuCount` 是 ffmpeg 那一格 `max` 的唯一来源。它改名之后前端不报错，
+ *    只会在 `Math.min(undefined, 16)` 上算出 `NaN`，于是 `max="NaN"`：
+ *    **上限校验静默失效**（服务端还会拒，但用户在本地看不到即时反馈）；
+ *  - `updatedAt` 决定状态行说「上次修改：…」还是「这张表还没人改过」——
+ *    读到 `undefined` 会永远走后者，也就是**管理员改完再进来，界面说没人改过**。
+ *
+ * 请求体那一侧（`RuntimeInput`）推不出来、只能手写（见 `api-config.ts`），所以这份
+ * 断言盯的是**响应这一侧**：服务端真的把这三个字段序列化出来了，四个数也没改名。
+ */
+const _runtimeShape: RuntimeConfig = {
+  tagConcurrency: 2,
+  tagPerUserInflight: 1,
+  importConcurrency: 2,
+  ffmpegConcurrency: 2,
+  cpuCount: 8,
+  updatedAt: null,
+  updatedBy: null,
+}
+
+void _runtimeShape
