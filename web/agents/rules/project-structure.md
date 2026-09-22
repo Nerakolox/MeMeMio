@@ -10,7 +10,8 @@ src/features/
 ├─ import/       上传、SSE 进度、待确认队列
 ├─ tagging/      打标进度、待处理列表
 ├─ manage/       编辑标签、删除
-└─ settings/     用户设置、管理页
+├─ settings/     用户设置、管理页
+└─ auth/         登录 / 注册的表单与未登录外壳
 ```
 
 > `search/` 2026-09-21 落地：`SearchBar.tsx`（`role="search"` 的 form）、`SearchResults.tsx`（五态 +

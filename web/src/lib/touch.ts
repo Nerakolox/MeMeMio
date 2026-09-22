@@ -43,9 +43,10 @@
  * `pointer-fine:` 不是新写法，`components/MemeCard.tsx` 的浮层显形（`REVEAL_ON_HOVER`）早在用，
  * 那条「默认藏起来」的叠法正是叠在 `pointer-fine:opacity-0` 上的。
  *
- * 还想要更小（连手机一起）就改这一行的 `min-h-8`。`styles.css` 里已无条件写死 44 的那几处
- * （登录页那套 `.auth-form__*`）**是最后一份**——2026-09-22 导入页迁完之后，全站就剩它没走这条
- * 规则了；那一页迁到 Tailwind 时按这条规则走，改完 `styles.css` 里不该再有 `min-height: 44px`。
+ * 还想要更小（连手机一起）就改这一行的 `min-h-8`。**`styles.css` 里已经一条
+ * `min-height: 44px` 都不剩**：登录页那套 `.auth-form__*` 是最后一份，2026-09-23 随该页
+ * 迁到 Tailwind 时按这条改掉了（`features/auth/`）。也就是说这条规则现在**全覆盖**，
+ * 没有「那一页还没迁」这种例外可援引。
  *
  * ## 几个必须**单独**带上的地方
  *

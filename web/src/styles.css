@@ -12,132 +12,30 @@ body {
   margin: 0;
 }
 
-.error {
-  color: #c0392b;
-}
-
-.auth-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 100%;
-  max-width: 360px;
-}
-
-.auth-form__title {
-  margin: 0 0 8px;
-}
-
-.auth-form__error {
-  margin: 4px 0 0;
-}
-
-.auth-form__request-id {
-  display: block;
-  margin-top: 2px;
-}
-
-.auth-form__footer {
-  margin: 8px 0 0;
-  text-align: center;
-}
-
 /*
- * 顶部导航条（`.app__header` / `.app__nav` / `.app__main`）连同它那条
- * 「触摸目标 44×44px」的规则一起删掉了（2026-09-21 换 shadcn 侧边导航）。
- * 那条尺寸要求没有丢，落点在 `components/AppSidebar.tsx` 的 `NAV_ITEM_SIZE`，
- * 连同「为什么中文 51px、拉丁字母 26px」的实测背景一起搬了过去。
+ * 到这里这份样式表就只剩 `:root` / `body` 两条基础声明了——**它是最后一份手写 BEM**
+ * （`agents/rules/styling.md` 里那条「迁移进度」列了五页，今天补上第六页）。
+ * 往后新增样式一律写 Tailwind utility + shadcn 组件，**不要再往这个文件里加东西**。
  *
- * 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
- * 留着旧选择器会在它们命中新外壳的元素时静默盖掉工具类。
- */
-
-/*
- * 管理页那套表格样式（`.settings-table*` / `.settings-invite-form`）2026-09-21 随设置页
- * 重设计删掉了：两张表都换成 shadcn 的 `Table`，宽度、单元格内边距、表头字重全在组件里，
- * 不用再有一份平行的规则。`width: 120px` 的配额输入框改成了 `Input` 上的 `w-30`。
- */
-
-/*
- * 浏览页那套 `.browse__*`（含 `@media (max-width: 640px)` 的塌陷规则）在 2026-09-22
- * 整块迁走：筛选面板、骨架、空 / 错误 / 反馈三态、瀑布流容器全部换成 shadcn 组件 +
- * Tailwind，落在 `features/browse/`，路由只剩布局（`routes/browse.tsx`）。
+ * 删干净是必须的，不是洁癖：这份表是**无层**的，无层声明压过 Tailwind 的
+ * `@layer utilities`，留着旧选择器会在它们命中新元素时静默盖掉工具类。
  *
- * ⚠️ 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
- * 留着旧选择器会在它们命中新元素时静默盖掉工具类。这次留不得的还有具体一条——
- * `.browse__grid` 的 `grid-template-columns` 会压住骨架新写的网格工具类。
+ * ## 2026-09-23 删掉的两块
+ *
+ * 登录 / 注册页那套 `.auth-page` / `.auth-form*`：整页换成
+ * `features/auth/AuthLayout.tsx` + `LoginForm.tsx` / `RegisterForm.tsx`，
+ * 路由（`routes/login.tsx` / `register.tsx`）只剩「已登录就别看这一页」那一句编排。
  *
  * 搬走过的东西：
- *   · sticky 的落点与限高（`top: var(--app-header-h)` / `max-height: calc(100vh - …)`）
- *     → `routes/browse.tsx` 里 `<aside>` 上的 `md:top-(--app-header-h)` /
- *       `md:max-h-[calc(100vh_-_var(--app-header-h))]`（**单元素**，理由在那边注释里）
- *   · 触摸目标 44px（`.browse__clear-btn` / `.browse__tag-btn`）→ 各调用点的 `TOUCH`
- *   · 网格 `minmax(160px,1fr)` / `gap: 12px`（`.browse__grid`）→ `BrowseResults.tsx`
- *     的 `SKELETON_GRID`，与 masonic 的 `columnWidth` / `columnGutter` 是同一条账
- *   · 640px 的塌陷 → 768px(`md:`) 上的抽屉（`BrowseFilterSheet.tsx`），
- *     全站因此只剩外壳那一套手机断点
- */
-
-/*
- * 首页（`/`）的 `.search__*` 与 `.discover__*` 共约 180 行在 2026-09-21 整块迁走：
- * 搜索框、结果网格、骨架、错误提示、图墙全部换成 shadcn 组件 + Tailwind，
- * 落在 `features/search/` 与 `features/discover/DiscoverWall.tsx`。
+ *   · 触摸目标 44px（`.auth-form` 里那几条无条件的 `min-height: 44px`）→ 各调用点的
+ *     `TOUCH`（`lib/touch.ts`）。这一处是全站最后一份无条件写死 44 的，
+ *     所以「按指针分档」那条规则到今天才算全覆盖（styling.md「44 是给手指的」）。
+ *   · 居中与最大宽度（`.auth-page` / `.auth-form`）→ `AuthLayout` 的分栏与外层 `max-w-sm`
+ *   · 错误文字的红色（`.auth-form__error`）→ `AuthError` 里的
+ *     `Alert variant="destructive"`，与 `BrowseResults` / `ImportProgress` 同一套
  *
- * ⚠️ 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
- * 留着旧选择器会在它们命中新元素时静默盖掉工具类——比如 `.discover__grid` 那条
- * `grid-template-columns` 会压住新写的 `@max-[900px]:grid-cols-3`，图墙永远 5 列。
- * 两件事必须同一个提交落地，不能分两步。
- *
- * `.discover` 的 `container-type: inline-size` 换成了 Tailwind 的 `@container` 类，
- * 值相同（`inline-size`）；那两档容器查询改成 `@max-[900px]:` / `@max-[640px]:`，
- * 语义见 `DiscoverWall.tsx` 里 `WALL_GRID` 的注释。
- */
-
-
-
-/*
- * 导入页（`/import`，含「待确认」「打标」两个页签）的 `.import__*` / `.review-card*` /
- * `.tagging__*` 共约 450 行在 2026-09-22 整块迁走：页签、选文件区、进度与阶段统计、
- * 待确认卡片、打标汇总与网格全部换成 shadcn 组件 + Tailwind，落在
- * `routes/import.tsx` 与 `features/import/`、`features/tagging/`。
- *
- * ⚠️ 删干净是必须的：这份样式表是**无层**的，无层声明压过 Tailwind 的 `@layer utilities`，
- * 留着旧选择器会在它们命中新元素时静默盖掉工具类。这次留不得的有具体两条——
- * `.tagging__grid` 的 `grid-template-columns` 会压住 `TaggingList` 的 `GRID`，
- * 那个 `@media (max-width: 640px)` 也会按**视口**改列数，而卡片里那两栏是容器查询
- * （侧边栏让视口比内容列宽约 256px，两个数不是一个数）。
- *
- * 搬走过的东西：
- *   · 触摸目标 44px（`.import__tab` / `.import__start` / `.review-card__actions button` /
- *     `.tagging__subfilter-btn` / `.tagging__more`）→ 各调用点的 `TOUCH`
- *     （`lib/touch.ts`；方形的图标按钮用 `size-8 pointer-coarse:size-11`，
- *     `TOUCH` 的 `min-h-11` 会把方按钮拉成 32×44 的长方形）
- *   · 640px 的上下堆叠（`.review-card__pair`）→ `ReviewCard` / `ReviewQueue` 骨架上的
- *     `@container` + `@max-[560px]:grid-cols-1`，两处必须同档，否则数据回来时高度会跳
- *   · 时间线式的 `dt/dd` 统计（`.import__stage` / `.tagging__count`）→
- *     `components/StatTile.tsx`（两处共用，都是 `<dl>` 里的 `STAT_ROW`）
- *   · 契约文案的红色（`.tagging__summary-error`）→ 只有终局失败才用
- *     `Alert variant="destructive"`；「没配视觉模型」是中性 `Alert role="status"`
- *   · `.import__item-state` 那六个类**原本在 CSS 里就不存在**，六个状态长得一模一样；
- *     现在落成 `ImportProgress.tsx` 的 `STATE_BADGE`（`variant` 是契约，不是配色偏好）
- */
-
-/*
- * 设置页那 230 行 BEM（`.settings-page*` / `.settings-section*` / `.settings-notice` /
- * `.config-fields*` / `.test-result*` / `.settings-confirm*` / `.reindex__*`）2026-09-21 删掉了，
- * 整页换成 shadcn 组件 + Tailwind 工具类。这一份是**无层**样式，留着同样的选择器不会报错
- * 只会静默盖掉新写的工具类，所以是删不是注释掉。
- *
- * 搬走过的东西：
- *   · 触摸目标 44px → `features/settings/settings-ui.ts` 的 `TOUCH`
- *   · 锚点落点余量 `scroll-margin-top: 16px` → `SettingsCard` 上的 `scroll-mt-4`
- *   · 契约文案的 `pre-wrap` → 同文件的 `NOTICE`
- *   · 页面宽度 1100px → `routes/settings.tsx` 根节点的 `max-w-6xl`
+ * 还有一条 `.error`（`color: #c0392b`）：**它在此之前就已经零引用了**，全仓 grep 不到
+ * 任何一个 `className="error"`，逐条 migration 都漏掉了它——它不属于任何一页，
+ * 所以谁都没认领。顺手删掉。它是那批 hardcode HEX 里最后一个，
+ * 现在全仓的界面颜色都从 `index.css` 的语义 token 来（`tokens-then-computation`）。
  */
