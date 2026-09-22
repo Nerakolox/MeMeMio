@@ -323,6 +323,26 @@ importConcurrency: number; ffmpegConcurrency: number; cpuCount: number; updatedB
    diff），加粗在渲染层做——`<pre>` 不解析 markdown，直接渲染出来就是字面星号。**若总管要的是别的
    形态**（比如不要加粗、或换成 `⚠️`），改 `RuntimeSettings.tsx` 的 `renderNotice` 一处即可。
 
+### 两处裁决的落地（2026-09-23，总管已裁，本端收尾）
+
+**裁决 1 的两半都办了，且第二半比裁决要求的更大一点——这一点本端补记在此。**
+
+- 文案已进 [SPEC §9.9](../spec/09-decisions.md) 第三块（总管）；本端把 `settings-copy.ts` 的注释头
+  改成指向 §9.9。
+- **但只改那一行注释是假的。** 本文件头写明的校验方式是「把下面的字符串和
+  `web/agents/rules/settings-ux.md §4` 的代码块 diff」，而 §4 里**根本没有运行参数这一段**
+  （它当时写着「这**两**段是契约」）。也就是说：一个 diff 目标里缺席的段落，**diff 不出来**——
+  拿 §4 去校验只会得到「没有差异」这个假阳性。所以同批把这一段补进 §4、改「两段」为「三段」，
+  并把三句承重的话与 `**新开的**` 的渲染约定一并写在那里。
+- 改完用脚本逐字比对了三处（SPEC §9.9 / settings-ux.md §4 / `settings-copy.ts` 的模板字符串）：
+  `VISION_NOTICE` / `EMBED_NOTICE` / `RUNTIME_NOTICE` **三块全部三处逐字相同**（改之前
+  `RUNTIME_NOTICE` 那一格是 §4 缺失）。`settings-copy.ts` 的 `export const` 一行未动，
+  只动了注释（`git diff` 里 `^[+-]export const` 计数为 0）。
+- `npm run typecheck`（闸门）在改完后重跑通过。
+
+**裁决 2 照办：保留加粗，`RuntimeSettings.tsx` 一行未动**——本端此前已实测「加粗渲染出来、
+`<pre>` 里没有字面星号」，那一档本来就是要的形态。约定已由总管写进 §9.9。
+
 **没做的**
 
 - **真服务端联调仍然没做。** api 侧现在已经挂上路由了，但**本端拿不到一个可用的 admin 会话**：dev
@@ -348,7 +368,7 @@ importConcurrency: number; ffmpegConcurrency: number; cpuCount: number; updatedB
 | `web/src/lib/api-config.ts` | `RuntimeConfig` 改成 RPC 派生 / `RuntimeInput`（常驻手写）/ 两个薄函数 |
 | `web/src/lib/api-contract.ts` | 新增 `_runtimeShape` 编译期断言（`cpuCount` / `updatedAt` 的守门人） |
 | `web/src/routes/settings.tsx` | `SECTIONS` +1 项，渲染在 `EmbedSettings` 之后、`ReindexPanel` 之前 |
-| `web/agents/rules/settings-ux.md` | §2 分段表 +1 行，并写明「全站一份配置、每个数是每进程」的区别 |
+| `web/agents/rules/settings-ux.md` | §2 分段表 +1 行，并写明「全站一份配置、每个数是每进程」的区别；**收尾轮**再补：§4「必须有的文案」补进运行参数那一段（「两段」改「三段」）——它是 `settings-copy.ts` 文件头的 diff 目标，缺了它逐字校验会得到假阳性 |
 
 ## 总管裁定
 
