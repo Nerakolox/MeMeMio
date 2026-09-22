@@ -40,7 +40,7 @@ DEFAULT_EMBED_BASE_URL  / DEFAULT_EMBED_API_KEY  / DEFAULT_EMBED_MODEL
 
 `.env` 里写 localhost 形态，compose 启动 app 时用 `environment:` 盖掉。**不要为了「统一」把 `.env` 改成容器形态**——那样本机 `npm run dev` 就连不上了，而且错误发生在第一次查询，离根因很远。
 
-测试另有一个库：`npm test` 会把库名加后缀 `_test` 自己建出来并跑迁移，不碰开发库。
+测试另有一个库：`npm test` 会把库名加后缀 `_test` 自己建出来并跑迁移，不碰开发库。建不出来时见 [§3.1](#31-npm-test-跑不起来的两种形态)。
 
 ## 2. 启动时校验，不要运行时才发现
 
@@ -70,6 +70,35 @@ cd web && npm run dev     # :5173，proxy /api → :3000
 本地开发时前后端**不同域**（5173 vs 3000），靠 Vite 的 `server.proxy` 把 `/api` 转发过去，这样 cookie 仍然是同域的。生产是真同域，见 [deployment.md](deployment.md)。
 
 本地 cookie **不设 `Secure`**，生产必须设。这是唯一一处允许按环境分支的会话配置。
+
+### 3.1 `npm test` 跑不起来的两种形态
+
+两种都**不报「测试失败」**，所以单独列出来：
+
+**① `TypeError: process.loadEnvFile is not a function`** —— Node 版本太旧。
+`tests/global-setup.ts` 用了 `process.loadEnvFile`，它要 **Node ≥ 20.12**。
+Node 18 下这不是一条测试失败，是 global setup 直接崩掉，
+**而 `npm test` 仍然以 exit code 0 结束**——CI 里会被当成通过。
+
+nvm 用户尤其注意：交互 shell 和脚本 / CI 读到的默认版本可能不是同一个。先 `node -v`。
+
+**② `template database "template1" has a collation version mismatch`** —— 建不出 `_test` 库。
+完整形态：
+
+```
+PostgresError: template database "template1" has a collation version mismatch
+DETAIL: 建库时用的 collation 版本是 2.41，当前 OS 提供 2.36
+```
+
+这是**数据卷和镜像对不上**：卷是在 glibc 较新的镜像下建的，现在的镜像里 glibc 更旧
+（升级 Docker Desktop 或换 `postgres` 镜像 tag 之后容易出现）。两条路：
+
+| 做法 | 什么时候用 |
+|---|---|
+| `ALTER DATABASE template1 REFRESH COLLATION VERSION` | 开发库里没有你在乎的数据时。它只是把版本号标记成当前值，**不重建索引**——如果库里已有基于旧 collation 的文本索引，正确做法是 `REINDEX` 之后再 refresh |
+| 换一个一次性容器跑测试 | 不想动开发库时。`docker run -d --name <名> -p 55432:5432 -e POSTGRES_PASSWORD=x -e POSTGRES_DB=mig pgvector/pgvector:pg16`，然后 `DATABASE_URL='postgres://postgres:x@localhost:55432/mig' npm test` |
+
+**换新设备时这条大概率不会复现**——新建的卷和镜像天然是一致的。
 
 ## 4. 本地的 R2
 
