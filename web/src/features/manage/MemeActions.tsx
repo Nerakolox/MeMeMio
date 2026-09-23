@@ -21,6 +21,7 @@ import { OVERLAY_BTN } from '../../components/MemeCard'
 import { cn } from '../../lib/utils'
 import { TOUCH } from '../../lib/touch'
 import { SEND_LABELS, detectSendPath, type SendTarget } from '../../lib/clipboard'
+import { notifyFailure } from '../../lib/toast'
 import { usePrefetchShare } from '../../lib/use-prefetch-share'
 
 /**
@@ -92,7 +93,7 @@ export function MemeActions({
   onSend: (target: SendTarget) => void
   onEdit: () => void
   /**
-   * 删除这张图。**失败由调用方讲给用户**（浏览页写在页面级 note 里，带 requestId），
+   * 删除这张图。**失败由调用方讲给用户**（浏览页弹常驻 toast，带 requestId），
    * 所以这里只等它落定，不看结果。
    */
   onDelete: () => Promise<void>
@@ -124,8 +125,8 @@ export function MemeActions({
     try {
       await onDelete()
     } catch {
-      // **有意吞掉**：删除失败的原因不由这个弹层讲——它背后的页面顶部有一条带 requestId 的
-      // 提示，那条提示在图已经消失之后还得看得见，放这里会随弹层一起被关掉。
+      // **有意吞掉**：删除失败的原因不由这个弹层讲——页面那边弹的是一条**常驻** toast，
+      // 它得在确认框关掉之后还留在屏幕上（用户要抄 requestId），放这里会随弹层一起消失。
     } finally {
       setDeleting(false)
       setConfirmOpen(false)
@@ -214,6 +215,13 @@ export function MemeActions({
               if (!canDelete) {
                 // 不关菜单：关掉等于把「为什么不能删」这句话一起收走
                 e.preventDefault()
+                /*
+                  再补一句 toast（2026-09-24）。它与菜单项里那行原因**不重复**：
+                  那行是「读得到」，这次点击缺的是「有回应」——菜单不关、不闪、不报错，
+                  点下去整屏没有任何变化。toast 就是这一下的回执。
+                  与文件头那条一致：禁用只是体验，真正拦住越权的是服务端的 assertCanMutate。
+                */
+                notifyFailure(deleteDeniedReason)
                 return
               }
               // 能删就照常关闭，确认框接管

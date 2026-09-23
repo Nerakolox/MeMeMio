@@ -406,11 +406,18 @@ export async function sendMeme(target: SendTarget): Promise<SendOutcome> {
  *
  * 返回对象而不是字符串，是因为「取不到原图」那条路要**给一个能点的链接**：
  * 那时并没有失败到无事可做，缺的只是一次用户自己的手势（见 `saveFile`）。
+ *
+ * ⚠️ **这个函数只管文案，不管怎么显示。** 呈现走 `lib/toast.tsx` 的 `notifySend`
+ * （右上角提示），调用点在 `use-search.ts` / `use-browse-actions.ts`——
+ * 那两个页面此前各渲染一行自己的裸文字，两页会漂，2026-09-24 一并收进 toast。
  */
 export function sendNote(outcome: SendOutcome): SendNote | null {
   switch (outcome.kind) {
     case 'copied':
-      return { text: '已复制，去微信 Ctrl+V' }
+      // 只说「已复制」：剪贴板是不可见的，用户要的是「这一下成了」。
+      // 后半句原本是「去微信 Ctrl+V」——桌面端主路径提示（SPEC §9.2），
+      // 但它把一句状态说明写成了操作说明，而按钮本身已经按能力探测分过流了。
+      return { text: '已复制' }
     case 'downloaded':
       return { text: outcome.note, fallbackUrl: outcome.fallbackUrl }
     case 'shared':

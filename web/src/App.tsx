@@ -10,6 +10,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from './components/ui/sidebar'
+import { Toaster } from './components/ui/sonner'
 import { TooltipProvider } from './components/ui/tooltip'
 import { loginPath } from './lib/api'
 import { HomePage } from './routes/home'
@@ -192,6 +193,12 @@ export function App() {
     <AuthProvider>
       {/* 导入队列挂在这里而不是 /import 里：切到搜索页时它要继续跑（import-ux.md §9） */}
       <ImportProvider>
+        {/*
+          全站提示挂在这一层，**在 `Routes` 之外**：登录 / 注册两条路由不带 `AppLayout`，
+          挂进外壳那两页就没有提示可用（而那两页的失败态本来就在页内，见 `feedback.md`）。
+          位置、层级、避开顶栏那几条都在 `components/ui/sonner.tsx` 里。
+        */}
+        <Toaster />
         <Routes>
           {/*
             登录 / 注册不带外壳。它们各自是一个专注任务页，旁边挂一条导航栏只是噪音；

@@ -5,7 +5,7 @@ import { Skeleton } from '../../components/ui/skeleton'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { MATCHED_BY_LABELS, type Meme, type SearchResult } from '../../lib/api'
-import { SEND_LABELS, detectSendPath, type SendNote } from '../../lib/clipboard'
+import { SEND_LABELS, detectSendPath } from '../../lib/clipboard'
 import { TOUCH } from '../../lib/touch'
 import { usePrefetchShare } from '../../lib/use-prefetch-share'
 import { cn } from '../../lib/utils'
@@ -63,19 +63,20 @@ function readableName(meme: Meme): string {
  *
  * 结果区顶部的两句话**不能和结果抢位置**：降级与改写提示是一块普通面板（`NOTICE`），
  * 不遮不挡、不弹层，底下照常出图（http.md §5、SPEC §6.3.1）。
+ *
+ * 复制 / 下载的结果**不在这个文件里**：2026-09-24 起走右上角提示（`lib/toast.tsx`）。
+ * 此前首页与浏览页各有一行自己的裸文字，同一件事两处呈现——其中一处改了就会漂，
+ * `styling.md` 把这一笔记成了待办，本次一并收掉。
  */
 export function SearchResults({
   state,
   selectedIndex,
-  copyNote,
   onActivate,
   onFavorite,
   onRetry,
 }: {
   state: SearchState
   selectedIndex: number
-  /** 复制 / 下载的结果，由 `sendNote` 给。null 表示不需要反馈。 */
-  copyNote: SendNote | null
   onActivate: (meme: SearchResult) => void
   onFavorite: (meme: Meme) => void
   onRetry: () => void
@@ -160,26 +161,6 @@ export function SearchResults({
         </MemeGallery>
       )}
 
-      {copyNote && (
-        <p role="status" className="text-sm">
-          {copyNote.text}
-          {/* 取不到原图时**给一个能点的链接**：那一下是用户自己的手势，不会被弹窗拦截
-              （`lib/clipboard.ts` 的 `saveFile` 记着为什么不 `window.open`） */}
-          {copyNote.fallbackUrl !== undefined && (
-            <>
-              {' '}
-              <a
-                className="underline underline-offset-2"
-                href={copyNote.fallbackUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                在新标签页打开原图
-              </a>
-            </>
-          )}
-        </p>
-      )}
     </>
   )
 }

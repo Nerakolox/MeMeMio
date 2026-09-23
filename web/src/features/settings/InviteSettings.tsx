@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '../../components/ui/table'
+import { notifySuccess } from '../../lib/toast'
 import { SettingsCard } from './SettingsCard'
 import { COPY_FAILED_TEXT, useCopyText } from './use-copy-text'
 import { TOUCH } from './settings-ui'
@@ -78,6 +79,16 @@ export function InviteSettings() {
       const invite = await createInvite(expiresAt || undefined)
       setInvites((prev) => [invite, ...prev])
       setExpiresAt('')
+      /*
+        这一处**是 toast，与同页四张卡的「保持行内」不冲突**（2026-09-24）：
+        表格是按创建时间倒序插到**最上面**的，而管理员此时很可能正看着表单下方
+        ——新行就落在他的视野之外，行内提示没有落点。
+        成功态看不见的动作才弹 toast（`feedback.md` 判据 3），这一条正是。
+
+        失败**不在这儿报**：`formError` 是行内的 `Alert`，那是既有的、更好的落点
+        （带 requestId、贴在表单上），不给它换渠道。
+      */
+      notifySuccess('已生成邀请码')
     } catch (err) {
       if (err instanceof ApiError) {
         setFormError(`${err.message}（requestId：${err.requestId}）`)

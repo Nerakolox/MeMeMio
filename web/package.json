@@ -25,6 +25,7 @@
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^4.13.1",
     "react-router-dom": "^6.28.1",
+    "sonner": "^2.0.8",
     "yet-another-react-lightbox": "^3.32.2"
   },
   "devDependencies": {

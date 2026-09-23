@@ -424,9 +424,74 @@ CSS 那边要用 `w-(--viewer-aside-w)` 给两块浮层量自己的宽高，两�
 - **提示胶囊不给交互态**（没有 hover、不进 tab 序、不加 `TOUCH`）：它是说明不是按钮，
   长成能点的样子，用户就会去点它。
 
-> 同类但**没做**的一处：复制反馈那句 `copyNote.text` 在首页与浏览页各是一行裸文字
-> （`SearchResults.tsx` / `BrowseResults.tsx`）。它是两页共用的一份呈现，只改一处会让两页
-> 漂开，所以整批留在下一步，不在这里顺手改一半。
+> 同类的那一处**已经做完了**（2026-09-24）：复制反馈那句 `copyNote.text` 在首页与浏览页
+> 各是一行裸文字（`SearchResults.tsx` / `BrowseResults.tsx`）。它现在是右上角 toast
+> （`lib/toast.tsx`），两页那两条裸文字连同承载它们的 `copyNote` / `Note` state 一起删掉了。
+> 判据见 [feedback.md](feedback.md)。
+
+## 全站提示（toast）
+
+**组件：Sonner**（2026-09-24 引入，`components/ui/sonner.tsx`）。调用一律走 `lib/toast.tsx`，
+**不在业务组件里直接 `import { toast } from 'sonner'`**——谁该弹、弹什么、弹多久都收在那里。
+
+位置固定在**右上角**，避开吸顶的 `--app-header-h`（56px）。右上角原本是「导入 N/M」
+进度入口，offset 减掉顶栏高度才不压住它。
+
+### 覆写必须走它自己的 CSS 变量，且内联
+
+⚠️ **Sonner 把样式在运行时注入 `head`，而且是无层的**（没有 `@layer`）。无层声明压过
+Tailwind 的 `@layer utilities`，所以在 `[data-sonner-toast]` 上写工具类是**静默失效**。
+与上面「全屏阅览 / 库自带的 CSS 是无层的」那条一模一样。
+
+颜色 / 圆角因此一律走它的 `--normal-*` / `--error-*` / `--border-radius`，**内联在元素上**：
+内联样式无条件赢过无层表，而 `class` 写法则要看注入顺序（不稳）。值取本项目的语义 token，
+**不写 HEX**：
+
+| 变量 | 取自 |
+|---|---|
+| `--normal-bg` / `--normal-border` / `--normal-text` | `--popover` / `--border` / `--popover-foreground` |
+| `--error-bg` / `--error-border` / `--error-text` | `--popover` / `--destructive` / `--destructive` |
+| `--border-radius` | `--radius-2xl` |
+
+失败态用 `bg-popover + text-destructive`，与 `ui/alert.tsx` 的 destructive 变体同配方，
+不另调一套红。**说明行**（`requestId`、降级链接）另有一组坑：sonner 给
+`[data-description]` 写死了两组灰色，压它同样要 `!`（`lib/toast.tsx` 记了）。
+
+### 层级 60：高于 Radix（50），低于全屏阅览（9999）
+
+sonner 自带 `z-index: 999999999`，且写在元素自身的无层规则里，普通 class 压不住，
+所以用内联 `style` 强制收下来。不收的话「编辑抽屉开着时 toast 在不在上面」没人说得清，
+也违反本文件那条「层级只和几个邻居有关，不是越大越保险」。
+
+### `pointer-events: auto` 不是多余的
+
+Radix 的模态给 `body` 挂 `pointer-events: none`，而 toast 是 `body` 的后代——不显式写回
+`auto`，**模态开着时弹的 toast 就点不动**（关闭按钮、降级链接全是死的），而它看着完全正常。
+这条不报错。
+
+### ⚠️ toast 的 `<li>` 也带 `data-index`，选择器一律要限定范围
+
+**Sonner 的每条 toast 是一个 `<li data-index="N" tabIndex="0">`**，而 `<Toaster />` 挂在
+`Routes` **之前**（`App.tsx`）——于是只要屏幕上有任何一条提示，
+`document.querySelector('[data-index="0"]')` 命中的是**那条提示**，不是第一条结果，
+而且它真的接得住焦点（`tabIndex: 0`）。
+
+`use-search.ts` 的 `focusResult` 原来就是裸的 `document` 查询：**有提示在屏幕上时，
+「按 ↓ 从输入框进结果区」把焦点交给了一条 toast**，键盘用户发现自己哪一格都选不中；
+`scrollIntoView` 那行同理（滚到 `position: fixed` 的 toast 上，看不出来）。这一条不报错。
+
+规矩：**凡是按 `[data-index]` 找回结果项的地方，都从一个锚点出发查**——产品代码传
+`e.currentTarget`（整页那个 `<section>`），验收脚本用 `[aria-label="搜索结果"]` 打头。
+`browse` 那边的 `[data-actions-for]` 不是这套属性，不受影响。
+
+暴露它的是一条**看起来不相关**的断言：`verify-web-interaction-fixes.mjs` 的「1264 档
+Esc 取消选中」红了，而没弹过提示的 390 档是绿的——两档的差别只有「前面弹没弹过 toast」。
+`verify-toast-feedback.mjs` 现在钉着一条回归闸门，专测这件事故。
+
+### 已知缺口
+
+Radix 模态还给 `#root` 挂 `aria-hidden`，所以**对话框开着时弹的 toast 读屏听不见**。
+正因如此表单 / 模态内的保存确认走行内，不走 toast（`feedback.md`）。
 
 ## 深色模式
 

@@ -36,6 +36,16 @@ type RowState = {
   quotaInput: string
   saving: boolean
   error: string | null
+  /**
+   * 「这一行的这次保存成了」（2026-09-24 补）。此前成功**没有任何提示**——
+   * 表格刷一下、按钮从「保存中…」变回「保存」，与什么都没发生长得一样。
+   *
+   * 走行内不走 toast：同页另外三张卡（`EmbedSettings` / `VisionSettings` /
+   * `RuntimeSettings`）的保存确认都是行内 `role="status"`，这一页的**失败**侧本来
+   * 也已经是行内 `role="alert"`——成功侧改成 toast 会让同一行有两个渠道。
+   * 这也正是 `http.md §5` 那条「设置页不弹 toast」的口径（用户 2026-09-24 裁定保持）。
+   */
+  saved: boolean
 }
 
 export function UsersSettings() {
@@ -57,6 +67,7 @@ export function UsersSettings() {
             quotaInput: String(u.storageQuotaBytes),
             saving: false,
             error: null,
+            saved: false,
           }
         }
         setRows(initial)
@@ -81,10 +92,12 @@ export function UsersSettings() {
     if (!row) return
     const quota = parseInt(row.quotaInput, 10)
     if (isNaN(quota) || quota < 0) {
+      // 本地这一关没过就没有「已保存」可言，但**也不能把上一次的收掉**——
+      // 上一次确实存成了，收掉它等于改写了已经发生过的事
       setRow(userId, { error: '配额必须是非负整数' })
       return
     }
-    setRow(userId, { saving: true, error: null })
+    setRow(userId, { saving: true, error: null, saved: false })
     try {
       const updated = await patchAdminUser(userId, { role: row.role, storageQuotaBytes: quota })
       setUsers((prev) =>
@@ -92,12 +105,16 @@ export function UsersSettings() {
           u.id === userId ? { ...u, role: updated.role, storageQuotaBytes: updated.storageQuotaBytes } : u,
         ),
       )
-      setRow(userId, { saving: false })
+      setRow(userId, { saving: false, saved: true })
     } catch (err) {
       if (err instanceof ApiError) {
-        setRow(userId, { saving: false, error: `${err.message}（requestId：${err.requestId}）` })
+        setRow(userId, {
+          saving: false,
+          saved: false,
+          error: `${err.message}（requestId：${err.requestId}）`,
+        })
       } else {
-        setRow(userId, { saving: false, error: '保存失败' })
+        setRow(userId, { saving: false, saved: false, error: '保存失败' })
       }
     }
   }
@@ -145,8 +162,11 @@ export function UsersSettings() {
                     <Select
                       value={row?.role ?? u.role}
                       disabled={row?.saving}
+                      // 改过之后那一行的「已保存」不再代表现在这一格里的值，收掉它
+                      // （与 `RuntimeSettings.setField` 同一条：留着一句已经不成立的话
+                      // 比没有提示更坏）
                       onValueChange={(value) =>
-                        setRow(u.id, { role: value as 'admin' | 'member' })
+                        setRow(u.id, { role: value as 'admin' | 'member', saved: false })
                       }
                     >
                       <SelectTrigger
@@ -175,7 +195,7 @@ export function UsersSettings() {
                       aria-label={`${u.name} 的存储配额（字节）`}
                       min={0}
                       value={row?.quotaInput ?? String(u.storageQuotaBytes)}
-                      onChange={(e) => setRow(u.id, { quotaInput: e.target.value })}
+                      onChange={(e) => setRow(u.id, { quotaInput: e.target.value, saved: false })}
                       className={cn(TOUCH, 'w-32')}
                     />
                   </TableCell>
@@ -200,6 +220,15 @@ export function UsersSettings() {
                     {row?.error && (
                       <p role="alert" className="mt-1 text-xs text-destructive">
                         {row.error}
+                      </p>
+                    )}
+                    {/* 成功侧与失败侧同一个位置、同一行小字，只是不带红色：
+                        同一格里的两个结果摆在同一个地方，眼睛不用找。
+                        字号用 `text-xs` 而不是同页三张卡的 `text-sm`——那一列只有
+                        一半宽度，`text-sm` 的「已保存」会把行撑得比上面的输入框还宽。 */}
+                    {row?.saved && (
+                      <p role="status" className="mt-1 text-xs text-muted-foreground">
+                        已保存
                       </p>
                     )}
                   </TableCell>

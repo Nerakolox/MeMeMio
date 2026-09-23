@@ -4,7 +4,7 @@
  * 这一层只做**布局与编排**，三件事分别住在 `features/browse/`：
  *   · `use-browse-filters` —— URL ↔ 接口参数，筛选的唯一真源
  *   · `use-browse-list`    —— 列表、分页、本地变更
- *   · `use-browse-actions` —— 发送 / 收藏 / 删除 / 编辑侧边栏与那条操作反馈
+ *   · `use-browse-actions` —— 发送 / 收藏 / 删除 / 编辑侧边栏（操作反馈在右上角 toast）
  *
  * ## 布局：md 以上**页面本身不滚动**，两列各自滚（2026-09-22 第二稿）
  *
@@ -159,7 +159,6 @@ export function BrowsePage() {
 
             <BrowseResults
               list={list}
-              note={actions.note}
               user={user}
               scrollEl={scroller}
               onSend={(t) => void actions.send(t)}

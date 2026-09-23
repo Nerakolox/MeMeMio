@@ -21,7 +21,8 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '../contexts/auth'
-import { postLogout } from '../lib/api'
+import { ApiError, postLogout } from '../lib/api'
+import { notifyFailure } from '../lib/toast'
 import { TOUCH } from '../lib/touch'
 import { cn } from '../lib/utils'
 import { Badge } from './ui/badge'
@@ -98,9 +99,27 @@ export function AppSidebar() {
    */
   const closeDrawer = () => setOpenMobile(false)
 
+  /**
+   * 登出。
+   *
+   * ⚠️ **这里必须有 try/catch**（2026-09-24 补）。`postLogout` 在非 204 时抛异常，
+   * 而此前这个函数没有接：网络一失败就是一条未处理的拒绝——不跳转、不报错、
+   * **按钮看起来完全是死的**，用户只会反复点。它和「复制」不同，失败并不会自己
+   * 在别处显形。
+   *
+   * 失败时**不强行清本地会话**：服务端的会话还在，本地清掉只会让界面显示成已登出、
+   * 而带着 cookie 的下一次请求又能通（`lib/api.ts` 的 `ApiError`）。如实报一句，
+   * 让用户自己决定要不要再点一次。
+   */
   async function handleLogout() {
     closeDrawer()
-    await postLogout()
+    try {
+      await postLogout()
+    } catch (err) {
+      const apiErr = err instanceof ApiError ? err : null
+      notifyFailure(`退出登录失败：${apiErr?.message ?? '请稍后重试'}`, apiErr?.requestId)
+      return
+    }
     setUser(null)
     navigate('/login', { replace: true })
   }

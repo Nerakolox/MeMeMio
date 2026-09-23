@@ -1,8 +1,10 @@
 /**
- * 浏览页的结果列：骨架 / 空 / 错误 / 反馈五态 + 瀑布流 + 无限滚动的观察点。
+ * 浏览页的结果列：骨架 / 空 / 错误三态 + 瀑布流 + 无限滚动的观察点。
  *
- * 状态顺序与迁移前逐条相同（骨架在首屏、反馈在图上面、sentinel 在瀑布流之后）——
- * 只有错误态从「一段手写文字 + 裸 button」换成了 `Alert`。
+ * 状态顺序与迁移前逐条相同（骨架在首屏、sentinel 在瀑布流之后）——只有两处变过：
+ * 错误态从「一段手写文字 + 裸 button」换成了 `Alert`；原本排在图上面的那条页级
+ * 反馈（复制 / 删除的结果）2026-09-24 搬去了右上角 toast（`lib/toast.tsx`），
+ * 这一列于是不再有「反馈」这一态。
  *
  * ## 瀑布流为什么不用现成的 `<Masonry>`（2026-09-22，改外壳式布局时发现的真问题）
  *
@@ -18,7 +20,7 @@
  * 所以这里改用 masonic 的**原语**自己喂滚动量（`useMasonry` 的 `scrollTop` / `height`
  * 文档里写明了这种用法：「在别的元素里渲染网格时，传那个元素的 `scrollTop` /
  * `offsetHeight`」）。`offset` 也照 `useScroller()` 的语义减掉：墙的上方还有
- * 手机工具条、反馈条这些元素，它们占掉的高度不该算进「已经滚过了多少」。
+ * 手机工具条这些元素，它们占掉的高度不该算进「已经滚过了多少」。
  *
  * 两个滚动源都走同一段代码：**桌面是 ScrollArea 的 viewport**（`scrollEl`），
  * **手机不给 `scrollEl`**、退回窗口（整页在滚，与改动前一致）。
@@ -42,7 +44,6 @@ import type { SendTarget } from '../../lib/clipboard'
 import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
 import { MemeActions } from '../manage/MemeActions'
-import type { Note } from './use-browse-actions'
 import type { BrowseList } from './use-browse-list'
 
 /** 一屏骨架的格数。**与结果无关，只是占位**——够铺满一屏即可。 */
@@ -60,7 +61,6 @@ const SKELETON_GRID =
 
 export function BrowseResults({
   list,
-  note,
   user,
   scrollEl,
   onSend,
@@ -68,7 +68,6 @@ export function BrowseResults({
   onRemove,
 }: {
   list: BrowseList
-  note: Note | null
   user: User | null
   /**
    * 瀑布流所在的滚动容器（桌面是 ScrollArea 的 viewport）。**不给就是「整页在滚」**，
@@ -113,38 +112,6 @@ export function BrowseResults({
             </Button>
           </AlertDescription>
         </Alert>
-      )}
-
-      {/* 复制 / 下载的结果在这里说一句：剪贴板是不可见的，**没有反馈的复制等于没复制**
-          （clipboard-share.md §4.1）。文案由 lib/clipboard.ts 给，不在页面里现写。
-
-          失败那条要有颜色：迁移前 `notes` 与错误的长得**一模一样**（`.browse__note--error`
-          那条规则在 styles.css 里根本不存在），只有 role 不同，肉眼分不出来。 */}
-      {note !== null && (
-        <p
-          role={note.error === true ? 'alert' : 'status'}
-          className={cn(
-            'mb-3 flex flex-col gap-0.5 text-sm',
-            note.error === true ? 'text-destructive' : 'text-muted-foreground',
-          )}
-        >
-          {note.text}
-          {note.requestId !== undefined && (
-            <span className="font-mono text-xs">requestId: {note.requestId}</span>
-          )}
-          {/* 取不到原图时给一个能点的链接：用户的目标是把图发出去，手段失败了就给另一个
-              手段（clipboard-share.md §6）。那一下是用户自己的手势，弹窗拦截管不着。 */}
-          {note.fallbackUrl !== undefined && (
-            <a
-              className="underline underline-offset-2"
-              href={note.fallbackUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              在新标签页打开原图
-            </a>
-          )}
-        </p>
       )}
 
       {items.length > 0 && (
@@ -209,7 +176,7 @@ const IDLE_MS = 130
  *   整页滚动（手机）     读 window.scrollY / innerHeight
  * ```
  *
- * `offset` 一律减掉——墙的上方还有工具条、反馈条，它们的高度不是「已经滚过的量」。
+ * `offset` 一律减掉——墙的上方还有工具条，它的高度不是「已经滚过的量」。
  * 这一步等价于 masonic 自己 `useScroller(offset)` 里的 `max(0, scrollTop - offset)`。
  *
  * 返回的 `read()` 要给瀑布流那个 ResizeObserver 一起调：**内容长到超过一屏时

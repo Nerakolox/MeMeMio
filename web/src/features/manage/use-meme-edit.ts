@@ -78,6 +78,19 @@ export function useMemeEdit(meme: Meme, onSaved: (updated: Meme) => void) {
   const [draft, setDraft] = useState<MemeEditDraft>(() => draftFrom(meme))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<{ message: string; requestId: string } | null>(null)
+  /**
+   * 「刚保存过」——给面板内那行行内「已保存」用（2026-09-24）。
+   *
+   * 它**不是** `!dirty` 的同义词，虽然此刻两者同时为真：保存成功后草稿被服务端返回的对象
+   * 覆盖，`dirty` 自然回落；而用户随后再动一下，`dirty` 与 `saved` 就一起没了下文。
+   * 分成两个值是因为**只有 `saved` 能说「这一次保存成了」**：`!dirty` 在刚打开面板、
+   * 什么都没做的时候也为真，那时说「已保存」是彻头彻尾的谎话。
+   *
+   * 不住在 toast 里：面板是从右侧推出来的抽屉，而 `feedback.md` 记着 Radix 模态会给
+   * `#root` 挂 `aria-hidden`，弹出去的那句读屏听不见——而「保存完不知道成没成」
+   * 正是这次要修的那个问题。
+   */
+  const [saved, setSaved] = useState(false)
 
   // 只有用户真的改了才为 true。草稿是纯 UI state（state-navigation.md §3），
   // 不是服务端数据的第二份副本——保存成功后它立刻被服务端返回的对象覆盖掉。
@@ -85,11 +98,14 @@ export function useMemeEdit(meme: Meme, onSaved: (updated: Meme) => void) {
 
   function update<K extends keyof MemeEditDraft>(key: K, value: MemeEditDraft[K]) {
     setDraft((prev) => ({ ...prev, [key]: value }))
+    // 又改了一笔，「已保存」立刻失效——留着它会让用户以为新改的也存进去了
+    setSaved(false)
   }
 
   function reset() {
     setDraft(draftFrom(meme))
     setError(null)
+    setSaved(false)
   }
 
   async function save(): Promise<void> {
@@ -100,11 +116,13 @@ export function useMemeEdit(meme: Meme, onSaved: (updated: Meme) => void) {
 
     setSaving(true)
     setError(null)
+    setSaved(false)
     try {
       const updated = await patchMeme(meme.id, patch)
       onSaved(updated)
       // 服务端返回的就是新的真相，草稿跟着它走——**不维护影子副本**（state-navigation.md §2）
       setDraft(draftFrom(updated))
+      setSaved(true)
     } catch (err) {
       // 按 code 分支，不解析 message（http.md §3）。词表外标签是 VALIDATION_FAILED，
       // 不是 AI_INVALID_OUTPUT——后者会让前端去等一个永远不会来的 AI 降级（SPEC §4.5）。
@@ -119,5 +137,5 @@ export function useMemeEdit(meme: Meme, onSaved: (updated: Meme) => void) {
     }
   }
 
-  return { draft, update, reset, save, saving, error, dirty }
+  return { draft, update, reset, save, saving, error, dirty, saved }
 }

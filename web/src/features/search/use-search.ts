@@ -8,7 +8,8 @@ import {
   type Meme,
   type SearchResult,
 } from '../../lib/api'
-import { sendNote, sendMeme, type SendNote } from '../../lib/clipboard'
+import { sendNote, sendMeme } from '../../lib/clipboard'
+import { notifyFailure, notifySend } from '../../lib/toast'
 
 export type SearchState =
   | { kind: 'idle' }
@@ -52,7 +53,6 @@ export function useSearch() {
   const [draft, setDraft] = useState(q)
   const [state, setState] = useState<SearchState>({ kind: 'idle' })
   const [selectedIndex, setSelectedIndex] = useState(-1)
-  const [copyNote, setCopyNote] = useState<SendNote | null>(null)
 
   /**
    * 同一个搜索词的重跑计数，只有「重试」会动它。
@@ -80,7 +80,6 @@ export function useSearch() {
     let alive = true
     setState({ kind: 'loading' })
     setSelectedIndex(-1)
-    setCopyNote(null)
     fetchSearch(q)
       .then((res) => {
         if (!alive) return
@@ -121,14 +120,31 @@ export function useSearch() {
    * 把焦点交给某条结果。**只在用户真的按了键时才调**——写成「跟着 selectedIndex 走的 effect」
    * 会变成抢焦点：items 每次 setState 都是新数组引用，effect 每次都重跑，
    * 于是收藏一次、复制一次就把焦点从输入框拽走，用户想改搜索词得先点回去。
+   *
+   * ⚠️ **`root` 不是可有可无的，选择器必须从结果区那棵子树里找。** 挂着 `data-index`
+   * 的不止结果项：**sonner 的 toast `<li>` 也带 `data-index`**（它是第几条提示），而且
+   * 它 `tabIndex: 0`、真的能接焦点；`<Toaster />` 又挂在 `Routes` **之前**（`App.tsx`）。
+   * 于是只要有提示在屏幕上，`document.querySelector('[data-index="0"]')` 先撞上的是
+   * **那条提示**——「按 ↓ 从输入框进结果区」把焦点交给了一条 toast，键盘用户看到的是
+   * 自己哪一格都选不中。这一条不报错，只是按键没反应，是 `verify-toast-feedback.mjs`
+   * 里 Esc 那条断言（先弹过 toast 的 1264 档红、没弹过的 390 档绿）才暴露出来的。
+   *
+   * `root` 传的是 `handleKeyDown` 的 `e.currentTarget`（整页那个 `<section>`），必须在
+   * 同步阶段取出来——React 的合成事件在 handler 返回后会把 `currentTarget` 置空，
+   * 进了 `requestAnimationFrame` 再读就是 `null`。
    */
-  function focusResult(index: number) {
+  function focusResult(root: HTMLElement | null, index: number) {
     requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-index="${index}"]`)?.focus({ preventScroll: true })
+      root?.querySelector<HTMLElement>(`[data-index="${index}"]`)?.focus({ preventScroll: true })
     })
   }
 
-  /** 收藏走乐观更新，失败回滚（与浏览页一致，state-navigation.md §8）。 */
+  /**
+   * 收藏走乐观更新，失败回滚（与浏览页一致，state-navigation.md §8）。
+   *
+   * 回滚**必须说一句**：心形自己翻回去看起来像「点了没生效」，用户会再点一次。
+   * 成功不提示——心形填上了就是反馈（`feedback.md` 判据 1）。
+   */
   async function handleFavorite(meme: Meme) {
     const next = !meme.favorited
     setState((prev) =>
@@ -150,6 +166,7 @@ export function useSearch() {
             }
           : prev,
       )
+      notifyFailure('收藏失败，请重试')
     }
   }
 
@@ -163,14 +180,15 @@ export function useSearch() {
    * 用户手势的同步调用栈里（§4.1）。
    */
   async function handleActivate(meme: SearchResult) {
-    setCopyNote(null)
     const note = sendNote(await sendMeme(meme))
-    if (note !== null) setCopyNote(note)
+    if (note !== null) notifySend(note)
   }
 
   /** ↑↓ 选择、Enter 复制、Esc 取消选择（clipboard-share.md §7）。 */
   function handleKeyDown(e: React.KeyboardEvent) {
     const inInput = e.target instanceof HTMLInputElement
+    /** 结果区那棵子树。`e.currentTarget` 出了 handler 就没了，所以在这儿先取下来。 */
+    const root = e.currentTarget as HTMLElement
 
     if (e.key === 'Escape') {
       // 在输入框里 Esc 先把光标交出去，再按一次才取消选择
@@ -188,7 +206,7 @@ export function useSearch() {
       if (e.key === 'ArrowDown' && items.length > 0) {
         e.preventDefault()
         setSelectedIndex(0)
-        focusResult(0)
+        focusResult(root, 0)
       }
       return
     }
@@ -215,8 +233,9 @@ export function useSearch() {
       const from = selectedIndex < 0 ? (dir === 1 ? -1 : items.length) : selectedIndex
       const next = Math.min(Math.max(from + dir, 0), items.length - 1)
       setSelectedIndex(next)
-      focusResult(next)
-      document.querySelector(`[data-index="${next}"]`)?.scrollIntoView({ block: 'nearest' })
+      focusResult(root, next)
+      // 同一个理由：`document` 那一版会滚到 toast 上去（它是 `position: fixed`，看不出来）
+      root.querySelector(`[data-index="${next}"]`)?.scrollIntoView({ block: 'nearest' })
     }
   }
 
@@ -225,7 +244,6 @@ export function useSearch() {
     setDraft,
     state,
     selectedIndex,
-    copyNote,
     /** 有输入但还没提交（没回车、也没失焦）时提示一句，见 `routes/home.tsx`。 */
     trimmedDraft: draft.trim(),
     commit,

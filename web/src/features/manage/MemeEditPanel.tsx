@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import type { Meme } from '../../lib/api'
 import { formatBytes, formatDate } from '../../lib/format'
 import { tagStatusLabel } from '../../lib/tag-status'
+import { notifySuccess } from '../../lib/toast'
 import { TOUCH } from '../../lib/touch'
 import { VocabSections } from '../../components/VocabSections'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
@@ -60,8 +61,24 @@ export function MemeEditPanel({
   onClose: () => void
   onSaved: (updated: Meme) => void
 }) {
-  const { draft, update, reset, save, saving, error, dirty } = useMemeEdit(meme, onSaved)
+  const { draft, update, reset, save, saving, error, dirty, saved } = useMemeEdit(meme, onSaved)
   const bodyRef = useRef<HTMLDivElement>(null)
+
+  /**
+   * 放弃修改。**这一处走 toast，与保存相反**（2026-09-24）。
+   *
+   * 判据不是「在不在抽屉里」，是**成功态看不看得见**：保存的结果在面板里没有落点
+   * （草稿是原文、按钮变灰，两件都可能是「我还没改」的样子），所以要说一句；
+   * 而放弃修改**本身**就是一次可见的回退——草稿当场变回原样，两个按钮一起变灰。
+   * 走 toast 是因为这次点击有**破坏性**：它扔掉的是用户刚打进去的字，
+   * 「刚才那下是不是真扔了」值得一句回执，而不是让用户对着变灰的按钮猜。
+   *
+   * 它同时也回答了「我点错了吗」——面板不关、草稿还在，用户接着改就行。
+   */
+  function handleReset() {
+    reset()
+    notifySuccess('已放弃修改')
+  }
 
   return (
     // 受控、无 SheetTrigger：面板由页面的 editingId 决定开不开。
@@ -230,7 +247,23 @@ export function MemeEditPanel({
           )}
         </div>
 
-        <SheetFooter className="flex-row gap-2 border-t px-6 py-4">
+        <SheetFooter className="flex-row items-center gap-2 border-t px-6 py-4">
+          {/*
+            保存成功的确认**在面板里说**，不弹 toast（2026-09-24 改）。改之前它写进
+            `use-browse-actions` 的页级 note，而那行文字渲染在 `BrowseResults` 里——
+            **正好被这个抽屉盖住**：用户点完保存，屏幕上什么都不变。
+
+            不弹 toast 的两条理由都在 `feedback.md`：抽屉是从右上角推出来的，会和那一角
+            叠在一起；而 Radix 模态给 `#root` 挂了 `aria-hidden`，弹出去的提示读屏听不见。
+            行内这句在 Sheet 自己的 portal 里，不受这两条影响。
+
+            `role="status"` 让读屏在保存完成时报一句；它在抽屉内部，`aria-hidden` 管不到。
+          */}
+          {saved && (
+            <p role="status" className="text-sm text-muted-foreground">
+              已保存
+            </p>
+          )}
           {/* 不做乐观更新：等服务端确认再改本地（state-navigation.md §8） */}
           <Button className={TOUCH} disabled={saving || !dirty} onClick={() => void save()}>
             {saving ? '保存中…' : '保存'}
@@ -239,7 +272,7 @@ export function MemeEditPanel({
             variant="outline"
             className={TOUCH}
             disabled={saving || !dirty}
-            onClick={reset}
+            onClick={handleReset}
           >
             放弃修改
           </Button>

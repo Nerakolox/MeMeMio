@@ -7,6 +7,7 @@ import { Skeleton } from '../../components/ui/skeleton'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { ApiError, fetchMemes, toStateError, toggleFavorite, type Meme } from '../../lib/api'
+import { notifyFailure } from '../../lib/toast'
 import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
 
@@ -94,6 +95,9 @@ export function DiscoverWall() {
             }
           : prev,
       )
+      // 回滚了必须说一句：心形自己翻回去看起来像「点了没生效」，用户会再点一次。
+      // 成功不提示——心形填上了就是反馈（`feedback.md` 判据 1）。
+      notifyFailure('收藏失败，请重试')
     }
   }
 

@@ -15,6 +15,7 @@ import {
   toggleFavorite,
   toStateError,
 } from '../../lib/api'
+import { notifyFailure } from '../../lib/toast'
 
 export function useBrowseList(params: FetchMemesParams) {
   const [items, setItems] = useState<Meme[]>([])
@@ -150,7 +151,10 @@ export function useBrowseList(params: FetchMemesParams) {
 
   /**
    * 收藏走乐观更新：立刻翻，失败回滚（state-navigation.md §8）。
-   * 失败**不提示**——它只影响一个图标，与首页、搜索页一致。
+   *
+   * 失败**要弹一句**（2026-09-24 改，此前静默）。回滚之后图标自己翻回去，看起来与
+   * 「这一下没点中」完全一样——用户会再点一次，而第二次同样失败。回滚是**界面说了谎**
+   * 之后的补救，补救本身得被听见。成功不弹：心形填上了就是反馈（`feedback.md` 判据 1）。
    */
   async function applyFavorite(meme: Meme) {
     const next = !meme.favorited
@@ -159,6 +163,7 @@ export function useBrowseList(params: FetchMemesParams) {
       await toggleFavorite(meme.id, next)
     } catch {
       setItems((prev) => prev.map((m) => (m.id === meme.id ? { ...m, favorited: !next } : m)))
+      notifyFailure('收藏失败，请重试')
     }
   }
 

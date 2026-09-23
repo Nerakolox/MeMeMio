@@ -6,6 +6,7 @@ import { Skeleton } from '../../components/ui/skeleton'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { ApiError, fetchMemes, toStateError, toggleFavorite, type Meme } from '../../lib/api'
+import { notifyFailure } from '../../lib/toast'
 import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
 
@@ -73,6 +74,8 @@ export function TaggingList({ status }: { status: string }) {
       await toggleFavorite(meme.id, next)
     } catch {
       setItems((prev) => prev.map((m) => (m.id === meme.id ? { ...m, favorited: !next } : m)))
+      // 回滚必须说一句，见 `lib/toast.tsx` 的判据 1 / 3：心形自己翻回去不是反馈。
+      notifyFailure('收藏失败，请重试')
     }
   }
 

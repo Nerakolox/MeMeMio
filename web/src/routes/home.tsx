@@ -24,7 +24,6 @@ export function HomePage() {
     setDraft,
     state,
     selectedIndex,
-    copyNote,
     trimmedDraft,
     commit,
     retry,
@@ -44,7 +43,6 @@ export function HomePage() {
       <SearchResults
         state={state}
         selectedIndex={selectedIndex}
-        copyNote={copyNote}
         onActivate={handleActivate}
         onFavorite={handleFavorite}
         onRetry={retry}

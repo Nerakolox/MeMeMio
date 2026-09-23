@@ -55,7 +55,15 @@ JPG / WebP 静图**必须先转 PNG**（canvas 转一道），因为规范只保
 new ClipboardItem({ 'image/png': fetchAsPng(url) })  // 传 Promise，不 await
 ```
 
-成功后给明确反馈（「已复制，去微信 Ctrl+V」）。**没有反馈的复制等于没复制**——剪贴板是不可见的。
+成功后给明确反馈（「已复制」）。**没有反馈的复制等于没复制**——剪贴板是不可见的。
+
+反馈**怎么显示**归 [feedback.md](feedback.md)：2026-09-24 起是右上角 toast（`lib/toast.tsx`
+的 `notifySend`），页面里不再有那一行裸文字。文案仍由 `lib/clipboard.ts` 的 `sendNote`
+定，两页对同一个动作说同一句话。
+
+⚠️ 那句话**只说「已复制」**。此前是「已复制，去微信 Ctrl+V」，2026-09-24 按产品负责人
+的裁定砍掉了后半句：这个产品要发的不只有微信（还有 Telegram / Discord / 钉钉……），
+指名一个应用会让用别的人以为没成；而「复制之后粘到哪」是用户本来就知道的事。
 
 ### 4.2 桌面动图 → 下载 / 拖拽
 
@@ -81,13 +89,21 @@ if (navigator.canShare?.({ files: [file] })) {
 // ✗ UA 判断永远追不上现实
 if (/iPhone|Android/.test(navigator.userAgent)) { ... }
 
-// ✓
-if (navigator.canShare?.({ files: [f] })) { ... }
+// ✓ 分享要先过一道「这是触屏优先设备吗」
+if (touchPrimary() && navigator.canShare?.({ files: [f] })) { ... }
 else if (navigator.clipboard?.write) { ... }
 else { downloadFlow() }
 ```
 
 **这和 [api 端不按 baseUrl 猜供应商](../../../api/agents/rules/ai-providers.md)是同一条原则**：能力靠探测，不靠猜。
+
+**`touchPrimary()` 那一道是 2026-09-24 补上的，不能省。** 桌面 Windows Chrome 的 `navigator.canShare({ files })` 返回 `true`（系统分享面板确实存在），所以只按 `canShare` 分流的话，**桌面静图会走分享路径**——而 §3 要求它的按钮写「复制」、[SPEC §9.2](../../../spec/09-decisions.md) 说桌面主路径是「点一下切回微信 `Ctrl+V`」。**探测顺序不能推翻这两条**，`touchPrimary()` 就是那道闸：
+
+```ts
+matchMedia('(pointer: coarse)').matches
+```
+
+**它不是 UA 判断**，是和 `prefers-color-scheme` 同类的平台能力查询，符合本节的原则。`lib/clipboard.ts` 里叫 `touchPrimary()`，代码里写了理由。
 
 探测结果决定按钮长什么样，**在渲染时就决定，不是点击后才发现**。
 
@@ -104,6 +120,10 @@ else { downloadFlow() }
 使用场景是「聊天到一半切过来找图」，**快是核心体验**。鼠标操作已经比桌面端慢了，键盘路径不能再丢。
 
 `Enter` 在动图上触发的是下载，不是复制——和点击行为保持一致。
+
+⚠️ 这条路径靠 `[data-index]` 找结果项，**而 toast 的 `<li>` 也带这个属性**（见
+`styling.md`「toast 的 `<li>` 也带 `data-index`」）。选择器必须从结果区那棵子树里查，
+裸的 `document.querySelector` 会在有提示时把焦点交给一条 toast。
 
 ## 8. 改了这里必须两端实测
 
