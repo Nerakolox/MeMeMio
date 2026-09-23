@@ -231,7 +231,8 @@ top 写 0 的元素会滑到顶栏底下（顶栏有实色底，压得住它，�
 不是一回事）。`60` 那一版为此给三处抽屉各写了 `top-(--app-header-h) bottom-0 h-auto`，
 `20` 之后那三段连同它们的推导一起删了。
 
-全屏阅览（`ImageViewer.tsx`）不受影响：`.yarl__portal` 自带 `9999`，本来就是数值最大的一个。
+全屏阅览（`ImageViewer.tsx`）不受影响：`.yarl__portal` 自带 `9999`，**比顶栏大得多**。
+（它自己不是最大的那一个了——toast 在 `10000`，见下面「层级」。）
 
 ## 响应式：按容器分档，不按视口
 
@@ -336,7 +337,8 @@ portal 到 `document.body`，只要它的 React 父链经过首页，键盘事�
   改它的时候别把图标缩到 28px 以下。
 - z-index 不用管：`--yarl__portal_zindex` 默认 `9999`，**比顶栏（`z-20`）大**——
   压过顶栏靠的是差值（两者同值那天靠的是 portal 在 `#root` 之后的 DOM 顺序）。
-  本仓没有 z-index 总表，这条只记在 `ImageViewer.tsx` 的注释里。
+  本仓没有 z-index 总表，这条只记在 `LightboxViewer.tsx` 的注释里。
+  ⚠️ 唯一压在它上面的是 toast（`10000`），那是给阅览器里 `Ctrl+C` 的反馈让的路，见下面「层级」。
 
 ### 文案必须本地化，**插件的文案是插件自己那份**
 
@@ -457,11 +459,25 @@ Tailwind 的 `@layer utilities`，所以在 `[data-sonner-toast]` 上写工具�
 不另调一套红。**说明行**（`requestId`、降级链接）另有一组坑：sonner 给
 `[data-description]` 写死了两组灰色，压它同样要 `!`（`lib/toast.tsx` 记了）。
 
-### 层级 60：高于 Radix（50），低于全屏阅览（9999）
+### 层级 10000：**全站最上面的一层**（2026-09-24 从 `60` 抬上来）
 
 sonner 自带 `z-index: 999999999`，且写在元素自身的无层规则里，普通 class 压不住，
 所以用内联 `style` 强制收下来。不收的话「编辑抽屉开着时 toast 在不在上面」没人说得清，
 也违反本文件那条「层级只和几个邻居有关，不是越大越保险」。
+
+**抬上去的唯一原因是全屏阅览器里的复制反馈**：此前 `60` 的邻居是 Radix（`50`）与阅览器
+（`9999`），而 `.yarl__container` 是**不透明黑底、铺满视口**——阅览器一开，toast 就被整个
+盖住，屏幕上什么也没有（降级那条「在新标签页打开原图」的链接同样在黑底下）。阅览器里加上
+`Ctrl+C` 之后这一条不能再将就：**没有反馈的复制等于没复制**（[clipboard-share.md](clipboard-share.md) §4.1），
+而那句话只从 toast 这一个落点出来（[feedback.md](feedback.md) §4）。
+
+⚠️ **这一档只解决了「看不见」，没有解决「点不到」。** 实测（`verify-viewer-copy-shortcut.mjs`
+读像素）：`10000` 之后 toast 确实画在黑底之上，但它的**指针事件仍然收不到**——原因是
+YARL 给 `#root` 挂了 `inert`，与层级无关，见下面「已知缺口」。别把这两件事混成一件。
+
+`10000` 是「比那唯一的邻居大一档」，不是随手加大：真正需要压过的只有 `.yarl__portal`
+的 `9999`。**新加浮层时先想这一条**：任何要盖住全屏阅览的东西（本仓目前没有第二个）
+都得再往上让一格，而 toast 永远在最上面。
 
 ### `pointer-events: auto` 不是多余的
 
@@ -492,6 +508,34 @@ Esc 取消选中」红了，而没弹过提示的 390 档是绿的——两档�
 
 Radix 模态还给 `#root` 挂 `aria-hidden`，所以**对话框开着时弹的 toast 读屏听不见**。
 正因如此表单 / 模态内的保存确认走行内，不走 toast（`feedback.md`）。
+
+**2026-09-24 补：全屏阅览器那一份不是 Radix 干的，是 YARL 干的，而且它多挂一个属性。**
+
+`yet-another-react-lightbox` 进阅览器时遍历 `body` 的子节点（`dist/index.js` 的
+`handleEnter`），给除自己 portal 之外的每一个挂 `inert` **和** `aria-hidden="true"`——
+`#root` 于是整棵变成 inert。两层后果：
+
+| 属性 | 后果 |
+|---|---|
+| `aria-hidden="true"` | 读屏听不见（就是上面那句，只是凶手要改口） |
+| `inert` | **指针事件也收不到**：toast 上的「关闭提示」按钮、降级提示里那条「在新标签页打开原图」的链接，阅览器开着时全是死的 |
+
+`inert` 这件事特别难查：**它不出现在 `pointer-events` 的计算值里**（读出来还是 `auto`）、
+不报错、屏幕上完全正常，而 `elementFromPoint` 会一路回落到 `.yarl__slide`——
+**拿命中测试当可见性判据会得出「看不见」这个反的结论**，尽管它就在那儿画着。
+验收里那条读像素的断言（`scripts/verify-viewer-copy-shortcut.mjs`）就是为此写的。
+
+Toaster 挂在 `#root` 里（`App.tsx`），所以它的每一条提示都吃这个下场。
+移出 `#root` 是唯一的出路，**但只解决一半**：YARL 走的正是「body 的每一个子节点」，
+阅览器开着时若已经有一条 toast 在，连新挪出去的 toaster 一起标 inert；要彻底闭合
+还得再补一个只清自己那层的观察器。Toaster 是全站唯一的反馈落点（`feedback.md`），
+动它值得单开任务——现状由验收里那条**哨兵断言**钉着：`toastInsideInert` 一旦变 `false`
+就是有人在修，那条会先红，回来把这里和 [clipboard-share.md](clipboard-share.md) §7 一起改。
+
+**全屏阅览也一样**：`.yarl__portal` 带 `aria-modal`，读屏只读对话框里那棵树，所以阅览器里
+按 `Ctrl+C` 弹的「已复制」**看得见、但读屏听不见**。这一档没有行内落点可用（阅览器里没有
+表单，也没有别的地方能放一句「已复制」），所以照旧走 toast——同 `LightboxViewer` 里
+`.yarl__*` 上写 Tailwind 会静默失效那条一样，属于「知道它这样，写下来别当没有」。
 
 ## 深色模式
 

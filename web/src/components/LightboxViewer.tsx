@@ -11,6 +11,9 @@ import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 // captions / counter / thumbnails 四个），照习惯补一行会让构建失败。
 import 'yet-another-react-lightbox/styles.css'
 import type { Meme } from '../lib/api'
+import { sendMeme, sendNote, type SendTarget } from '../lib/clipboard'
+import { notifySend } from '../lib/toast'
+import { usePrefetchShare } from '../lib/use-prefetch-share'
 import { cn } from '../lib/utils'
 import { VOCAB_DIMENSIONS } from '../lib/vocab'
 import { SessionContext, type SessionControls } from './viewer-session'
@@ -44,6 +47,14 @@ import { SessionContext, type SessionControls } from './viewer-session'
  * **9999 > 20，全屏阅览比数值就赢**，与挂载位置无关（当天顶栏一度也是 9999，
  * 那时靠的是 DOM 顺序——portal 排在 `#root` 之后）。这条关系是**一条上限**：
  * 顶栏那个数可以往下调，但**不能加到 9999 以上**，否则阅览器的工具栏会被顶栏盖住。
+ *
+ * ⚠️ 2026-09-24：**唯一压在阅览器上面的是 toast（`z-index: 10000`）**，这是有意的——
+ * `Ctrl+C` 的「已复制」只从 toast 出来，而这里的容器是**不透明黑底**，toast 在它下面
+ * 就等于没有反馈（`components/ui/sonner.tsx` 那一段）。所以这里不再是「数值最大的一个」。
+ *
+ * ⚠️ 但它只**画**在上面：YARL 进这里时给 `#root` 挂了 `inert`（`dist/index.js` 的
+ * `handleEnter`，见 `styling.md`「已知缺口」），Toaster 在那棵子树里，所以阅览器开着时
+ * toast 上的按钮和链接**点不到**。层级解决不了这件事，别顺手去改 `10000`。
  */
 export function LightboxViewer({
   controls,
@@ -71,6 +82,52 @@ export function LightboxViewer({
    */
   const on = useMemo(() => ({ view: ({ index }: ViewCallbackProps) => show(index) }), [show])
 
+  /**
+   * 当前这一张。翻页只换 `session.index`、数组引用不动，所以这个引用是稳的——
+   * 底下的预取与快捷键都拿它当依赖，依赖它才不会每渲染一次就重挂一遍。
+   */
+  const current = session?.items[session.index]
+
+  // 触屏那一档要在**渲染时**就把原图取好，按键时才来得及调 `navigator.share`
+  // （理由见 `lib/clipboard.ts` 的 `SharePrefetch`）。卡片菜单那一份在 `MemeActions` 里，
+  // 这里补的是「全屏看着这张图时按 Ctrl+C」。桌面那两档它什么都不做。
+  usePrefetchShare(current)
+
+  /**
+   * `Ctrl+C` / `Cmd+C` 复制**当前这一张**。走的是和卡片「⋯」菜单里那一项**同一个函数**
+   * （`lib/clipboard.ts` 的 `sendMeme`），所以三条路径的分流、每一句文案都不另写一份——
+   * 动图在它上面同样落到「下载」并说明原因，不会按下去没反应（clipboard-share.md §3、§7）。
+   *
+   * ## 为什么挂在 `document` 上
+   *
+   * 阅览器开着时它就是全屏唯一的内容。焦点此刻可能在 YARL 的容器、底部轨道的一格、
+   * 或者工具栏按钮上，逐个挂会漏。更要紧的是**焦点根本不在页面那棵树里**：阅览器是
+   * portal 到 `body` 的，而页面那一侧（`#root`）此刻被 YARL 标了 `inert`——挂在页面
+   * 组件上的 `onKeyDown` 收不到任何东西。`current === undefined` 那道判断让关闭之后
+   * 这条路立刻消失——宿主是**常驻**的（`everOpened` 之后不卸载，见 `ImageViewer.tsx`）。
+   *
+   * ## 三个细节都不是装饰
+   *
+   * - `ctrlKey || metaKey` 都要：macOS 上那一下是 `Cmd+C`。
+   * - `e.repeat` 挡掉按住不放的自动重复。下载那条路上，一次重复就是又一个文件落进下载目录。
+   * - `preventDefault()`：浏览器默认动作是「把选区写进剪贴板」，而 `.yarl__container` 是
+   *   `user-select: none`（`SlideFooter` 那段注释里记着），本来就没有东西可复制；不挡的话
+   *   它会紧接着落一次空内容，和上面那条**异步**写入抢同一个剪贴板。
+   */
+  useEffect(() => {
+    if (current === undefined) return
+    // 箭头函数而不是函数声明：函数声明会被提升，TS 因此不认上面那道 `undefined` 收窄
+    // （`sendImage` 要的就是一张真的图，不是 `Meme | undefined`）。
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+      if (e.repeat || e.key.toLowerCase() !== 'c') return
+      e.preventDefault()
+      void sendImage(current)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [current])
+
   return (
     <SessionContext.Provider value={controls}>
       <Lightbox
@@ -94,6 +151,18 @@ export function LightboxViewer({
       />
     </SessionContext.Provider>
   )
+}
+
+/**
+ * 把一张图发出去。**与首页 / 浏览页是同一条组成**：`sendMeme` 分流、`sendNote` 给文案、
+ * `notifySend` 呈现——三者为什么分家写在 `lib/clipboard.ts` 的文件头。
+ *
+ * ⚠️ 由按键事件直接调起，中间不要先 await 别的请求：剪贴板写入要落在用户手势的同步调用栈里
+ * （Safari 对这一条最严格，clipboard-share.md §4.1）。
+ */
+async function sendImage(target: SendTarget): Promise<void> {
+  const note = sendNote(await sendMeme(target))
+  if (note !== null) notifySend(note)
 }
 
 /**

@@ -52,7 +52,8 @@ if (meme.isAnimated) return downloadFlow(meme)
 
 ## 无障碍与键盘
 
-搜索结果支持 `↑` `↓` 选择、`Enter` 复制、`Esc` 关闭。
+搜索结果支持 `↑` `↓` 选择、`Enter` 复制、`Esc` 关闭；全屏阅览里 `Ctrl+C` / `Cmd+C` 复制当前
+这一张（[clipboard-share.md](clipboard-share.md) §7）。
 
 **这不是可选的锦上添花**——这个工具的使用场景是「聊天到一半切过来找图」，快是核心体验。鼠标操作已经比桌面端慢了，键盘路径不能再丢。
 

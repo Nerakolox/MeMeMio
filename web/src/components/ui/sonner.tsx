@@ -23,12 +23,25 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
  * 错误态用 `bg-popover + text-destructive`，与 `ui/alert.tsx` 的 destructive 变体同配方
  * （`bg-card text-destructive`），不自己另调一套红。
  *
- * ## z-index 60：高于 Radix 那层（50），低于全屏阅览（9999）
+ * ## z-index 10000：**全站最上面的一层**（高过全屏阅览的 9999）
  *
  * sonner 自带 `z-index: 999999999`，且**写在元素自身的无层规则里**，普通 class 压不住，
  * 所以这里用内联 `style` 强制收下来。不收的话，编辑侧边栏 / 抽屉开着时
  * toast 到底在不在抽屉上面没人说得清，也违反 `styling.md` 那条
  * 「层级只和几个邻居有关，不是越大越保险」的口径。
+ *
+ * ⚠️ **2026-09-24 从 `60` 抬到这里，唯一的原因是全屏阅览器里的复制反馈。** 此前是 `60`
+ * （高过 Radix 的 50、低于阅览器的 9999），而 `.yarl__container` 是**不透明黑底**、铺满
+ * 那个视口——阅览器一开，toast 就被整个盖住，屏幕上什么也没有。阅览器里加了 `Ctrl+C`
+ * 之后这件事就不能再将就：**没有反馈的复制等于没复制**（clipboard-share.md §4.1），
+ * 而那句话只从这一个落点出来（`lib/toast.tsx`）。
+ *
+ * `10000` 是「比那唯一的邻居大一档」，不是随手加大：真正需要压过的只有 `.yarl__portal`
+ * 的 `9999`，其余（Radix 50、顶栏 20）本来就在下面。
+ *
+ * ⚠️ **这一档只买到「看得见」，没买到「点得到」**，别把它当成两件都办了：阅览器开着时
+ * 指针事件仍然到不了 toast 身上（`inert`，见下面「已知缺口」）。验收里那条读像素的断言
+ * 量的是前者（`verify-viewer-copy-shortcut.mjs`）。
  *
  * ## 避开顶栏
  *
@@ -44,9 +57,20 @@ import { Toaster as Sonner, type ToasterProps } from "sonner"
  *
  * ## 已知缺口（不是遗漏，是取舍）
  *
- * Radix 模态还会给 `#root` 等 body 子节点挂 `aria-hidden`，所以**对话框开着时弹的
+ * Radix 模态会给 `#root` 等 body 子节点挂 `aria-hidden`，所以**对话框开着时弹的
  * toast 读屏听不见**。正因如此，表单 / 模态内的保存确认走行内（`UsersSettings`、
  * `MemeEditPanel`），不走这里——那两处要修的本来就是「反馈看不见」。
+ *
+ * ⚠️ **全屏阅览器那一份更重**：凶手是 YARL，它进阅览器时给 `body` 的每个子节点
+ * （除了自己的 portal）挂 `inert` **和** `aria-hidden="true"`，而 Toaster 挂在 `#root`
+ * 里——于是阅览器开着时这条提示**看得见、但点不到**：「关闭提示」按钮和降级提示里
+ * 那条「在新标签页打开原图」的链接都是死的。`inert` 不出现在 `pointer-events` 的
+ * 计算值里（读出来还是 `auto`）、不报错，`elementFromPoint` 还会整个跳过它，
+ * **拿命中测试当可见性判据会得出反的结论**。
+ *
+ * 怎么修、为什么这次没修（移出 `#root` 只解决一半：YARL 走的正是 body 的每一个子节点），
+ * 完整推导写在 [styling.md](../../../agents/rules/styling.md)「已知缺口」，
+ * 现状由 `scripts/verify-viewer-copy-shortcut.mjs` 那条哨兵断言钉着。改这里之前先读那两处。
  */
 export function Toaster(props: ToasterProps) {
   return (
@@ -92,7 +116,7 @@ export function Toaster(props: ToasterProps) {
       richColors
       style={
         {
-          zIndex: 60,
+          zIndex: 10000,
           pointerEvents: "auto",
           "--border-radius": "var(--radius-2xl)",
           "--normal-bg": "var(--popover)",

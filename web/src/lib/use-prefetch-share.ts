@@ -12,8 +12,12 @@ import { detectSendPath, prefetchShareFile, type SendTarget } from './clipboard'
  * 一次取到的字节**和网格里那张缩略图无关**，是原图，所以代价真实存在：只在
  * `detectSendPath` 说这条路是分享时才取，取过的地址由 `prefetchShareFile` 自己兜住。
  */
-export function usePrefetchShare(target: SendTarget): void {
+export function usePrefetchShare(target: SendTarget | undefined): void {
   useEffect(() => {
-    if (detectSendPath(target.isAnimated) === 'share') prefetchShareFile(target)
+    // `undefined` 是「此刻没有可发送的那一张」——全屏阅览器关着的时候。hook 不能条件调用，
+    // 所以这一档由它自己认下（`LightboxViewer` 的当前那一张就可能是 undefined）。
+    if (target !== undefined && detectSendPath(target.isAnimated) === 'share') {
+      prefetchShareFile(target)
+    }
   }, [target])
 }
