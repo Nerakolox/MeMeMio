@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { CheckIcon, CircleCheckIcon, MinusIcon, TriangleAlertIcon, XIcon } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import {
@@ -9,6 +8,7 @@ import {
 } from '../../components/ui/accordion'
 import { Alert, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
+import { COPY_FAILED_TEXT, useCopyText } from './use-copy-text'
 import { TOUCH } from './settings-ui'
 
 /**
@@ -72,13 +72,9 @@ function ProbeLine({ probe }: { probe: Probe }) {
  * 而不是指望 Accordion 跟着长。
  */
 function RawOutput({ label, text, open }: { label: string; text: string; open: boolean }) {
-  const [copied, setCopied] = useState(false)
-
-  async function handleCopy() {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
+  // 写剪贴板与那两句反馈都在这里（`use-copy-text.ts`）：写在组件里的那一版**没有 catch**，
+  // 被拒时是「点了没反应」。
+  const { state, copy } = useCopyText()
 
   return (
     <Accordion
@@ -90,16 +86,23 @@ function RawOutput({ label, text, open }: { label: string; text: string; open: b
       <AccordionItem value="raw">
         <AccordionTrigger className={TOUCH}>{label}</AccordionTrigger>
         <AccordionContent>
-          <div className="mb-2 flex flex-wrap gap-2">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <Button
               type="button"
               variant="outline"
               size="sm"
               className={TOUCH}
-              onClick={handleCopy}
+              onClick={() => copy(text)}
             >
-              {copied ? '已复制' : '复制'}
+              {state === 'copied' ? '已复制' : '复制'}
             </Button>
+            {/* 按钮上的「已复制」是给眼睛的确认；失败那句要读，所以给它 role="alert"
+                （写在按钮旁边而不是替代按钮文案：按钮得留着，用户马上要再点一次） */}
+            {state === 'failed' && (
+              <span role="alert" className="text-xs text-destructive">
+                {COPY_FAILED_TEXT}
+              </span>
+            )}
           </div>
           {/* 限高只是给它一个滚动区，免得几百行返回把整页顶走；全文都在 DOM 里，复制拿到的也是全文 */}
           <pre className="max-h-80 overflow-auto rounded-xl bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap wrap-anywhere">

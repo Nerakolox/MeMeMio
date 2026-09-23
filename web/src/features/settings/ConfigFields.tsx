@@ -74,7 +74,15 @@ export function ConfigFields({ idPrefix, fields, maskedApiKey, disabled, onChang
           id={`${idPrefix}-api-key`}
           className={TOUCH}
           type="password"
-          autoComplete="off"
+          /*
+            **`new-password` 而不是 `off`**（2026-09-24 实测）：Chrome 对 `type="password"`
+            的框**忽略 `autocomplete="off"`**——它会把这一格当成「存储的密码」，点进去弹一份
+            已存密码的候选列表，选中就把别的站点的密码填进这个 API Key 框；再打开设置页时
+            还会弹「是否保存密码？」。而这一格既不是登录密码、也不该被密码管理器接管。
+            `new-password` 是对这一档唯一有效的声明（浏览器据此不自动填充、也不建议生成），
+            同时它也是「这里填的是要写入的新凭据」的正确语义（SPEC §3.5）。
+          */
+          autoComplete="new-password"
           value={fields.apiKey}
           disabled={disabled}
           onChange={(e) => onChange('apiKey', e.target.value)}

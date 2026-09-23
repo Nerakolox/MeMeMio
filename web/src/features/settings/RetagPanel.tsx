@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { Info } from 'lucide-react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -9,13 +10,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../../components/ui/alert-dialog'
-import { Alert, AlertTitle } from '../../components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Progress } from '../../components/ui/progress'
 import { ApiError, fetchTagStatus, startRetag, type RetagResult, type TagStatusSummary } from '../../lib/api'
 import { TOUCH } from '../../lib/touch'
 import { SettingsCard } from './SettingsCard'
+import { pollProblemText, usePolledStatus } from './use-poll-status'
 
 /**
  * 全库重新打标（SPEC §6.4.3）。
@@ -90,8 +92,6 @@ function skipDetail(result: RetagResult): string {
 }
 
 export function RetagPanel({ refreshToken }: Props) {
-  const [status, setStatus] = useState<TagStatusSummary | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [starting, setStarting] = useState(false)
   const [startNote, setStartNote] = useState<string | null>(null)
@@ -118,36 +118,18 @@ export function RetagPanel({ refreshToken }: Props) {
    */
   const rowRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    let alive = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    async function poll() {
-      try {
-        const next = await fetchTagStatus('all')
-        if (!alive) return
-        setStatus(next)
-        setError(null)
-        // 只在队列有动静时接着轮询。**判据是 running 不是 pending**：pending 会由
-        // 「上传者没配通道」的图永远停着，用它会变成永不停的轮询（SPEC §6.4.3）。
-        if (next.running > 0) timer = setTimeout(poll, 5000)
-      } catch (err) {
-        if (!alive) return
-        setError(
-          err instanceof ApiError
-            ? `${err.message}（requestId：${err.requestId}）`
-            : '打标状态读取失败',
-        )
-      }
-    }
-
-    void poll()
-    // 清理函数必须写，否则切走路由后这个轮询还在跑（code-style.md）
-    return () => {
-      alive = false
-      if (timer) clearTimeout(timer)
-    }
-  }, [refreshToken, manualTick])
+  /**
+   * 轮询（失败会退避重试，不会再一断就死在那儿）。
+   *
+   * 判据是 **`running` 不是 `pending`**：`pending` 会由「上传者没配通道」的图永远停着，
+   * 用它会变成永不停的轮询（SPEC §6.4.3）。
+   */
+  const { status, problem } = usePolledStatus<TagStatusSummary>({
+    load: () => fetchTagStatus('all'),
+    isBusy: (next) => next.running > 0,
+    fallbackMessage: '打标状态读取失败',
+    restartKey: `${refreshToken}:${manualTick}`,
+  })
 
   async function handleConfirm() {
     setStartError(null)
@@ -202,9 +184,19 @@ export function RetagPanel({ refreshToken }: Props) {
         )
       }
     >
-      {error && (
-        <Alert variant="destructive">
-          <AlertTitle>{error}</AlertTitle>
+      {problem !== null && (
+        // 中性提示不是错误：连不上服务端不是用户做错了什么，而且它在自己重试
+        // （同 `ImportProgress` 的重连提示）
+        <Alert role="status">
+          <Info />
+          <AlertDescription>
+            {pollProblemText(problem)}
+            {problem.requestId !== undefined && (
+              <span className="mt-1 block font-mono text-xs">
+                requestId：{problem.requestId}
+              </span>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

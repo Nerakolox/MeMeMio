@@ -132,6 +132,18 @@ export function BrowseResults({
           {note.requestId !== undefined && (
             <span className="font-mono text-xs">requestId: {note.requestId}</span>
           )}
+          {/* 取不到原图时给一个能点的链接：用户的目标是把图发出去，手段失败了就给另一个
+              手段（clipboard-share.md §6）。那一下是用户自己的手势，弹窗拦截管不着。 */}
+          {note.fallbackUrl !== undefined && (
+            <a
+              className="underline underline-offset-2"
+              href={note.fallbackUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              在新标签页打开原图
+            </a>
+          )}
         </p>
       )}
 

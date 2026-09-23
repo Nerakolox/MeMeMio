@@ -73,9 +73,9 @@ const BADGE =
  *
  * ## 为什么不给 `className` / `selected` / `role` 透传
  *
- * 搜索页的 `role="option"`、`data-index`、`aria-selected` 和选中描边**留在那一页的外层
- * wrapper 上**。描边落在卡片外面、不挤压网格，本来就是对的；把这层壳做进卡片里，
- * 等于让卡片同时理解「列表项」和「卡片」两种身份。
+ * 搜索页的 `data-index`、可读名和选中描边**留在那一页的外层 wrapper 上**。描边落在
+ * 卡片外面、不挤压网格，本来就是对的；把这层壳做进卡片里，等于让卡片同时理解
+ * 「结果项」和「卡片」两种身份。
  */
 export function MemeCard({
   meme,

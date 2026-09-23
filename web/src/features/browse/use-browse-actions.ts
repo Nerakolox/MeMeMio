@@ -12,7 +12,13 @@ import { sendMeme, sendNote, type SendTarget } from '../../lib/clipboard'
 import type { BrowseList } from './use-browse-list'
 
 /** 操作反馈：复制 / 下载的结果、删除失败等。一条就够，不堆历史。 */
-export type Note = { text: string; error?: boolean; requestId?: string }
+export type Note = {
+  text: string
+  error?: boolean
+  requestId?: string
+  /** 取不到原图时给的回退地址，渲染成可点的链接（`lib/clipboard.ts` 的 `saveFile`）。 */
+  fallbackUrl?: string
+}
 
 export function useBrowseActions(list: BrowseList) {
   const [note, setNote] = useState<Note | null>(null)
@@ -37,8 +43,8 @@ export function useBrowseActions(list: BrowseList) {
    */
   async function send(target: SendTarget) {
     setNote(null)
-    const text = sendNote(await sendMeme(target))
-    if (text !== null) setNote({ text })
+    const note = sendNote(await sendMeme(target))
+    if (note !== null) setNote({ text: note.text, fallbackUrl: note.fallbackUrl })
   }
 
   /**

@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react'
+import { useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import type { Meme } from '../lib/api'
 import { useImageViewer } from './ImageViewer'
@@ -48,8 +48,13 @@ export type ImageShape = 'square' | 'natural'
  * ## 点按 / 左键开全屏阅览
  *
  * 帧是一个 `<button>`，点它把这张图交给 `components/ImageViewer.tsx` 的全屏阅览器。
- * 用真按钮而不是挂 `role` 的 div：图本来就该键盘可达，而 `Enter` 那条路有个静默的坑，
- * 见 `handleFrameKeyDown`。
+ * 用真按钮而不是挂 `role` 的 div：图本来就该键盘可达。
+ *
+ * ⚠️ **这里曾经挂着 `onKeyDown` 里的一句 `stopPropagation()`**（为了挡住首页根
+ * `<section>` 上那个「Enter 发送」的 handler）。那是个补丁：同一条冒泡链上还有收藏按钮、
+ * 发送按钮，挡不干净。现在闸门在**发起方**——只有焦点真的落在结果项自己身上才响应
+ * （`features/search/use-search.ts` 的 `focusedOptionIndex`），所以这里一句都不用写。
+ * 再想加回来之前先读那一段：加了就会把「Enter 开全屏阅览」重新掐掉。
  *
  * ⚠️ **`frameClass()` 里的 `block` 不能省**：`<button>` 的 UA 默认是 `inline-block`，
  * 它会变成一个行内级子元素、撑出行盒，而这个帧自带 `overflow-hidden`（基线因此取下外边距
@@ -104,7 +109,6 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
     <button
       type="button"
       onClick={() => openImage(meme)}
-      onKeyDown={handleFrameKeyDown}
       // 压在 `alt` 之上：`alt` 说的是「这是什么」，按钮的可读名要说「点它会怎样」。
       aria-label={`全屏阅览：${label}`}
       // `cursor-pointer` 得**自己写**：**Tailwind v4 起不再给 `<button>` 加
@@ -154,19 +158,6 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
   function handlePointerLeave() {
     if (!hoverCapable()) return
     setPlaying(false)
-  }
-
-  /**
-   * `Enter` 在 `<button>` 上会派发 `click`，**而这个 keydown 同时会冒到首页根 `<section>`
-   * 的 handler 上**（`features/search/use-search.ts` 的 `handleKeyDown`），那一条调的是
-   * `handleActivate(items[selectedIndex])`——**另一张卡**，`selectedIndex` 默认是 0。
-   * 表现是一条复制 / 下载被静默发起，而用户只是想看图。
-   *
-   * 只能 `stopPropagation`，**不能 `preventDefault`**：后者会把按钮自己那次 click
-   * 一起掐掉，阅览器就不开了。
-   */
-  function handleFrameKeyDown(e: KeyboardEvent<HTMLButtonElement>) {
-    if (e.key === 'Enter') e.stopPropagation()
   }
 }
 

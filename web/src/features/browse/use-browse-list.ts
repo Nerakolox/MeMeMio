@@ -54,6 +54,15 @@ export function useBrowseList(params: FetchMemesParams) {
   const cursorRef = useRef<string | null>(null)
 
   /**
+   * 上一次失败的那一页的游标（第一页是 `undefined`）。**「重试」重拉的是这一页**，
+   * 同时**挡住无限滚动的自动补拉**——两个作用都在这一个值上。
+   *
+   * 不记它的话重试只能从头来：`load()` 无游标 = 整表替换，于是「滚到第 5 页、第 6 页
+   * 失败」点一下重试，前 5 页的结果和滚动位置一起没了，用户还得重新滚回来。
+   */
+  const failedCursorRef = useRef<string | undefined>(undefined)
+
+  /**
    * 拉一页。`cursor` 有值就是追加，没有就是第一页（整表替换）。
    *
    * `useCallback` 的依赖是 `params`，而它是按 `filtersKey` memo 出来的（见 use-browse-filters），
@@ -70,9 +79,12 @@ export function useBrowseList(params: FetchMemesParams) {
         setItems((prev) => (cursor ? [...prev, ...page.items] : page.items))
         cursorRef.current = page.nextCursor
         setNextCursor(page.nextCursor)
+        failedCursorRef.current = undefined
         if (!cursor) setInitialDone(true)
       } catch (err) {
         if (me !== seq.current) return
+        // 记住是**哪一页**没下来，重试要重拉的就是它（见 failedCursorRef）
+        failedCursorRef.current = cursor
         // `toStateError` 而不是 `as ApiError`：断网 / 代理挂了时 fetch 抛的是 TypeError，
         // 强转的结果是页面上写「加载失败：undefined / requestId: undefined」（http.md §4）。
         setError(toStateError(err))
@@ -88,6 +100,7 @@ export function useBrowseList(params: FetchMemesParams) {
     setItems([])
     setNextCursor(null)
     cursorRef.current = null // 同步作废，理由见 cursorRef 的注释
+    failedCursorRef.current = undefined
     setInitialDone(false)
     void load()
   }, [load])
@@ -103,7 +116,17 @@ export function useBrowseList(params: FetchMemesParams) {
         const cursor = cursorRef.current
         // `cursor !== null` 不只是优化：没有下一页时仍然发请求会拿到空的一页，
         // 而观察器会把「又可见了」当成新信号反复触发，滚到底就是一条请求长龙。
-        if (entries[0]?.isIntersecting && !loading && cursor !== null) void load(cursor)
+        //
+        // ⚠️ **失败过的那一页不再自动补拉**（`cursor === failedCursorRef.current` 时跳过）。
+        // 这一条是 2026-09-24 量出来的：那之前，页底 + 服务端一直出错会变成
+        // **每秒几十次的请求长龙**——失败 → `loading` 转 false → 本 effect 因 `loading`
+        // 变化重注册 → 观察器初始回调说「sentinel 还可见」→ 立刻再发一次，没有退避。
+        // 实测 2 秒 120 次。而且它把出错提示推得看不见：用户每次抬眼都是一轮新的加载。
+        // 现在失败就停在那儿，出路是界面上那个「重试」（它调 `load`，不经观察器）。
+        if (entries[0]?.isIntersecting && !loading && cursor !== null) {
+          if (cursor === failedCursorRef.current) return
+          void load(cursor)
+        }
       },
       // 0.1 要求 sentinel **有面积**：它是 `mt-6 h-px`，不是 0 高——零面积元素永远不触发
       { threshold: 0.1 },
@@ -112,9 +135,17 @@ export function useBrowseList(params: FetchMemesParams) {
     return () => obs.disconnect()
   }, [loading, nextCursor, load])
 
-  /** 出错后重试：**整表重来**（不是接上次的游标）。迁移前就是这么做的，行为不变。 */
+  /**
+   * 出错后重试：**重拉失败的那一页**，不是整表重来。
+   *
+   * 有游标时 `load` 是**追加**，所以已经翻过的页和滚动位置都还在；第一页失败时
+   * 游标是 `undefined`，走的仍然是整表替换（那时也没有别的东西可保）。
+   *
+   * 失败之后**只有这条路**能再试那一页：观察器被 `failedCursorRef` 挡住了（见那里），
+   * 所以「重试」不是锦上添花的按钮，是唯一的出路——界面上必须一直看得见它。
+   */
   function retry() {
-    void load()
+    void load(failedCursorRef.current)
   }
 
   /**

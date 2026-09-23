@@ -1,5 +1,5 @@
 import { LoaderCircle, TriangleAlert } from 'lucide-react'
-import { cn } from 'cn'
+import { cn } from '../../lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import type { ApiError } from '../../lib/api'

@@ -21,6 +21,7 @@ import { OVERLAY_BTN } from '../../components/MemeCard'
 import { cn } from '../../lib/utils'
 import { TOUCH } from '../../lib/touch'
 import { SEND_LABELS, detectSendPath, type SendTarget } from '../../lib/clipboard'
+import { usePrefetchShare } from '../../lib/use-prefetch-share'
 
 /**
  * 卡片右上角的「⋯」操作入口。**入口不是右键菜单。**
@@ -109,6 +110,9 @@ export function MemeActions({
    * 动图那一档这里是「下载」，用户点之前就知道拿不到剪贴板。
    */
   const path = detectSendPath(target.isAnimated)
+  // 触屏那一档要在渲染时就把原图取好：分享要落在用户手势的同步调用栈里，
+  // 大 GIF 取完再调 `navigator.share` 时激活已经过期（`lib/clipboard.ts` 的 SharePrefetch）
+  usePrefetchShare(target)
 
   /** 菜单关闭后要回到「⋯」的两条路：Esc，以及执行了发送（那条路上没有别的层接管焦点）。 */
   function closeToTrigger() {

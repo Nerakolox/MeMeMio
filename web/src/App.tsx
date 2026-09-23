@@ -14,11 +14,25 @@ import { TooltipProvider } from './components/ui/tooltip'
 import { loginPath } from './lib/api'
 import { HomePage } from './routes/home'
 import { BrowsePage } from './routes/browse'
-import { ImportPage } from './routes/import'
 import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
-import { SettingsPage } from './routes/settings'
 import { NotFoundPage } from './routes/not-found'
+import { isSettled } from './features/import/use-import-queue'
+
+/*
+  导入页与设置页**切出去按需加载**。
+
+  它们不是首屏路径：`/` 与 `/browse` 是打开应用就会走的两条，用户点进设置或导入之前，
+  这两页的代码只是白下载。导入页带着待确认队列与上传那套、设置页带着全部管理面板
+  （用户、邀请码、打标、重建索引），是首屏包里最重的两块之一。
+
+  用 `import()` 时**不从模块顶层 import 页面**，否则打包器按静态依赖留在首屏包里，
+  `lazy` 就只剩一个空壳。`Suspense` 边界在下面 `AppLayout` 的 `<Outlet>` 上，见那里的注释。
+*/
+const ImportPage = lazy(() => import('./routes/import').then((m) => ({ default: m.ImportPage })))
+const SettingsPage = lazy(() =>
+  import('./routes/settings').then((m) => ({ default: m.SettingsPage })),
+)
 
 /**
  * 组件参照页（`/ui`）**不进生产包**。
@@ -49,9 +63,9 @@ function RequireAuth() {
 function ImportProgressLink() {
   const { phase, items, done } = useImport()
   const running = phase === 'uploading' || phase === 'processing'
-  const settled = items.filter(
-    (it) => it.state !== 'waiting' && it.state !== 'uploading',
-  ).length
+  // 「有结论的」行数，判据和进度页那份是同一个（`isSettled`）：已上传但服务端还没给
+  // 结论的行不算，否则顶栏这个数会跑到服务端前面。两处写两个口径是这类计数最常犯的错。
+  const settled = items.filter((it) => isSettled(it.state)).length
   const total = done?.total ?? items.length
 
   if (!running || total === 0) return null
@@ -62,6 +76,22 @@ function ImportProgressLink() {
         导入 {settled}/{total}
       </Link>
     </Button>
+  )
+}
+
+/**
+ * 按需加载的页面在下载期间的占位。
+ *
+ * **只有读屏看得见**（`sr-only`）：本地那个 chunk 是几十毫秒级的事，屏幕上闪一下
+ * 「加载中…」比空着更扎眼。但也不能什么都不给——`Suspense` 确实会占掉一段时间
+ * （慢网络下可能到一秒），读屏用户需要知道「刚才那一下点没点上」。
+ * `role="status"` 是这一档的既有写法（同 `ImportProgress` 的重连提示）。
+ */
+function PageFallback() {
+  return (
+    <p role="status" className="sr-only">
+      加载中…
+    </p>
   )
 }
 
@@ -105,7 +135,7 @@ function ImportProgressLink() {
  * 20 < 50 之后，三处抽屉按注册表原样全高（`inset-y-0`），遮罩也蒙住顶栏，
  * 不用再给它们各写一段 `top-(--app-header-h)`——省掉的正是那段推导。
  *
- * 全屏阅览（`components/ImageViewer.tsx`）不受影响：`.yarl__portal` 自带 `z-index: 9999`，
+ * 全屏阅览（`components/LightboxViewer.tsx`）不受影响：`.yarl__portal` 自带 `z-index: 9999`，
  * 本来就是数值最大的那一个。
  */
 function AppLayout() {
@@ -140,7 +170,15 @@ function AppLayout() {
             </header>
             {/* `SidebarInset` 自己就是 `<main>`，这里不能再套一层，会出现两个 main 地标 */}
             <div className="flex-1 p-6">
-              <Outlet />
+              {/*
+                按需加载的页面在这里兜底（`Suspense` 是 `lazy` 的必需搭配，没有它整页报错）。
+                边界**包 `Outlet` 而不是包整个 `Routes`**：包在外面的话，一次切页会把侧边栏
+                与顶栏一起换成 fallback，整条外壳闪一下——用户看到的像是应用重开了。
+                在这一层，外壳留着、换掉的只有内容区。
+              */}
+              <Suspense fallback={<PageFallback />}>
+                <Outlet />
+              </Suspense>
             </div>
           </SidebarInset>
         </ImageViewerProvider>

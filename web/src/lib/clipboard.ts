@@ -10,6 +10,11 @@
  * | 桌面 · 静图 | `fetch` 原图 → 转 PNG → `ClipboardItem` 写剪贴板 |
  * | 桌面 · 动图 | 下载（动图写不进剪贴板，SPEC §9.2） |
  *
+ * ⚠️ **两条路都要落在用户手势的同步调用栈里**，而它们各自的办法不同：剪贴板那条
+ * 把取图的 Promise 交给 `ClipboardItem`（§4.1），分享那条在**渲染时预取**原图
+ * （`prefetchShareFile` + `usePrefetchShare`）。两条都不能写成「先 await 取图、
+ * 再调浏览器 API」。
+ *
  * ⚠️ **分流唯一依据是 `isAnimated`，不是 `mime`。** WebP 和 APNG 都可能是动图也可能是静图，
  * `image/webp` 说明不了任何事；服务端已经真的解析过容器了，用它给的答案（SPEC §5.2.2）。
  *
@@ -48,7 +53,22 @@ export type SendOutcome =
   | { kind: 'shared' }
   /** 用户自己关掉了系统分享面板。**不是失败**，不要因此塞一个下载给他。 */
   | { kind: 'cancelled' }
-  | { kind: 'downloaded'; note: string }
+  | {
+      kind: 'downloaded'
+      note: string
+      /**
+       * 没能下载、只剩一个地址时给的原图链接。渲染成**可点的链接**，别指望
+       * `window.open`：取图是异步的，等它失败时用户手势早就没了，弹窗会被拦掉，
+       * 而文案还写着「已在新标签页打开」——那句话是假的（见 `saveFile`）。
+       */
+      fallbackUrl?: string
+    }
+
+/** 给用户看的那句话。`fallbackUrl` 由调用方渲染成一个可点的链接。 */
+export type SendNote = {
+  text: string
+  fallbackUrl?: string
+}
 
 /** 一次剪贴板写入的结果。失败带的是**能直接展示的原因**，不是异常对象。 */
 type CopyAttempt = { ok: true } | { ok: false; reason: string }
@@ -214,31 +234,95 @@ async function copyImageToClipboard(url: string): Promise<CopyAttempt> {
   }
 }
 
-/** 系统分享面板。**先 canShare 再 share**——不检查会直接抛异常（clipboard-share.md §4.3）。 */
-async function shareFile(target: SendTarget): Promise<void> {
-  const blob = await fetchOriginal(target.url)
-  const file = new File([blob], targetFilename(target), { type: blob.type || target.mime })
-  await navigator.share({ files: [file] })
-}
-
-function openInNewTab(url: string): void {
-  window.open(url, '_blank', 'noopener,noreferrer')
+function toShareFile(target: SendTarget, blob: Blob): File {
+  return new File([blob], targetFilename(target), { type: blob.type || target.mime })
 }
 
 /**
- * 保存到本地。取图失败时**改为在新标签页打开原图**，而不是报一句失败就结束——
+ * 系统分享面板要用的那份文件，**在渲染或 hover 时就取好**。
+ *
+ * 为什么必须提前取：`navigator.share` 要求**调用落在用户手势的同步调用栈里**，
+ * 而取一张大 GIF 要几百毫秒到几秒——等取完再调，iOS 的用户激活早就过期了，
+ * 抛 `NotAllowedError`，于是「分享」变成「下载」（原实现就是这个表现）。
+ * 手机正是主路径（clipboard-share.md §1），不能靠运气。
+ *
+ * 存的是**已经落定的 `File`**（`file` 那一格）与进行中的 Promise 两份：
+ * 点击时若已落定就同步 `share`，一次 await 都不会让出去（`await` 一个已 resolve
+ * 的 promise 也会让出一个微任务，而用户激活判定看的就是这个栈）。
+ *
+ * 失败的那份**从缓存里删掉**：它只说明这一次没取到，用户在点击时值得重试一次。
+ */
+type SharePrefetch = { file: File | null; promise: Promise<File> }
+
+const sharePrefetches = new Map<string, SharePrefetch>()
+
+/**
+ * 同时留几份。超出就整个清掉重来——留着的是**已经解码好的 Blob**，浏览器缓存管不到它，
+ * 而图墙一屏能滚出几百张。清掉之后正在看的那几张会在用到时重新取（那时走的就是
+ * `shareFile` 的兜底分支）。
+ */
+const SHARE_PREFETCH_MAX = 12
+
+/** 渲染时调用（见 `usePrefetchShare`）。同一个地址只取一次，重复调用是空操作。 */
+export function prefetchShareFile(target: SendTarget): void {
+  if (sharePrefetches.has(target.url)) return
+  if (sharePrefetches.size >= SHARE_PREFETCH_MAX) sharePrefetches.clear()
+
+  const promise = fetchOriginal(target.url).then((blob) => toShareFile(target, blob))
+  const entry: SharePrefetch = { file: null, promise }
+  // 失败在这里就处理掉：不挂这个 rejection handler，控制台会多一条没人处理的
+  // unhandled rejection（同 `copyImageToClipboard` 里那个空 catch）。
+  promise.then(
+    (file) => {
+      entry.file = file
+    },
+    () => {
+      sharePrefetches.delete(target.url)
+    },
+  )
+  sharePrefetches.set(target.url, entry)
+}
+
+/**
+ * 系统分享面板。**先 canShare 再 share**——不检查会直接抛异常（clipboard-share.md §4.3）。
+ *
+ * 预取到的那份已落定时这条路**是同步的**（理由见 `SharePrefetch`）；没落定就在
+ * 这里等一次——那是兜底，等完可能已经拿不到用户激活，于是降级到下载并说明原因（§6）。
+ */
+async function shareFile(target: SendTarget): Promise<void> {
+  const prefetched = sharePrefetches.get(target.url)
+  const ready = prefetched?.file ?? null
+  if (ready !== null) {
+    await navigator.share({ files: [ready] })
+    return
+  }
+  const file =
+    prefetched !== undefined
+      ? await prefetched.promise
+      : toShareFile(target, await fetchOriginal(target.url))
+  await navigator.share({ files: [file] })
+}
+
+/** 一次保存的结果：落到本地了，或者只剩一个能点的地址。 */
+type SaveResult = { via: 'saved' } | { via: 'fetch-failed'; url: string }
+
+/**
+ * 保存到本地。取图失败时**给回一个能点的原图地址**，而不是报一句失败就结束——
  * 用户的目标是把图发出去，手段失败了就给另一个手段（clipboard-share.md §6）。
  *
  * 取图失败多半是 CORS 没配好（deployment.md §8.3）。跨域地址上 `a[download]` 会被浏览器
- * 忽略，「直接点链接下载」那条路本来就走不通，所以这里只能打开原图让用户手动存。
+ * 忽略，「直接点链接下载」那条路本来就走不通，所以只能让用户自己打开原图手动存。
+ *
+ * ⚠️ **这里不 `window.open`。** 走到这一步时已经 await 过一次取图，用户手势多半没了，
+ * 弹窗会被浏览器拦掉——什么都打不开，而文案还写着「已在新标签页打开」。
+ * 把地址交回界面渲染成 `<a target="_blank">`：那一下是用户自己的手势，永远拦不掉。
  */
-async function saveFile(target: SendTarget): Promise<'saved' | 'opened'> {
+async function saveFile(target: SendTarget): Promise<SaveResult> {
   let objectUrl: string
   try {
     objectUrl = URL.createObjectURL(await fetchOriginal(target.url))
   } catch {
-    openInNewTab(target.url)
-    return 'opened'
+    return { via: 'fetch-failed', url: target.url }
   }
 
   const a = document.createElement('a')
@@ -249,13 +333,21 @@ async function saveFile(target: SendTarget): Promise<'saved' | 'opened'> {
   a.remove()
   // 立刻 revoke 会让部分浏览器上的下载中断，交给浏览器、过一会儿再回收
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
-  return 'saved'
+  return { via: 'saved' }
 }
 
 async function downloadFlow(target: SendTarget, because: string | null): Promise<SendOutcome> {
-  const via = await saveFile(target)
-  const action = via === 'saved' ? '已开始下载' : '已在新标签页打开原图，可手动保存'
-  return { kind: 'downloaded', note: because === null ? action : `${because}，${action}` }
+  const result = await saveFile(target)
+  if (result.via === 'saved') {
+    return { kind: 'downloaded', note: because === null ? '已开始下载' : `${because}，已开始下载` }
+  }
+  return {
+    kind: 'downloaded',
+    note: `${
+      because === null ? '' : `${because}，`
+    }取不到原图（可能是 R2 的 CORS 没放行 GET），请点下面的链接手动保存`,
+    fallbackUrl: result.url,
+  }
 }
 
 /**
@@ -307,17 +399,20 @@ export async function sendMeme(target: SendTarget): Promise<SendOutcome> {
 }
 
 /**
- * 成功后的反馈文案。**没有反馈的复制等于没复制**——剪贴板是不可见的（clipboard-share.md §4.1）。
+ * 成功后的反馈。**没有反馈的复制等于没复制**——剪贴板是不可见的（clipboard-share.md §4.1）。
  *
  * 返回 `null` 表示不需要反馈：系统分享面板本身就是反馈，用户取消更不该提示。
  * 文案集中在这里，是为了首页和浏览页对同一个动作说同一句话。
+ *
+ * 返回对象而不是字符串，是因为「取不到原图」那条路要**给一个能点的链接**：
+ * 那时并没有失败到无事可做，缺的只是一次用户自己的手势（见 `saveFile`）。
  */
-export function sendNote(outcome: SendOutcome): string | null {
+export function sendNote(outcome: SendOutcome): SendNote | null {
   switch (outcome.kind) {
     case 'copied':
-      return '已复制，去微信 Ctrl+V'
+      return { text: '已复制，去微信 Ctrl+V' }
     case 'downloaded':
-      return outcome.note
+      return { text: outcome.note, fallbackUrl: outcome.fallbackUrl }
     case 'shared':
     case 'cancelled':
       return null

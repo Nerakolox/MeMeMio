@@ -1,6 +1,6 @@
 import { useState, type Ref } from 'react'
 import { Eye, EyeOff, TriangleAlert } from 'lucide-react'
-import { cn } from 'cn'
+import { cn } from '../../lib/utils'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'

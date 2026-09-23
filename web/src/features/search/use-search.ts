@@ -8,7 +8,7 @@ import {
   type Meme,
   type SearchResult,
 } from '../../lib/api'
-import { sendNote, sendMeme } from '../../lib/clipboard'
+import { sendNote, sendMeme, type SendNote } from '../../lib/clipboard'
 
 export type SearchState =
   | { kind: 'idle' }
@@ -20,6 +20,20 @@ export type SearchState =
       rewritten: string | null
     }
   | { kind: 'error'; error: ApiError }
+
+/**
+ * 按下键的那一下，焦点是不是**就在某一张结果上**。
+ *
+ * 只看元素自己有没有 `data-index`，**不看它的祖先**：`closest()` 会把卡片里那些按钮
+ * （收藏、发送、图片帧）一起算成「在结果上」，那就又回到「Enter 被谁接走」那个缺陷了。
+ */
+function focusedOptionIndex(target: EventTarget | null): number | null {
+  if (!(target instanceof HTMLElement)) return null
+  const raw = target.dataset['index']
+  if (raw === undefined) return null
+  const index = Number(raw)
+  return Number.isInteger(index) ? index : null
+}
 
 /**
  * 首页搜索的状态机。**2026-09-21 从 `routes/home.tsx` 原样搬来**——那一版把 state 机、键盘路径
@@ -38,7 +52,7 @@ export function useSearch() {
   const [draft, setDraft] = useState(q)
   const [state, setState] = useState<SearchState>({ kind: 'idle' })
   const [selectedIndex, setSelectedIndex] = useState(-1)
-  const [copyNote, setCopyNote] = useState<string | null>(null)
+  const [copyNote, setCopyNote] = useState<SendNote | null>(null)
 
   /**
    * 同一个搜索词的重跑计数，只有「重试」会动它。
@@ -150,8 +164,8 @@ export function useSearch() {
    */
   async function handleActivate(meme: SearchResult) {
     setCopyNote(null)
-    const text = sendNote(await sendMeme(meme))
-    if (text !== null) setCopyNote(text)
+    const note = sendNote(await sendMeme(meme))
+    if (note !== null) setCopyNote(note)
   }
 
   /** ↑↓ 选择、Enter 复制、Esc 取消选择（clipboard-share.md §7）。 */
@@ -180,10 +194,16 @@ export function useSearch() {
     }
 
     if (e.key === 'Enter') {
-      if (selectedIndex >= 0 && items[selectedIndex]) {
-        e.preventDefault()
-        void handleActivate(items[selectedIndex])
-      }
+      // ⚠️ **只在焦点真正落在某张结果上时才算「发送这一张」**，判据是那个元素本身
+      // 带着 `data-index`（`SearchResults` 的 `ResultItem`），不是「谁没挡冒泡」。
+      //
+      // 这个 handler 挂在整页的 `<section>` 上，而卡片里的图片帧、收藏按钮、发送按钮
+      // 都在冒泡链上。靠下游 `stopPropagation` 是挡不完的：收藏按钮就没挡，于是
+      // 「Tab 到第 5 张、按 Enter 收藏」会被这里接走，`selectedIndex` 默认是 0，
+      // 变成对第 1 张的复制——**键盘用户根本收藏不了**，而且屏幕上什么提示都没有。
+      const index = focusedOptionIndex(e.target)
+      const meme = index === null ? undefined : items[index]
+      if (meme) void handleActivate(meme)
       return
     }
 

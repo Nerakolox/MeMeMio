@@ -8,7 +8,7 @@ import { Progress } from '../../components/ui/progress'
 import { ScrollArea } from '../../components/ui/scroll-area'
 import { formatBytes } from '../../lib/format'
 import { TOUCH } from '../../lib/touch'
-import type { ImportQueue, QueueItemState } from './use-import-queue'
+import { isSettled, type ImportQueue, type QueueItemState } from './use-import-queue'
 
 /**
  * 服务端可能新增 `result`（http.md §4），查不到就原样显示，不给白屏。
@@ -22,6 +22,9 @@ import type { ImportQueue, QueueItemState } from './use-import-queue'
 const STATE_BADGE: Record<string, { label: string; variant: 'outline' | 'secondary' | 'destructive' }> = {
   waiting: { label: '排队中', variant: 'outline' },
   uploading: { label: '上传中', variant: 'outline' },
+  // 「字节已经到 R2，服务端还没给结论」。不写成「处理中」：客户端并不知道服务端
+  // 还在不在处理它（这一批可能早就结束了），只写自己确知的那一段。
+  uploaded: { label: '已上传', variant: 'outline' },
   imported: { label: '已入库', variant: 'secondary' },
   exact_dup: { label: '跳过重复', variant: 'outline' },
   needs_review: { label: '待确认', variant: 'secondary' },
@@ -55,9 +58,9 @@ export function ImportProgress({
   const uploadedDone =
     items.filter((it) => it.state === 'uploading' || it.state === 'waiting').length === 0
 
-  const processed =
-    serverProgress?.done ??
-    items.filter((it) => it.state !== 'waiting' && it.state !== 'uploading').length
+  // 服务端的数优先（它知道每一行的结论）；没有它时按**有结论的行**数，
+  // 「已上传」不算——字节到了 R2 不等于服务端处理完了，算进去进度会跑在它前面。
+  const processed = serverProgress?.done ?? items.filter((it) => isSettled(it.state)).length
 
   const failedItems = items.filter((it) => it.state === 'failed')
   const failedCount = done?.failed ?? failedItems.length

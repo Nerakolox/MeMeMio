@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { Info } from 'lucide-react'
 import { ApiError } from '../../lib/api'
 import { fetchReindexStatus, startReindex, type ReindexStatus } from '../../lib/api-config'
-import { Alert, AlertTitle } from '../../components/ui/alert'
+import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Progress } from '../../components/ui/progress'
 import { SettingsCard } from './SettingsCard'
+import { pollProblemText, usePolledStatus } from './use-poll-status'
 import { TOUCH } from './settings-ui'
 
 /**
@@ -34,43 +36,22 @@ function Count({ label, value }: { label: string; value: string }) {
 }
 
 export function ReindexPanel({ refreshToken }: Props) {
-  const [status, setStatus] = useState<ReindexStatus | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | null>(null)
   /** 这一次点击排进去几条的反馈。**必须两个分支都有话**，理由见 `handleStart`。 */
   const [startNote, setStartNote] = useState<string | null>(null)
   const [manualTick, setManualTick] = useState(0)
 
-  useEffect(() => {
-    let alive = true
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    async function poll() {
-      try {
-        const next = await fetchReindexStatus()
-        if (!alive) return
-        setStatus(next)
-        setError(null)
-        // 只在跑着的时候接着轮询：空转时每 5 秒打一次接口没有意义
-        if (next.running) timer = setTimeout(poll, 5000)
-      } catch (err) {
-        if (!alive) return
-        setError(
-          err instanceof ApiError
-            ? `${err.message}（requestId：${err.requestId}）`
-            : '重建状态读取失败',
-        )
-      }
-    }
-
-    void poll()
-    // 清理函数必须写，否则切走路由后这个轮询还在跑（code-style.md）
-    return () => {
-      alive = false
-      if (timer) clearTimeout(timer)
-    }
-  }, [refreshToken, manualTick])
+  /**
+   * 轮询（失败会退避重试，不会再一断就死在那儿）。判据是 `running`：只在跑着的时候
+   * 接着轮询——空转时每 5 秒打一次接口没有意义。
+   */
+  const { status, problem } = usePolledStatus<ReindexStatus>({
+    load: fetchReindexStatus,
+    isBusy: (next) => next.running,
+    fallbackMessage: '重建状态读取失败',
+    restartKey: `${refreshToken}:${manualTick}`,
+  })
 
   async function handleStart() {
     setStartError(null)
@@ -112,9 +93,19 @@ export function ReindexPanel({ refreshToken }: Props) {
         )
       }
     >
-      {error && (
-        <Alert variant="destructive">
-          <AlertTitle>{error}</AlertTitle>
+      {problem !== null && (
+        // 中性提示不是错误：连不上服务端不是用户做错了什么，而且它在自己重试
+        // （同 `ImportProgress` 的重连提示）
+        <Alert role="status">
+          <Info />
+          <AlertDescription>
+            {pollProblemText(problem)}
+            {problem.requestId !== undefined && (
+              <span className="mt-1 block font-mono text-xs">
+                requestId：{problem.requestId}
+              </span>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

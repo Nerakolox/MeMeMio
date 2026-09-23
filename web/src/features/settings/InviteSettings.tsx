@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '../../components/ui/table'
 import { SettingsCard } from './SettingsCard'
+import { COPY_FAILED_TEXT, useCopyText } from './use-copy-text'
 import { TOUCH } from './settings-ui'
 
 /**
@@ -51,7 +52,9 @@ export function InviteSettings() {
   const [expiresAt, setExpiresAt] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  // 复制反馈（含失败那一句）在 `use-copy-text.ts` 里，两个调用点共用一份实现。
+  // 这一列有 N 行共用一个 hook，所以只有 `target` 对上哪一行，那一行才显示反馈。
+  const { target, state: copyState, copy } = useCopyText()
 
   useEffect(() => {
     fetchInvites()
@@ -86,11 +89,6 @@ export function InviteSettings() {
     }
   }
 
-  async function handleCopy(code: string) {
-    await navigator.clipboard.writeText(code)
-    setCopiedCode(code)
-    setTimeout(() => setCopiedCode(null), 1500)
-  }
 
   return (
     <SettingsCard
@@ -154,29 +152,40 @@ export function InviteSettings() {
                   </TableCell>
                 </TableRow>
               )}
-              {invites.map((inv) => (
-                <TableRow key={inv.code}>
-                  <TableCell className="font-mono text-xs">{inv.code}</TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(inv.status)}>{statusLabel(inv.status)}</Badge>
-                  </TableCell>
-                  <TableCell>{inv.createdBy}</TableCell>
-                  <TableCell>{inv.expiresAt ? formatDate(inv.expiresAt) : '永久'}</TableCell>
-                  <TableCell>{inv.usedBy ?? '—'}</TableCell>
-                  <TableCell>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className={TOUCH}
-                      onClick={() => handleCopy(inv.code)}
-                      aria-label={`复制邀请码 ${inv.code}`}
-                    >
-                      {copiedCode === inv.code ? '已复制' : '复制'}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {invites.map((inv) => {
+                // 只认「刚复制的那一个」这一行；反馈过一会儿自己收回（hook 里那个定时器）
+                const rowCopy = target === inv.code ? copyState : 'idle'
+                return (
+                  <TableRow key={inv.code}>
+                    <TableCell className="font-mono text-xs">{inv.code}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(inv.status)}>{statusLabel(inv.status)}</Badge>
+                    </TableCell>
+                    <TableCell>{inv.createdBy}</TableCell>
+                    <TableCell>{inv.expiresAt ? formatDate(inv.expiresAt) : '永久'}</TableCell>
+                    <TableCell>{inv.usedBy ?? '—'}</TableCell>
+                    <TableCell>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={TOUCH}
+                        onClick={() => copy(inv.code)}
+                        aria-label={`复制邀请码 ${inv.code}`}
+                      >
+                        {rowCopy === 'copied' ? '已复制' : '复制'}
+                      </Button>
+                      {/* 失败那句话在这一格下面，紧挨着刚点的按钮：`role="alert"` 让读屏
+                          立刻念出来，否则用户只知道「点了没反应」 */}
+                      {rowCopy === 'failed' && (
+                        <p role="alert" className="mt-1 text-xs text-destructive">
+                          {COPY_FAILED_TEXT}
+                        </p>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </>

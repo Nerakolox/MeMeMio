@@ -1,27 +1,18 @@
 import {
   createContext,
+  lazy,
+  Suspense,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react'
-import Lightbox from 'yet-another-react-lightbox'
-import type {
-  RenderSlideFooterProps,
-  SlideImage,
-  SlotStyles,
-  ViewCallbackProps,
-} from 'yet-another-react-lightbox'
-import Zoom from 'yet-another-react-lightbox/plugins/zoom'
-// 只这一个：`plugins/zoom.css` 在 3.32.2 里**不存在**（exports 里只有 styles 与
-// captions / counter / thumbnails 四个），照习惯补一行会让构建失败。
-import 'yet-another-react-lightbox/styles.css'
+import type { SlideImage } from 'yet-another-react-lightbox'
 import type { Meme } from '../lib/api'
-import { cn } from '../lib/utils'
-import { VOCAB_DIMENSIONS } from '../lib/vocab'
+// `SessionContext` 本文件不用（Provider 在 `LightboxViewer` 里，见 `viewer-session.ts`），
+// 这里只要那两个类型。
+import type { SessionControls, ViewerSession } from './viewer-session'
 
 /**
  * 打开全屏阅览：**这张图，和这张图所在的那一批**。
@@ -50,22 +41,10 @@ export function MemeGallery({ items, children }: { items: readonly Meme[]; child
   return <GalleryContext.Provider value={items}>{children}</GalleryContext.Provider>
 }
 
-/** 一次阅览会话：这一批图 + 现在停在第几张。**同时只可能有一份**，所以状态只有一个。 */
-type ViewerSession = {
-  items: readonly Meme[]
-  index: number
-}
-
-type SessionControls = {
-  session: ViewerSession | null
-  /** 跳到第 n 张。缩略图轨道用。 */
-  show: (index: number) => void
-}
-
-const SessionContext = createContext<SessionControls | null>(null)
-
 /**
  * 全屏阅览的宿主。**全应用只有这一份**，挂在 `App.tsx` 的 `AppLayout` 里。
+ * 阅览器本体（`<Lightbox>` 与它那几块浮层）在 `LightboxViewer.tsx`，
+ * **第一次打开时才加载**——理由见那个文件。
  *
  * ## 为什么它不能挂在 `MemeImage` 里
  *
@@ -83,27 +62,22 @@ const SessionContext = createContext<SessionControls | null>(null)
  *
  * 同理 `MemeGallery` 也只是个 context，不是第二个宿主：四处页面各挂一份 `<Lightbox>`
  * 就是四套焦点陷阱（`project-structure.md`）。
- *
- * ## 焦点不用自己还
- *
- * YARL 在焦点进入时记下 `relatedTarget`，卸载时 `focus()` 回去，已实测。
- * 本仓在 `MemeActions` / `MemeEditPanel` 里手写过两次这件事，这里不需要再补一遍
- * （补了只会和它抢）。
- *
- * ## z-index
- *
- * 默认 `.yarl__portal { z-index: 9999 }`，在 Radix 那一层（`z-50`）之上——全屏阅览本来
- * 就该压过外壳。本仓没有 z-index 总表，这条只在这里记着。
- *
- * ⚠️ 2026-09-22：顶栏是 `z-20`（为修「卡片浮层画到顶栏上面」那个缺陷抬的，见 `App.tsx`）。
- * **9999 > 20，全屏阅览比数值就赢**，与挂载位置无关（当天顶栏一度也是 9999，
- * 那时靠的是 DOM 顺序——portal 排在 `#root` 之后）。这条关系是**一条上限**：
- * 顶栏那个数可以往下调，但**不能加到 9999 以上**，否则阅览器的工具栏会被顶栏盖住。
  */
 export function ImageViewerProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<ViewerSession | null>(null)
 
+  /**
+   * 阅览器**开过一次**了。
+   *
+   * `React.lazy` 的那份 chunk 要等 `setSession` 之后才被请求，而这个标记一旦置上就
+   * **再也不收回**：chunk 已经在浏览器缓存里，收回来只会让「关掉再打开」多一次
+   * （虽然命中缓存的）加载；而且卸载 `<Lightbox>` 会把它那条关闭动画一起掐掉——
+   * 关闭时 `controls` 里 `session` 已经变 `null`，正是动画在跑的那一刻。
+   */
+  const [everOpened, setEverOpened] = useState(false)
+
   const open = useCallback<OpenImage>((meme, items) => {
+    setEverOpened(true)
     // 找不到那张图（列表刚被别的操作换过）时**退回单张**而不是不打开：点了就得有反应是
     // 这个功能唯一的存在意义。
     const at = items.findIndex((m) => m.id === meme.id)
@@ -115,7 +89,7 @@ export function ImageViewerProvider({ children }: { children: ReactNode }) {
    * 停到第 n 张。**这一条同时服务三种翻页**：
    *
    * - 库自己的翻页按钮 / `←→` / 滑动走的是内部那条带转场的路，停下之后经 `on.view`
-   *   回报结果，走的就是这里（`on`）；
+   *   回报结果，走的就是这里（`LightboxViewer` 里的 `on`）；
    * - 缩略图轨道要**跳着走**，直接调这里。
    *
    * 不调库的 `next({ count })`：那个把「翻 n 张」当成 n 次连续转场，时长是
@@ -129,45 +103,38 @@ export function ImageViewerProvider({ children }: { children: ReactNode }) {
     setSession((prev) => (prev && prev.index !== index ? { ...prev, index } : prev))
   }, [])
 
-  const on = useMemo(() => ({ view: ({ index }: ViewCallbackProps) => show(index) }), [show])
-
   // 依赖是 `items` 而不是 `session`：翻页只换 index，那份数组的引用不动，slides 也不必重建。
   // 引用要锁住——给 YARL 一个新的 slides 数组，它会当成换了一批图，重走一遍加载与淡入。
   const items = session?.items
   const slides = useMemo(() => (items ?? []).map(toSlide), [items])
 
-  // 只有一张时不摆翻页按钮与缩略图轨道，见 `RENDER_SINGLE` 与 `viewerStyles` 的注释。
-  const multiple = slides.length > 1
-  const styles = useMemo(() => viewerStyles(multiple), [multiple])
-  const controls = useMemo(() => ({ session, show }), [session, show])
+  const controls = useMemo<SessionControls>(() => ({ session, show }), [session, show])
 
   return (
     <ImageViewerContext.Provider value={open}>
       {children}
-      <SessionContext.Provider value={controls}>
-        <Lightbox
-          open={session !== null}
-          close={close}
-          slides={slides}
-          // 库只认这个属性的**变化**：缩略图轨道靠它跳，其余三种翻页是库自己走完再经
-          // `on.view` 回报，两边不会各推各的（回报的正是库里那个值）。
-          index={session?.index ?? 0}
-          plugins={PLUGINS}
-          // 这两个手势的默认值**都是 false**。不显式打开的表现是「点了背景没反应」，
-          // 而点背景关闭是这类组件的基本预期。下拉关闭是手机上的那份。
-          controller={CONTROLLER}
-          // 默认的 1 表示最多只能放到 1:1。梗图的信息常是图上压着的一行小字，
-          // 放大正是这里的用途（styling.md「图片网格」那条的前提）。
-          zoom={ZOOM}
-          render={multiple ? RENDER : RENDER_SINGLE}
-          styles={styles}
-          labels={LABELS}
-          on={on}
-        />
-      </SessionContext.Provider>
+      {/*
+        `everOpened` 而不是 `session !== null`：关闭时要把 `<Lightbox>` 留着跑完关闭动画
+        （见 `everOpened` 的注释），所以判据是「开过没有」，不是「现在开着没有」。
+        `fallback={null}`：这里的「加载中」最多是本地一个 chunk 的时间，摆个骨架反而是
+        一次多余的闪动。
+      */}
+      {everOpened && (
+        <Suspense fallback={null}>
+          <LightboxViewer controls={controls} slides={slides} close={close} />
+        </Suspense>
+      )}
     </ImageViewerContext.Provider>
   )
 }
+
+/**
+ * 阅览器本体。`import()` 而不是静态 import：它带着 YARL 与那份样式表，
+ * 而绝大多数页面浏览都不打开全屏（见 `LightboxViewer.tsx` 的文件头）。
+ */
+const LightboxViewer = lazy(() =>
+  import('./LightboxViewer').then((m) => ({ default: m.LightboxViewer })),
+)
 
 /**
  * 打开全屏阅览。**没挂 Provider 直接抛错，不静默降级**——降级的表现是「点了没反应」，
@@ -188,7 +155,10 @@ export function useImageViewer(): (meme: Meme) => void {
  * 用**原图**而不是缩略图：全屏的意义就是看清，动图更是只有原图会动（缩略图是服务端转的
  * 静态首帧 WebP，见 `MemeImage`）。发送路径的依据是同一条——「展示和发送始终用原图」
  * （SPEC §9.4:145）。**网格仍然只加载缩略图**（styling.md「图片网格」），这里只影响全屏那一张。
- * 底部那条轨道是另一个例外，它专门用缩略图（见 `ThumbRail`）。
+ * 底部那条轨道是另一个例外，它专门用缩略图（见 `LightboxViewer` 的 `ThumbRail`）。
+ *
+ * 留在这儿（而不是跟阅览器一起切出去）是因为它**只碰类型**：`SlideImage` 是
+ * `import type`，构建后不留一行 import，不会把 YARL 拽回这个（首屏就要的）模块。
  */
 function toSlide(meme: Meme): SlideImage {
   return {
@@ -202,349 +172,8 @@ function toSlide(meme: Meme): SlideImage {
       : {}),
     // 整条记录一起挂上去，给信息栏（宽屏的右栏与窄屏的底栏）取元数据用。**`slideFooter`
     // 拿到的 `slide` 就是这个对象本身**，所以数据随 slide 走，`render` 不必依赖「当前是
-    // 第几张」——这是 `RENDER` 能继续当模块级常量的原因。类型见 `yarl-augment.d.ts`。
+    // 第几张」——这是 `LightboxViewer` 里 `RENDER` 能继续当模块级常量的原因。
+    // 类型见 `yarl-augment.d.ts`。
     meme,
   }
-}
-
-/**
- * 信息栏里要显示的标签值。**内容分级排最前**，其余按 `VOCAB_DIMENSIONS` 的顺序。
- *
- * 分级回答的是「这张图能不能在这儿出现」，不是「画面在表达什么」，所以它不在
- * 「表情 → 情绪 → 语气 → 用途 → 情境」那条从外到内的轴上（`lib/vocab.ts` 的注释、
- * SPEC §4.3）。排最前是它在界面上唯一的特殊待遇，也是它不被读成第七个语义维度的原因。
- *
- * 这里**不写死七次取值**：将来加维度时，漏掉一维的表现是这个词在信息栏里不出现，
- * 而图片本身照常打开——不报错，所以要靠遍历 `VOCAB_DIMENSIONS` 来免疫。
- *
- * ⚠️ **两个版式（宽屏的右栏、窄屏的底部浮层）都走这一份**，理由就是上面那条：
- * 各写一份的话，漏掉的那一维只会在一个版式里消失。
- */
-function labelValues(meme: Meme): string[] {
-  const described = VOCAB_DIMENSIONS.filter((d) => d.field !== 'ratings').flatMap(
-    (d) => meme[d.field],
-  )
-  return [...meme.ratings, ...described]
-}
-
-/**
- * 阅览器的信息栏（2026-09-22 加，SPEC §9.24）。**这一份是窄屏的**：`lg` 以上换成右侧的
- * `ViewerAside`，内容同一份来源（`labelValues`）但版式不同。两个都渲染，靠断点各自显隐。
- *
- * ## 它为什么存在
- *
- * 在此之前阅览器**一条元数据都不显示**——它只把原图铺满屏幕。而全屏的用途恰恰是
- * 「图上压着的那行小字看不清，放大看看」，此时用户反而不知道自己看的是哪张、什么标签。
- * 卡片上也从不显示标签值，于是「成人向」这类词在界面上根本没有露出的地方。
- *
- * ## 版式：贴合内容宽度，两侧留出可点的背景
- *
- * 外层铺满整宽但 `pointer-events-none`，内层那张卡才接事件。**这条不能省**：YARL 的
- * 「点背景关闭」只认 `event.target` 本身是 `.yarl__slide` / `.yarl__slide_wrapper` 的点击，
- * 一个铺满整宽、能接事件的底栏会把底部那条关闭区整条吃掉（左右两个翻页按钮当年就是这么
- * 坏掉「点背景关闭」的，见下面 `RENDER_SINGLE`）。留出两侧之后，底部只剩中间一小块不可点，
- * 而 `Esc` / `×` / 下拉关闭三条路都还在。（宽屏的 `ViewerAside` 不需要这条：它根本不压在
- * 图上——容器整个缩成了舞台，见 `viewerStyles`。）
- *
- * ## 压在图上就得自己带对比度
- *
- * 底图可能是白的也可能是黑的，所以文字不借主题 token，走 `bg-black/70` + 白字 + 背景模糊
- * ——和 `MemeCard` 的 `BADGE` 同一条思路。`bg-black/70` 压在最亮的图上是 `#4d4d4d`，
- * 纯白字对它 8.1:1，降到 `text-white/75` 也还有 5.3:1，都过 AA。
- *
- * ## 四条库带来的约束（都在 `node_modules` 里实测过）
- *
- * 1. **阅览器里不能滚动**：`.yarl__container` 是 `touch-action: none`，且本仓开了
- *    `closeOnPullDown`。所以描述**只能截断**，`line-clamp` 不是美观选择而是唯一选择
- *    （与 YARL 官方 captions 插件同一档，它是 clamp-3）。窄屏这块地方只有一条，截 2 行。
- * 2. **`.yarl__*` 上写 Tailwind 类是静默失效的**（styling.md「库自带的 CSS 是无层的」）
- *    ——这里全是自建元素，不受影响，但**不要**顺手给 `.yarl__slide` 加类。
- * 3. `.yarl__container` 有 `user-select: none`，信息栏文字**选不中、复制不了**。接受。
- * 4. `.yarl__slide` 是 `overflow: hidden`，超出会被裁掉，所以不做超出屏幕的横向排布。
- *
- * ## 有意不做的
- *
- * 上传者名**不可点**：会变成阅览器里的一个触摸目标（得按指针分档），而应用里并没有
- * 「某个人的图」这个页面。整条信息栏是纯展示，44×44 那条约束管的是触摸目标，不适用。
- * 也不声明任何标签的来源——SPEC §4.3 明确要求别把 `ratings` 呈现成「模型标好了的」，
- * 一条不作声明的扁平标签行正合那条。
- */
-function SlideFooter({ slide }: RenderSlideFooterProps) {
-  // 理论上 `slides` 里每个元素都挂着 meme；`undefined` 时宁可不显示也不要崩。
-  const meme = slide.meme
-  if (!meme) return null
-
-  const labels = labelValues(meme)
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-3 lg:hidden">
-      <div className="pointer-events-auto max-w-2xl rounded-xl bg-black/70 px-3.5 py-2.5 text-white backdrop-blur-sm">
-        {labels.length > 0 && (
-          <p className="text-sm font-medium leading-snug">{labels.join(' · ')}</p>
-        )}
-        {meme.description && (
-          <p className="line-clamp-2 text-sm leading-snug text-white/75">{meme.description}</p>
-        )}
-        <p className="text-xs leading-snug text-white/75">@{meme.uploaderName}</p>
-      </div>
-    </div>
-  )
-}
-
-/**
- * 宽屏（`lg` 以上）右侧那一栏：原先底部浮层里的那些内容，改成竖着排。
- *
- * ## 它为什么可以是一块实心的栏
- *
- * `SlideFooter` 要贴宽、两侧留白，是为了让出「点背景关闭」那条路。右栏**根本不压在图上**：
- * 它占的是容器让出去的那条带子（见 `viewerStyles`），点它命中不到 `.yarl__slide`，
- * 本来就不会关。
- *
- * ## 三个不能改的写法
- *
- * 1. **`fixed` 而不是 `absolute`**：容器现在只有舞台那么大（`viewerStyles`），
- *    `absolute` 会按舞台的盒子定位，右栏就叠到图上去了。`fixed` 的包含块是视口，
- *    也**不被祖先的 `overflow: hidden` 裁**——它必须能画在容器外面。
- * 2. **背景必须不透明**：纯黑底是 `.yarl__container` 自己的（`.yarl__portal` 没有背景），
- *    容器缩小之后这条带子底下什么都没有。原先用 `bg-white/[0.04]`（压在纯黑上=#0a0a0a），
- *    那只有 4% 白、96% 透明——**上一版的缺陷正是从这儿露出来的**：相邻幻灯片的图穿到
- *    右栏后面，隔着 96% 的透明度被看见了。`bg-neutral-950` 是同一个颜色的不透明版。
- *    顺带一提，当天第一反应是「加 z-index」——**那治不了这个病**：那道色带本来就在右栏
- *    *下面*（`elementFromPoint` 量过），只是透出来了。
- * 3. **不借主题 token**：底是恒定纯黑（不跟 `prefers-color-scheme` 走），所以这里写死
- *    黑白灰是对的，写 `text-muted-foreground` 才是错的（浅色主题下那是深灰字压在黑底上）。
- *    纯白字对 #0a0a0a 是 18:1，`text-white/60` 对它是 7.3:1，都过 AA。
- *
- * ## 描述还是截断
- *
- * 依旧不做滚动（`.yarl__container` 是 `touch-action: none`，且容器上挂着滑动翻页与下拉
- * 关闭——在栏里滚动会被当成那两个手势）。地方比底部那条大，所以放宽到 6 行。
- */
-function ViewerAside({ meme }: { meme: Meme }) {
-  const labels = labelValues(meme)
-
-  return (
-    <aside className="fixed inset-y-0 right-0 hidden w-(--viewer-aside-w) flex-col gap-4 overflow-hidden border-l border-white/10 bg-neutral-950 p-5 text-white lg:flex">
-      {labels.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5">
-          {labels.map((value, i) => (
-            // 用下标当 key：同一个词可能同时出现在两个维度上，用它当 key 会让 React 报重复
-            <li key={i} className="rounded-md bg-white/10 px-2 py-1 text-xs leading-none break-all">
-              {value}
-            </li>
-          ))}
-        </ul>
-      )}
-      {meme.description && (
-        <p className="line-clamp-6 shrink-0 text-sm leading-relaxed break-words text-white/90">
-          {meme.description}
-        </p>
-      )}
-      {/* `mt-auto`：内容少的时候上传者名落在栏底，与微博 / QQ 空间那种右栏一致 */}
-      <p className="mt-auto shrink-0 text-xs text-white/60">@{meme.uploaderName}</p>
-    </aside>
-  )
-}
-
-/**
- * 宽屏（`lg` 以上）底部的缩略图轨道：**一格一张，点哪张跳哪张**，当前那张自己滚进视野中央。
- *
- * 只有 `lg` 以上才显形：`--viewer-rail-h` 在窄屏是 0，而窄屏本来就不是左右那种布局
- * （右栏没地方放），底部那一格已经给了信息卡。手机上的翻页是滑动、左右按钮与 `←→`，
- * 那条路是完好的。
- *
- * ## 只用缩略图
- *
- * `thumbUrl ?? url` 与网格里那条同源（styling.md「图片网格」：列表不加载原图）。动图的
- * 缩略图是服务端转的静态首帧，在 64px 的格子里也看不出动没动——那件事由全屏那张负责。
- * `loading="lazy"` 不能省：浏览页翻过几百张之后这个轨道就有几百格。
- *
- * ## 当前那张滚进视野用手算的 `scrollTo`，不用 `scrollIntoView`
- *
- * `scrollIntoView` 会顺着**所有**可滚祖先一路滚上去。这里祖先恰好都不可滚（portal 是
- * `fixed`、容器是 `overflow: hidden`），所以它是「能用但靠运气」——哪天中间多一层能滚的
- * 容器，表现是点开一张图整页跟着跳一下。手算 `scrollLeft` 没有这个面。
- *
- * `prefers-reduced-motion` 那一档退回即时跳：轨道自己动起来是动效，不长在信息本身上，
- * 该听用户的（同 `MemeImage` 的 hover 播放、`Skeleton` 的 `motion-reduce:animate-none`）。
- */
-function ThumbRail({
-  items,
-  index,
-  onPick,
-}: {
-  items: readonly Meme[]
-  index: number
-  onPick: (index: number) => void
-}) {
-  const railRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const rail = railRef.current
-    const tile = rail?.children[index]
-    if (!rail || !(tile instanceof HTMLElement)) return
-    rail.scrollTo({
-      left: tile.offsetLeft - (rail.clientWidth - tile.offsetWidth) / 2,
-      behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-    })
-  }, [index])
-
-  return (
-    // `fixed` 与不透明的底：同 `ViewerAside` 那三条（容器现在只有舞台那么大，
-    // 这条带子底下什么都没有）。
-    // `no-scrollbar`（`shadcn/tailwind.css` 的 utility）只藏滚动条，滚动本身照旧——
-    // 一条横在图片下面的滚动条在这个全黑的场子里比缩略图本身还显眼。
-    // `overscroll-contain` 挡住横向滚到头之后接着把整页往两边带。
-    <div
-      ref={railRef}
-      className="no-scrollbar fixed bottom-0 left-0 hidden h-(--viewer-rail-h) items-center gap-2 overflow-x-auto overscroll-contain bg-neutral-950 px-3 right-(--viewer-aside-w) lg:flex"
-    >
-      {items.map((meme, i) => (
-        <button
-          key={meme.id}
-          type="button"
-          onClick={() => onPick(i)}
-          // 可读名要说「这是第几张」：格子里那张图读屏念不出内容
-          aria-label={`第 ${i + 1} 张：${meme.description ?? meme.originalFilename ?? meme.id}`}
-          aria-current={i === index}
-          className={cn(
-            // `cursor-pointer` 得自己写，Tailwind v4 起不再给 `<button>` 加（styling.md）
-            'size-16 shrink-0 cursor-pointer overflow-hidden rounded-lg bg-white/5 transition-opacity',
-            // 非当前那几张压暗而不是藏起来：轨道要能一眼看出「一共多少、现在在哪」
-            i === index ? 'opacity-100 ring-2 ring-white' : 'opacity-50 hover:opacity-90',
-          )}
-        >
-          {/* `object-contain` 不裁剪：表情包的信息常在边缘（styling.md「图片网格」） */}
-          <img
-            src={meme.thumbUrl ?? meme.url}
-            alt=""
-            loading="lazy"
-            className="size-full object-contain"
-          />
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/**
- * 阅览器里我们自己那两块（`render.controls`），宽屏才显形。
- *
- * 数据从 `SessionContext` 拿——`render.controls` 是个没有参数的 render 函数
- * （`RenderFunction<void>`，`types.d.ts:346`），拿不到 props。而这个组件渲染在
- * `<Lightbox>` 的 React 树里，宿主的 Provider 正是它的祖先，context 天然可用。
- *
- * 它渲染的位置在 `.yarl__container` **里面**（`Controller` 里 `render.controls?.()` 那行，
- * 排在轮播之后）。而容器现在只有舞台那么大（`viewerStyles`），所以这两块走 `fixed`
- * 按视口定位——它们是容器的后代，但**不看容器的盒子**。
- */
-function ViewerControls() {
-  const controls = useContext(SessionContext)
-  const session = controls?.session
-  const meme = session?.items[session.index]
-  if (!controls || !session || !meme) return null
-
-  return (
-    <>
-      <ViewerAside meme={meme} />
-      {session.items.length > 1 && (
-        <ThumbRail items={session.items} index={session.index} onPick={controls.show} />
-      )}
-    </>
-  )
-}
-
-/**
- * `plugins` 与 `labels` 都是模块级常量：每次渲染现写一个数组，YARL 会重新跑一遍插件装配。
- *
- * 库自带的文案是英文（`Close` / `Lightbox` / `Photo gallery` …），全站是中文，逐个换掉。
- * `{index}` / `{total}` 是库的模板占位符，**不能翻译掉**。
- *
- * ⚠️ **插件的文案是插件自己那份 labels**，不在这几个里：`Zoom` 插件的放大 / 缩小按钮
- * 读的是 `Zoom in` / `Zoom out`，而插件默认**没有** `labels`——不显式给，那两个按钮的
- * 可读名就是英文。实测踩过：只改上面这一组的时候，读屏念的是「Zoom in」。
- */
-const PLUGINS = [Zoom]
-
-const CONTROLLER = { closeOnBackdropClick: true, closeOnPullDown: true }
-
-const ZOOM = { maxZoomPixelRatio: 2 }
-
-/** 多张时那一份 `render`：翻页按钮留给库自己的（可读名、禁用态都是现成的）。 */
-const RENDER = {
-  slideFooter: SlideFooter,
-  controls: ViewerControls,
-}
-
-/**
- * **单张阅览必须把翻页按钮拿掉。** 库对这两个按钮是**无条件渲染**的
- * （`Navigation` 组件里没有 `count > 1` 之类的判断），只有一张图时它们既不是
- * `disabled` 也没被藏起来——表现是全屏里左右各挂一个 64×80 的箭头，按下去什么都不发生。
- *
- * 它们盖住的还正好是**唯一能点到的背景**：图上、下、左、右四块空白里，左右两条被这两个
- * 按钮整条占掉，于是「点背景关闭」在单张时几乎点不着（实测：左边缘 6px 是箭头图标、
- * 40px 是箭头按钮本身）。拿掉之后左右才回到 `yarl__slide_wrapper` 上。
- *
- * ⚠️ 这两行**只在单张时**生效。当年这里是唯一的 `render`，接上多张之后才分家——多张时
- * 反过来要的正是库那两个按钮。（`render` 是**浅合并**到库的默认值上的，所以单张这档
- * 不是「藏起来」而是「没给这个键」。）
- */
-const RENDER_SINGLE = { ...RENDER, buttonPrev: () => null, buttonNext: () => null }
-
-/**
- * 把容器**缩成图片那一块**，右边与下边让给信息栏与缩略图轨道。
- *
- * 走 `styles` 属性（内联样式），**不在 `.yarl__*` 上写 Tailwind 类**：库自带的样式表是无层的，
- * 压得过 Tailwind 的 `@layer utilities`（styling.md「库自带的 CSS 是无层的」）。
- *
- * ## 为什么是宽度/高度，不是给容器加 padding
- *
- * 一开始用的是 `padding`（占位，图片自然缩小到剩下那块）。**那是错的**，而且错得很隐蔽：
- * `.yarl__container` 的 `overflow: hidden` 裁的是**padding 盒**，也就是整块屏幕——
- * 而轮播里相邻的那几张幻灯片本来就摆在容器外面等着滑进来，于是「下一张」的图会**穿过
- * 右栏那条让出来的地方**。库默认的幻灯间隔是 30%，1088 宽的舞台上下一张的图从 x=1430
- * 起步，视口到 1440 为止，正好露出 10px（2026-09-23 实拍：右栏最右侧一道竖着的色带）。
- *
- * 做成 `width/height` 之后容器**就是**舞台：裁剪边界、`containerRect`（`clientWidth`
- * 直接就是舞台宽）、图片的 `slideRect`、滑动距离**全是同一个数**，不需要再各配一次。
- * 连带三个原先要手动挪的浮层也回到了默认位置，一个都不用改：
- *
- * - `toolbar`（关闭 / 放大缩小）默认钉容器右上角 = 舞台右上角；
- * - 两个翻页按钮默认按容器垂直居中 = 舞台垂直居中；
- * - `navigationNext` 默认 `right: 0` = 舞台右边缘，正好贴着右栏。
- *
- * ## 代价：黑底不再铺满
- *
- * 纯黑背景是 `.yarl__container` 自己的（`.yarl__portal` 没有背景），容器一缩小，
- * 右栏与轨道那两条带子就没有底了——要靠 `ViewerAside` / `ThumbRail` 各自铺满
- * （它们同时还得是**不透明**的，理由见 `ViewerAside`）。同理它们不能再用 `absolute`：
- * 那会按容器的盒子定位，现在容器只有舞台那么大。改 `fixed`，按视口定位——`fixed` 的
- * 包含块是视口，**不被祖先的 `overflow: hidden` 裁**，所以照样画在舞台外面。
- *
- * ⚠️ 两个量来自 `index.css` 的 `:root`（窄屏是 0，`min-width: 64rem` 那一档才有值）。
- * **必须是变量**：这边给 YARL 的是舞台的宽高，右栏与轨道那边用 `w-(--viewer-aside-w)`
- * 量的是自己的宽高，两边套同一个值才对得上。
- *
- * `withRail` 只有多张时才是 true：单张时不摆轨道，也就不该白留一条黑边。
- */
-function viewerStyles(withRail: boolean): SlotStyles {
-  return {
-    container: {
-      width: 'calc(100% - var(--viewer-aside-w))',
-      height: withRail ? 'calc(100% - var(--viewer-rail-h))' : '100%',
-    },
-  }
-}
-
-const LABELS = {
-  Previous: '上一张',
-  Next: '下一张',
-  Close: '关闭',
-  Slide: '图片',
-  Carousel: '图片轮播',
-  Lightbox: '图片阅览',
-  'Photo gallery': '图片阅览',
-  '{index} of {total}': '第 {index} 张，共 {total} 张',
-  'Zoom in': '放大',
-  'Zoom out': '缩小',
 }

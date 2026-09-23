@@ -5,8 +5,9 @@ import { Skeleton } from '../../components/ui/skeleton'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { MATCHED_BY_LABELS, type Meme, type SearchResult } from '../../lib/api'
-import { SEND_LABELS, detectSendPath } from '../../lib/clipboard'
+import { SEND_LABELS, detectSendPath, type SendNote } from '../../lib/clipboard'
 import { TOUCH } from '../../lib/touch'
+import { usePrefetchShare } from '../../lib/use-prefetch-share'
 import { cn } from '../../lib/utils'
 import type { SearchState } from './use-search'
 
@@ -30,6 +31,11 @@ function matchedBadges(matchedBy: string[]): string[] {
   return matchedBy.map((m) => MATCHED_BY_LABELS[m] ?? m)
 }
 
+/** 卡片 / 按钮的可读名。与 `MemeImage` 的 `alt` 同一份来源。 */
+function readableName(meme: Meme): string {
+  return meme.description ?? meme.originalFilename ?? meme.id
+}
+
 /**
  * 搜索结果的五种形态：**loading / error / 空 / 有结果 / idle（什么都不渲染）**。
  *
@@ -50,7 +56,7 @@ export function SearchResults({
   state: SearchState
   selectedIndex: number
   /** 复制 / 下载的结果，由 `sendNote` 给。null 表示不需要反馈。 */
-  copyNote: string | null
+  copyNote: SendNote | null
   onActivate: (meme: SearchResult) => void
   onFavorite: (meme: Meme) => void
   onRetry: () => void
@@ -111,7 +117,7 @@ export function SearchResults({
       ) : (
         // 这一批就是「用户看的那一批」：全屏里 ←/→ 翻的就是这次搜索的结果
         <MemeGallery items={items}>
-          <div className={RESULT_GRID} role="listbox" aria-label="搜索结果">
+          <div className={RESULT_GRID} role="group" aria-label="搜索结果">
             {items.map((meme, index) => (
               // 服务端 RRF 已排好序，不要按 matchedBy 重排。见 SPEC §6.3.1
               <ResultItem
@@ -129,7 +135,22 @@ export function SearchResults({
 
       {copyNote && (
         <p role="status" className="text-sm">
-          {copyNote}
+          {copyNote.text}
+          {/* 取不到原图时**给一个能点的链接**：那一下是用户自己的手势，不会被弹窗拦截
+              （`lib/clipboard.ts` 的 `saveFile` 记着为什么不 `window.open`） */}
+          {copyNote.fallbackUrl !== undefined && (
+            <>
+              {' '}
+              <a
+                className="underline underline-offset-2"
+                href={copyNote.fallbackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                在新标签页打开原图
+              </a>
+            </>
+          )}
         </p>
       )}
     </>
@@ -137,8 +158,16 @@ export function SearchResults({
 }
 
 /**
- * 一条结果。**外壳留在这一层、不进 `MemeCard`**：`role="option"` / `data-index` /
- * `aria-selected` 和选中描边都是「列表项」的身份，不是「卡片」的。
+ * 一条结果。**外壳留在这一层、不进 `MemeCard`**：`data-index` 和选中描边都是
+ * 「结果项」的身份，不是「卡片」的。
+ *
+ * ## 2026-09-24：`listbox` / `option` 换成 `group`
+ *
+ * 这一格里有三个可交互元素（图片帧、收藏、发送）。`role="option"` 要求列表项自己
+ * 承担选中语义，把按钮塞进去是**违反 ARIA 的**，读屏在两种模式之间来回切。
+ * 而键盘路径也不靠列表项语义——焦点是**真的**移到结果项上（`use-search.ts` 的
+ * `focusResult`），Enter 的判据就是「焦点在不在这一格」（`focusedOptionIndex`）。
+ * 所以这里只留一个带可读名的 `group`，选中态交给那个真实焦点。
  *
  * 描边用 `outline` + `outline-offset-2` 而不是 `ring` / `border`：它是**落在卡片外面**的，
  * 不占布局、不挤压网格，键盘 ↑↓ 选中时格子不会跳（styling.md）。描边颜色取 `currentColor`。
@@ -156,11 +185,18 @@ function ResultItem({
   onActivate: (meme: SearchResult) => void
   onFavorite: (meme: Meme) => void
 }) {
+  const name = readableName(meme)
+  /** 文案在渲染时定下来，点击时不再改（clipboard-share.md §5）：一个按钮两种行为最糟。 */
+  const sendLabel = SEND_LABELS[detectSendPath(meme.isAnimated)]
+  // 触屏那一档要在**渲染时**就把原图取好，否则点下去时用户激活已经过期（见该 hook）
+  usePrefetchShare(meme)
+
   return (
     <div
       data-index={index}
-      role="option"
-      aria-selected={selected}
+      // 焦点真的会落到这一格上（`focusResult`），没有可读名的话读屏只念得出「group」
+      role="group"
+      aria-label={`第 ${index + 1} 张：${name}`}
       className={cn(
         'flex flex-col gap-1',
         selected && 'outline outline-2 outline-offset-2 outline-current',
@@ -180,10 +216,12 @@ function ResultItem({
       <Button
         type="button"
         variant="secondary"
+        // 一页里几十个「复制」，读屏一个一个念下来分不出是哪张（同 `ThumbRail` 的做法）
+        aria-label={`${sendLabel}第 ${index + 1} 张：${name}`}
         className={cn(TOUCH, 'w-full')}
         onClick={() => onActivate(meme)}
       >
-        {SEND_LABELS[detectSendPath(meme.isAnimated)]}
+        {sendLabel}
       </Button>
     </div>
   )
