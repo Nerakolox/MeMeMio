@@ -42,6 +42,21 @@ export const MAX_INVALID_OUTPUT_ATTEMPTS = 2
 /** embedding 单独重试的上限。它不影响 `tag_status`，只影响向量什么时候补上。 */
 export const MAX_EMBED_ATTEMPTS = 5
 
+/**
+ * 一个打标任务**最多能被领取几次**。到点还在 `pending` 的直接落终局失败，
+ * 不再交给 worker 跑（落点：`data/tag-jobs.ts` 的 `claimTagJob`）。
+ *
+ * 取所有失败类型里**最宽**的那份预算（`unreachable` / `embed_failed` 都是 5）。
+ * 一条被反复领取却一次都没写出结论的任务（典型是每次领取都把进程打崩，或者
+ * 每次都被停机掐掉）**没有 `last_error` 可看**，它属于哪一类失败无从判断——
+ * 比这个数更紧的失败类型早就该在 `decideRetry` 里终局了，不可能还留在 `pending`。
+ *
+ * ⚠️ 这条防的是**无限重领**：`claimTagJob` 每次领取都把 `attempts` +1，而一个每次
+ *    都把进程打崩的任务永远走不到 `applyFailure`，`decideRetry` 根本没机会运行。
+ *    表现是「队列里有一条任务，进程一轮到它就重启」，不报错。
+ */
+export const MAX_TAG_CLAIMS = MAX_UNREACHABLE_ATTEMPTS
+
 /** 第一次退避 30s，之后翻倍。上限 30 分钟——再久就该人来看一眼了。 */
 export const BACKOFF_BASE_MS = 30_000
 export const BACKOFF_MAX_MS = 30 * 60_000

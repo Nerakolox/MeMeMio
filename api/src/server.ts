@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { serve } from '@hono/node-server'
+import { serve, type ServerType } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { app } from './app.js'
 import { db, waitForDatabase } from './data/db.js'
@@ -10,6 +10,8 @@ import { log } from './logger.js'
 import { assertRuntimeFilesPresent, WEB_DIST_DIR } from './paths.js'
 import { startReindexWorker, stopReindexWorker } from './queue/reindex-worker.js'
 import { startTagWorker, stopTagWorker } from './queue/worker.js'
+import { installProcessErrorHandlers, installShutdownHandlers } from './shutdown.js'
+import { resumeInterruptedBatches } from './services/import.js'
 import { assertR2Reachable } from './storage/r2.js'
 import { vocabulary, vocabularySize } from './vocab.js'
 
@@ -30,6 +32,9 @@ import { vocabulary, vocabularySize } from './vocab.js'
  * 启动瞬间，最难排查。执行走独立命令，见 docs/deployment.md §6。
  */
 async function main(): Promise<void> {
+  // 第一件事：把 unhandledRejection 兜住。再往后全是 async，越早挂上越少盲区
+  installProcessErrorHandlers()
+
   assertRuntimeFilesPresent()
 
   log.info(
@@ -84,33 +89,39 @@ async function main(): Promise<void> {
   // 管理员在界面上配好之后不用重启进程，重建就会自己开始动
   startReindexWorker()
 
-  installShutdownHandlers(server)
+  // 续跑被上次退出打断的导入批次（SPEC §1.4 / 本任务 §9）。**不 await**：
+  // 一批可能跑几分钟，启动不该等它，接口可用性也不该挂在它身上。
+  // `resumeInterruptedBatches` 自己吞掉每一批的异常，这条 promise 不会 reject
+  void resumeInterruptedBatches().catch((error: unknown) => {
+    // 走到这里只可能是 listResumableBatches 那次查询就失败了（库刚起来，或者迁移
+    // 刚好在这中间跑）。**不阻断启动**：接口本身还能用，下一次重启还会再扫一遍
+    log.error({ err: error }, '扫描被中断的导入批次失败，启动继续')
+  })
+
+  installShutdownHandlers({
+    closeServer: () => closeHttpServer(server),
+    stopWorkers: () => [stopTagWorker(), stopReindexWorker()],
+    exit: (code) => process.exit(code),
+  })
 }
 
 /**
- * 优雅退出。**worker 必须等在途任务写完**，否则那些任务会永远停在 `running`，
- * 表现是「这几张图再也不会被打标」——不报错、不告警。
+ * 关掉 HTTP 服务：**停收新连接，并掐掉还挂着的**。
  *
- * 在途任务本身有整体超时，所以这里的等待是有界的。真被 SIGKILL 砍掉的那种
- * 由 worker 启动时的 `requeueStaleRunningJobs` 兜底。
+ * `close()` 的回调只在所有连接断开后才触发，而 SSE 的 15 秒心跳和 HTTP keep-alive
+ * 都会让连接一直挂着——所以那个回调**不能**用来串收尾（`src/shutdown.ts` 的文件头
+ * 讲了它是怎么把停机拖过 10 秒预算的）。`closeAllConnections()` 是那把快刀：
+ * 在途请求会被掐断，但停机时这比「留着连接慢慢等」划算——客户端本来就要能处理
+ * 断线重连（SPEC §1.4 的快照补齐就是这个用途）。
+ *
+ * 返回值直接丢掉，不 await 也不看回调：`shutdownOnce` 只管有没有把口子关上，
+ * 不管连接层什么时候真的空掉。
  */
-function installShutdownHandlers(server: { close: (cb?: () => void) => void }): void {
-  let shuttingDown = false
-
-  const shutdown = (signal: string): void => {
-    if (shuttingDown) return
-    shuttingDown = true
-    log.info({ signal }, '收到退出信号，开始收尾')
-
-    server.close(() => {
-      // 两个 worker 并行收尾，不串行：各自的在途任务都有整体超时，串起来等于把两个
-      // 超时上限加在一起，停机时间平白翻倍
-      void Promise.allSettled([stopTagWorker(), stopReindexWorker()]).then(() => process.exit(0))
-    })
-  }
-
-  process.on('SIGTERM', () => shutdown('SIGTERM'))
-  process.on('SIGINT', () => shutdown('SIGINT'))
+function closeHttpServer(server: ServerType): void {
+  server.close()
+  // `ServerType` 那个联合里有 http2 的那几个（TLS 部署用），而 http2 的连接归 session
+  // 管、没有这个方法。这里实际起的是 http1 服务，`in` 收窄一下比断言干净
+  if ('closeAllConnections' in server) server.closeAllConnections()
 }
 
 /**

@@ -56,7 +56,7 @@ export async function tagMeme(memeId: string, signal: AbortSignal): Promise<TagO
    * 而那一步的产出和上次一模一样。
    */
   if (meme.tagStatus === 'ok' && meme.embedding === null && meme.searchText !== null) {
-    return embedAndStore(memeId, meme.searchText)
+    return embedAndStore(memeId, meme.searchText, signal)
   }
 
   /**
@@ -152,7 +152,7 @@ export async function tagMeme(memeId: string, signal: AbortSignal): Promise<TagO
       { memeId, model: config.model, mode: payload.mode, rung },
       '打标完成',
     )
-    return embedAndStore(memeId, searchText)
+    return embedAndStore(memeId, searchText, signal)
   }
 
   // plan 至少有一项，走到这里说明 planVisionAttempts 被改坏了
@@ -225,8 +225,16 @@ function describeAttempt(attempt: VisionAttempt): string {
  *
  * 截断后重新 L2 归一化在 `embedText` 里（`lib/vector.ts` 的 `truncateAndNormalize`）。
  * **这里不补做**——在写库前补救等于承认上游可能传进没归一化的向量。
+ *
+ * ⚠️ `signal` 必须传下去：向量这一步走的是一次 HTTP 调用，而任务整体超时之后
+ *    worker 会 abort。不传的话它会一直跑到单次调用超时（15 秒）——**这份工作的结果
+ *    已经没人要了**（那一刻任务已经判失败并放回队列），白花一次 embedding 的钱。
  */
-async function embedAndStore(memeId: string, searchText: string): Promise<TagOutcome> {
+async function embedAndStore(
+  memeId: string,
+  searchText: string,
+  signal: AbortSignal,
+): Promise<TagOutcome> {
   const embedConfig = await resolveEmbedConfig()
   if (embedConfig === null) {
     log.debug({ memeId }, '未配置 embedding 通道，向量留空')
@@ -235,7 +243,7 @@ async function embedAndStore(memeId: string, searchText: string): Promise<TagOut
 
   // 配置显式传下去，**不让 embedText 自己再解析一次**：写 embed_model 用的必须是
   // 真正算出这个向量的那个模型名，两次解析之间配置可能刚好被改掉
-  const result = await embedText(searchText, embedConfig)
+  const result = await embedText(searchText, embedConfig, signal)
   if (!result.ok) {
     if (result.reason === 'not_configured') return { kind: 'done', embedded: false }
     log.warn({ memeId, reason: result.reason }, 'embedding 失败，打标结果保留')

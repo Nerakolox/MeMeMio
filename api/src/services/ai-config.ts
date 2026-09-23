@@ -17,6 +17,7 @@ import {
   countEmbeddingProgress,
   hasEmbeddedMemes,
   listStaleEmbeddingMemeIds,
+  type StaleEmbeddingCursor,
 } from '../data/memes.js'
 import {
   clearFailedReindexJobs,
@@ -275,17 +276,47 @@ const ENQUEUE_CAP = 100_000
  *
  * 没配 embedding 模型时直接返回 0：没有「当前模型」就没有「过期」可言，
  * 这时候入队等于给每条记录排一个必然 `not_configured` 的任务。
+ *
+ * ⚠️ **翻页用 keyset，不用 `OFFSET`。** 理由写在 `listStaleEmbeddingMemeIds` 上：
+ *    入队与消费同时发生，算完的行会掉出 WHERE 集合，offset 翻页因此漏行，而漏掉的
+ *    那部分**永远召回不到**（SPEC §9.20）。
+ *
+ * ⚠️ **到 `ENQUEUE_CAP` 就停，剩下的既不排队也不报错**，所以这里必须留一条日志。
+ *    「要不要多一个响应字段说明被截断了」是**另开契约**的事，本任务不做——
+ *    在此之前，这条日志是唯一的痕迹。
+ *
+ * @returns 真正插进去的条数（`onConflictDoNothing` 之后）。它**小于**扫到的条数时
+ *          可能是「重复入队」，也可能是「被 cap 截断」——别拿它当覆盖率的分子。
  */
 export async function enqueueAllStale(): Promise<number> {
   const currentModel = await getEmbedModel()
   if (currentModel === null) return 0
 
   let enqueued = 0
-  for (let offset = 0; offset < ENQUEUE_CAP; offset += ENQUEUE_PAGE) {
-    const ids = await listStaleEmbeddingMemeIds(currentModel, ENQUEUE_PAGE, offset)
-    if (ids.length === 0) break
-    enqueued += await enqueueReindexJobs(ids)
-    if (ids.length < ENQUEUE_PAGE) break
+  let scanned = 0
+  let cursor: StaleEmbeddingCursor | null = null
+
+  for (;;) {
+    const page = await listStaleEmbeddingMemeIds(currentModel, cursor, ENQUEUE_PAGE)
+    if (page.length === 0) break
+
+    enqueued += await enqueueReindexJobs(page.map((row) => row.id))
+    scanned += page.length
+
+    const last = page[page.length - 1]
+    if (last === undefined) break
+    cursor = { createdAt: last.createdAt, id: last.id }
+
+    // 取不满一页 = 后面没有了。这一条同时是正常出口和「正好取完」的出口
+    if (page.length < ENQUEUE_PAGE) break
+
+    if (scanned >= ENQUEUE_CAP) {
+      log.warn(
+        { cap: ENQUEUE_CAP, scanned, enqueued },
+        '本轮重建索引达到入队上限，剩余过期记录**没有**排进队列（再触发一次可继续）',
+      )
+      break
+    }
   }
   return enqueued
 }

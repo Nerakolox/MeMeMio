@@ -4,6 +4,7 @@ import { createMeme, findMemeByContentHash, findNearestByPhash } from '../data/m
 import { findUserById, getStorageUsedBytes } from '../data/auth.js'
 import {
   getBatchSnapshot,
+  listResumableBatches,
   recordItemOutcome,
   type ItemOutcome,
   type ItemResult,
@@ -149,16 +150,37 @@ function isQuotaExceeded(error: unknown): boolean {
 }
 
 /**
+ * 本进程此刻正在跑的批次。
+ *
+ * ⚠️ **这是进程内的，不是分布式锁。** 多副本时另一个副本看不见它，可能正在跑同一批。
+ *    真正的互斥要一把带心跳的租约（队列表上多一列 + 条件更新），而本项目不引入
+ *    Redis（§9.11）。这里能做到的是「同一个进程不重复跑」；跨进程的重叠靠
+ *    `recordItemOutcome` 的**先写入者赢**兜底——代价是**白跑一遍**（多花一次 ffmpeg
+ *    和一次 AI 的钱），不是数据错乱。取舍见 `listResumableBatches` 的注释。
+ */
+const runningBatches = new Set<string>()
+
+/**
  * 跑完一整批。**调用方不 await 它**——commit 接口返回 202，这批在后台继续。
  *
  * 每个文件独立处理，一个失败不影响其他：处理顺序是 per-file 的，整批不该被一个
  * 损坏文件拖停（SPEC §1.4 的 `error` 事件只留给**批次级**失败）。
+ *
+ * 同一批次重复触发是**空操作**：`claimBatchCommit` 只挡得住并发的两个 commit，
+ * 挡不住「启动续跑扫到了刚到的那一批」这种时间差。到那时两个 run 会并发处理同一批
+ * 文件——同一张图的两条腿都写库，都会发 `item` 事件。
  */
 export async function runBatch(
   batchId: string,
   userId: string,
   files: FileToProcess[],
 ): Promise<void> {
+  if (runningBatches.has(batchId)) {
+    log.warn({ batchId }, '这一批已经在本进程处理中，跳过重复触发')
+    return
+  }
+  runningBatches.add(batchId)
+
   log.info({ batchId, count: files.length }, '开始处理导入批次')
 
   try {
@@ -225,6 +247,58 @@ export async function runBatch(
         message: isAppError(error) ? error.message : '导入处理失败，请重新拉取批次状态',
       },
     })
+  } finally {
+    // ⚠️ **必须在 finally 里清。** 漏掉的后果不是这一次出问题，而是这个批次在本进程里
+    //    **永远不会再被续跑**（`runningBatches` 那一行挡住）——而续跑正是它存在的意义。
+    //    中间那条 `catch` 里的 `publish` 自己也可能抛，所以不能只在正常出口清。
+    runningBatches.delete(batchId)
+  }
+}
+
+/**
+ * 启动时把「死在半路的批次」接着跑完（SPEC §1.4，本任务 §9）。
+ *
+ * 「死在半路」的判据只有「已 commit + 还有没结论的条目」，所以**正常在跑的批次也会被
+ * 扫到**：同进程靠 `runningBatches` 挡，而启动那一刻这个集合是空的——**这正是对的**，
+ * 重启前在跑的那些批次已经随进程一起死了，它们就是要续的对象。多副本下另一个副本
+ * 在跑的那批这里看不见，代价见 `runningBatches` 的注释。
+ *
+ * 逐个 await，不并发开跑：一次重启可能积压几十个半截批次，全部并发起来等于
+ * 每个批次各带 `pipelineConcurrency` 个 ffmpeg 一起上，正是「分批并发」要避免的场面。
+ * 代价是一个卡住的批次会拖住它后面的——`runPipeline` 每一步都有超时，不会真的卡死。
+ *
+ * 调用方**不 await**（`server.ts`）：一批可能跑几分钟，启动不该等它。
+ * 这里自己吞掉每一个异常，所以这个 promise 不会 reject。
+ */
+export async function resumeInterruptedBatches(): Promise<void> {
+  const batches = await listResumableBatches()
+  if (batches.length === 0) return
+
+  log.info({ count: batches.length }, '发现被中断的导入批次，续跑')
+
+  for (const batch of batches) {
+    if (batch.brokenCount > 0) {
+      // 暂存键为空是数据被手工改过，重试也好不了。**必须说出来**：不说的话表现是
+      // 「这一批永远停在还有未完成」，而且日志里什么线索都没有
+      log.warn(
+        { batchId: batch.batchId, brokenCount: batch.brokenCount },
+        '批次里有暂存键缺失的条目，这些条目续跑不了，该批次会停在「还有未完成」',
+      )
+    }
+    if (batch.items.length === 0) continue
+
+    try {
+      await runBatch(
+        batch.batchId,
+        batch.userId,
+        batch.items.map((item) => ({ fileName: item.fileName, tempKey: item.tempStorageKey })),
+      )
+    } catch (error) {
+      // `runBatch` 自己已经把批次级异常收成了 `error` 事件，走到这里的只可能是它的
+      // catch 块本身出事（例如库断了、publish 抛了）。不接住的话整个续跑会停在这一批，
+      // 后面的批次没人管——而那是一次静默的「只续了一半」
+      log.error({ err: error, batchId: batch.batchId }, '续跑导入批次失败，继续下一批')
+    }
   }
 }
 
@@ -609,13 +683,26 @@ export async function importReviewedFile(params: {
  *
  * `progress` 是**累计**值，不是增量——客户端重连后拉到的快照和这里的事件是同一套口径，
  * 不该出现「快照说 done=50、事件也说 done=50 但含义不同」这种要靠猜的东西。
+ *
+ * ⚠️ **写没落上就不广播**（`recordItemOutcome` 返回 false）。同一条目被两个进程处理时
+ *    （停机放回 + 续跑重叠、或者多副本），后写的那个结论作废——但如果不拦，
+ *    `item` 事件照样会发出去，用户就看到了一个**库里并不存在**的结论。
+ *    `progress` 发的是累计快照，跳过这一条不会让计数错位（下一次 finish 会带上真实值），
+ *    批次末尾的 `done` 也仍然按库里的快照发。
  */
 async function finish(
   batchId: string,
   fileName: string,
   outcome: ItemOutcome,
 ): Promise<void> {
-  await recordItemOutcome(batchId, fileName, outcome)
+  const written = await recordItemOutcome(batchId, fileName, outcome)
+  if (!written) {
+    log.info(
+      { batchId, fileName },
+      '条目结论已由别处写入，本进程的作废，不广播事件',
+    )
+    return
+  }
 
   publish(batchId, {
     event: 'item',

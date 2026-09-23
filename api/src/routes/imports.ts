@@ -420,23 +420,77 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
       })
 
       // ② 再挂实时增量
+      //
+      // 三个标志位的分工：
+      //   closed   —— 连接断了（客户端关页面、反代超时、停机掐连接）。什么都没意义了。
+      //   terminal —— 批次跑到终态（`done` / `error`）。**没有后续事件了，连接该关**。
+      //   两者都会 `stopWaiting()` 把卡在心跳里的等待叫醒，否则循环要白等一个心跳周期。
       let closed = false
-      const unsubscribe = subscribe(batchId, (event) => {
-        void stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
-      })
-      stream.onAbort(() => {
+      let terminal = false
+
+      /** 提前结束下面那个等待的钩子。心跳循环的等待没有别的办法中断。 */
+      let finishSleep: (() => void) | null = null
+      let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+      /** 先占位再赋值：`close` 和 `unsubscribe` 互相引用，直接写会踩 TDZ。 */
+      let unsubscribe: () => void = () => {}
+
+      const stopWaiting = (): void => {
+        if (heartbeatTimer !== null) {
+          clearTimeout(heartbeatTimer)
+          heartbeatTimer = null
+        }
+        const pending = finishSleep
+        finishSleep = null
+        pending?.()
+      }
+
+      const close = (): void => {
+        if (closed) return
         closed = true
+        stopWaiting()
         unsubscribe()
+      }
+
+      unsubscribe = subscribe(batchId, (event) => {
+        void (async () => {
+          try {
+            await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) })
+          } catch {
+            // 连接已经断了（`onAbort` 那边已经收尾）。写不出去不是错误，
+            // 用户下次进来先拉快照，漏掉的增量按 SPEC §1.4 就是允许丢的
+            return
+          }
+          // ⚠️ **`done` / `error` 之后必须把这个连接关掉。** 它们之后不会再有事件，
+          //    不收尾的话这条连接会一直挂着心跳，直到客户端自己断开或反代超时——
+          //    表现是「批次早就跑完了，进度条页面的连接却一直不释放」，用户那边
+          //    看起来完全正常，只有服务端连接数和内存知道。EventSource 本身
+          //    不会因为收到一个 `done` 事件就关闭（它不认识这个事件名）。
+          //
+          // ⚠️ **必须等写出去之后再收。** 先关后写的话，客户端看不到这个 `done`，
+          //    只能等它自己断开——而它不会主动断开。
+          if (event.event === 'done' || event.event === 'error') {
+            terminal = true
+            stopWaiting()
+          }
+        })()
       })
+
+      stream.onAbort(() => close())
 
       // ③ 心跳。反代和 CDN 会在几十秒空闲后掐掉没有字节的连接，而这个批次可能
       //    正卡在一张 81 帧的动图上——用户看到的表现是「进度条不动」，没有报错。
-      while (!closed) {
-        await stream.sleep(15_000)
-        if (closed) break
+      while (!closed && !terminal) {
+        await new Promise<void>((resolve) => {
+          finishSleep = resolve
+          heartbeatTimer = setTimeout(resolve, 15_000)
+        })
+        // 唤醒我们的是 `done` 或断线，不是到点：别再发一次 ping
+        if (closed || terminal) break
         await stream.writeSSE({ event: 'ping', data: '{}' })
       }
 
+      // 终态这条路走完也要退订。断线那条已经在 `close()` 里退了，这里重复调是安全的
+      stopWaiting()
       unsubscribe()
     })
   })

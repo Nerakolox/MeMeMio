@@ -1,4 +1,5 @@
 import { and, eq, inArray, lt, sql } from 'drizzle-orm'
+import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
 import { reindexJobs } from './schema.js'
 
@@ -15,6 +16,30 @@ import { reindexJobs } from './schema.js'
  */
 
 export type ReindexJobRow = typeof reindexJobs.$inferSelect
+
+/**
+ * 一次领取的标识。理由与 `data/tag-jobs.ts` 的 `TagJobClaim` **逐字相同**，
+ * 那边写了完整的推导，这边不重复。
+ *
+ * 这里值得单独说一句的是**它比打标那边更要紧一点**：`markReindexJobDone` 是
+ * **删行**。迟到的完成会删掉另一个进程正在跑的那一行，于是一条活着的任务凭空消失，
+ * 它后面写的进度和失败都没地方记；而如果迟到的是 `markReindexJobRetry`，
+ * 那一行会被改成 `pending`，第三个进程再领一遍——同一张图算两次向量。
+ */
+export type ReindexJobClaim = { id: string; attempts: number }
+
+/** 从 `claimReindexJob` 返回的行走一次，拿到这次领取的标识。 */
+export function claimOfReindex(job: ReindexJobRow): ReindexJobClaim {
+  return { id: job.id, attempts: job.attempts }
+}
+
+function claimedWhere(claim: ReindexJobClaim): SQL {
+  return and(
+    eq(reindexJobs.id, claim.id),
+    eq(reindexJobs.status, 'running'),
+    eq(reindexJobs.attempts, claim.attempts),
+  ) as SQL
+}
 
 /** 重算的重试上限。比打标宽松一点：它不花 AI 视觉的钱，只是一次 embedding 调用。 */
 export const MAX_REINDEX_ATTEMPTS = 3
@@ -80,20 +105,26 @@ export async function claimReindexJob(db: Db = defaultDb): Promise<ReindexJobRow
  * 进度不依赖这些行：`total` / `done` 由 `countEmbeddingProgress` 从 `memes` 真实计数
  * 算出来（§6.5.4），删掉队列行不影响它。
  */
-export async function markReindexJobDone(id: string, db: Db = defaultDb): Promise<void> {
-  await db.delete(reindexJobs).where(eq(reindexJobs.id, id))
+export async function markReindexJobDone(
+  claim: ReindexJobClaim,
+  db: Db = defaultDb,
+): Promise<boolean> {
+  const rows = await db.delete(reindexJobs).where(claimedWhere(claim)).returning({ id: reindexJobs.id })
+  return rows.length > 0
 }
 
 export async function markReindexJobRetry(
-  id: string,
+  claim: ReindexJobClaim,
   runAfter: Date,
   lastError: string,
   db: Db = defaultDb,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(reindexJobs)
     .set({ status: 'pending', runAfter, lastError })
-    .where(eq(reindexJobs.id, id))
+    .where(claimedWhere(claim))
+    .returning({ id: reindexJobs.id })
+  return rows.length > 0
 }
 
 /**
@@ -108,16 +139,40 @@ export async function markReindexJobRetry(
  * 留下一条已经推后但 attempts 没退回去的任务。同 `deferTagJob`。
  */
 export async function deferReindexJob(
-  id: string,
+  claim: ReindexJobClaim,
   attempts: number,
   runAfter: Date,
   lastError: string,
   db: Db = defaultDb,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(reindexJobs)
     .set({ status: 'pending', attempts, runAfter, lastError })
-    .where(eq(reindexJobs.id, id))
+    .where(claimedWhere(claim))
+    .returning({ id: reindexJobs.id })
+  return rows.length > 0
+}
+
+/**
+ * 停机时把**本进程正在跑**的重算任务放回 `pending`。理由与 `releaseRunningTagJobs`
+ * 逐字相同（见 `data/tag-jobs.ts`）：10 秒的 `stop_grace_period` 等不完 30 秒的任务，
+ * 等下去只会被 SIGKILL，任务永远停在 `running`。
+ *
+ * 重算的代价比打标小得多（一次 embedding 调用，不烧视觉的钱），所以「重算一遍」
+ * 这条代价在这里更轻——更没有理由为它去冒静默卡死的风险。
+ */
+export async function releaseRunningReindexJobs(
+  ids: string[],
+  reason: string,
+  db: Db = defaultDb,
+): Promise<number> {
+  if (ids.length === 0) return 0
+  const rows = await db
+    .update(reindexJobs)
+    .set({ status: 'pending', runAfter: new Date(), lastError: reason })
+    .where(and(inArray(reindexJobs.id, ids), eq(reindexJobs.status, 'running')))
+    .returning({ id: reindexJobs.id })
+  return rows.length
 }
 
 /**
@@ -126,11 +181,16 @@ export async function deferReindexJob(
  * 管理员得能看见。
  */
 export async function markReindexJobFailed(
-  id: string,
+  claim: ReindexJobClaim,
   lastError: string,
   db: Db = defaultDb,
-): Promise<void> {
-  await db.update(reindexJobs).set({ status: 'failed', lastError }).where(eq(reindexJobs.id, id))
+): Promise<boolean> {
+  const rows = await db
+    .update(reindexJobs)
+    .set({ status: 'failed', lastError })
+    .where(claimedWhere(claim))
+    .returning({ id: reindexJobs.id })
+  return rows.length > 0
 }
 
 /**

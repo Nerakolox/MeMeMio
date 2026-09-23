@@ -1,12 +1,15 @@
 import { isVisionConfigured } from '../ai/vision.js'
 import { loadRuntimeConfig } from '../data/runtime-config.js'
 import {
+  claimOf,
   claimTagJob,
   deferTagJob,
   markTagJobDone,
   markTagJobFailed,
   markTagJobRetry,
+  releaseRunningTagJobs,
   requeueStaleRunningJobs,
+  type TagJobClaim,
   type TagJobRow,
 } from '../data/tag-jobs.js'
 import { FFMPEG_CONCURRENCY } from '../image/constants.js'
@@ -64,8 +67,33 @@ const JOB_TIMEOUT_MS = 90_000
 /**
  * 回收卡在 running 的任务的判据。必须**明显大于** `JOB_TIMEOUT_MS`，
  * 否则会把正在跑的任务抢走，表现是同一张图被调用两次 AI。
+ *
+ * ⚠️ **这个数不许暴露成运行参数**（SPEC §5.6 / §9.26）：它和 `JOB_TIMEOUT_MS`
+ *    是同一个判断的两半，可独立调节就会有人调反，表现正是上面那句「同一张图付两次钱」。
  */
 const STALE_RUNNING_MS = JOB_TIMEOUT_MS * 4
+
+/**
+ * 僵死任务的扫描间隔。**本函数从「启动时扫一次」改成周期性扫描的全部落点。**
+ *
+ * 启动时那一次不够：进程被 OOM 或强杀后如果几秒内就重启，在途任务还没超过
+ * `STALE_RUNNING_MS`，启动那一次一条都捞不到，之后再也没人扫它——一批图静默停在
+ * 「打标中」，界面上也没有入口能把它们捞出来。
+ *
+ * 取 1 分钟的实测量级：判据是 6 分钟（`STALE_RUNNING_MS`），所以「被杀」到「被回收」
+ * 落在 6–7 分钟之间。这个数**不是**「多久发现」，是「多久扫一遍」，调小只增加空查询。
+ */
+const STALE_SWEEP_INTERVAL_MS = 60_000
+
+/**
+ * 停机时留给在途任务的收尾时限。
+ *
+ * **必须短于 compose 的 `stop_grace_period`（默认 10 秒）**，否则超时之后 Docker 直接
+ * SIGKILL，那些任务就永远停在 `running` 了——而「放回 `pending`」正是这一整套要保住的东西。
+ * 取 4 秒：一个任务的自然耗时上限是 90 秒，所以**等它们跑完从来不是选项**，
+ * 这个时限只是给「刚好快跑完」的那一两个留一点余地，减少白花的钱。
+ */
+export const SHUTDOWN_DRAIN_MS = 4_000
 
 /**
  * 队列空时的轮询间隔。
@@ -78,18 +106,38 @@ const IDLE_POLL_MS = 2_000
 /** 没配视觉通道时的轮询间隔。这时候查得再勤也没用，但也不能彻底不查。 */
 const UNCONFIGURED_POLL_MS = 60_000
 
+/** 一个在途任务。`job` 留着是为了停机时能按领取标识把它放回去。 */
+type InFlight = { promise: Promise<void>; job: TagJobRow; controller: AbortController }
+
 type WorkerState = {
   stopping: boolean
   loop: Promise<void>
-  inFlight: Map<string, Promise<void>>
+  inFlight: Map<string, InFlight>
   perUser: Map<string, number>
   wake: (() => void) | null
+  sweepTimer: ReturnType<typeof setInterval> | null
+  /** 停机信号。让卡在「等在途任务」上的 tick 立刻返回，否则 `await self.loop` 没有上界。 */
+  stopSignal: Promise<void>
+  signalStop: () => void
 }
 
 let state: WorkerState | null = null
 
-export function startTagWorker(): void {
+export type TagWorkerOptions = {
+  /**
+   * 僵死扫描的间隔，只有测试会传。**不要去调生产里的默认值**——
+   * 那个数写在 `STALE_SWEEP_INTERVAL_MS` 的注释里，理由也写在那儿。
+   */
+  sweepIntervalMs?: number
+}
+
+export function startTagWorker(options: TagWorkerOptions = {}): void {
   if (state !== null) return
+
+  let signalStop: () => void = () => {}
+  const stopSignal = new Promise<void>((resolve) => {
+    signalStop = resolve
+  })
 
   const self: WorkerState = {
     stopping: false,
@@ -97,9 +145,21 @@ export function startTagWorker(): void {
     inFlight: new Map(),
     perUser: new Map(),
     wake: null,
+    sweepTimer: null,
+    stopSignal,
+    signalStop,
   }
   state = self
   self.loop = runLoop(self)
+
+  // 周期扫僵死任务。**独立于 tick 循环**：tick 可能正卡在 `Promise.race` 上等一个在途
+  // 任务（最长 `JOB_TIMEOUT_MS` = 90 秒），挂在循环里的话扫描会被它一起推迟。
+  // `unref` 不让它撑住进程退出——停机时也会显式清掉。
+  self.sweepTimer = setInterval(() => {
+    void sweepStale(self)
+  }, options.sweepIntervalMs ?? STALE_SWEEP_INTERVAL_MS)
+  self.sweepTimer.unref()
+
   // 这里记的是**默认值**，不是当前生效值——真正生效的要等第一轮 tick 查完库才知道，
   // 那时会把实际用的数记进日志。写死「已生效」会让人以为配置没被读到
   log.info(
@@ -109,34 +169,86 @@ export function startTagWorker(): void {
 }
 
 /**
- * 停止 worker：不再取新任务，**等在途任务跑完**。
+ * 停止 worker：不再取新任务，先给在途任务一个收尾时限。
  *
- * 等而不是砍，是为了「退出时不留半完成任务」：每个在途任务最后都要写一次
- * `tag_jobs`（done / pending / failed），砍掉的话它会永远停在 running。
- * 真被 SIGKILL 砍掉的那种由启动时的 `requeueStaleRunningJobs` 兜底。
+ * **先等、到点放回 `pending`，不是无限等。** 等是为了「退出时不留半完成任务」——
+ * 每个在途任务最后都要写一次 `tag_jobs`（done / pending / failed）。但等是有界的：
+ * `drainMs` 到点之后，还没跑完的任务被**主动 abort 并放回 `pending`**，
+ * 因为等下去的结果是被 Docker SIGKILL 强杀，那些任务反而永远停在 `running`。
  *
- * 在途任务本身有 `JOB_TIMEOUT_MS` 上限，所以这里的等待是有界的。
+ * ⚠️ **被放回的图会重新调一次视觉模型，也就是同一张图付两次钱。** 这是已知代价：
+ *    静默卡死（图上没有出口、日志里没有错误）比重复花钱严重得多。
+ *
+ * 真被 SIGKILL 砍掉、连这一步都没走到的那些，由周期性的 `requeueStaleRunningJobs` 兜底。
  */
-export async function stopTagWorker(): Promise<void> {
+export async function stopTagWorker(drainMs: number = SHUTDOWN_DRAIN_MS): Promise<void> {
   const self = state
   if (self === null) return
   state = null
 
   self.stopping = true
   self.wake?.()
+  self.signalStop()
+  if (self.sweepTimer !== null) {
+    clearInterval(self.sweepTimer)
+    self.sweepTimer = null
+  }
+
+  // 有界：tick 里那次「等在途任务」的 race 也挂了 `stopSignal`
   await self.loop
-  await Promise.allSettled([...self.inFlight.values()])
-  log.info('打标 worker 已停止')
+  await drain(self, drainMs)
+}
+
+async function drain(self: WorkerState, drainMs: number): Promise<void> {
+  const pending = [...self.inFlight.values()]
+  if (pending.length === 0) {
+    log.info('打标 worker 已停止')
+    return
+  }
+
+  let timer: ReturnType<typeof setTimeout> | null = null
+  const deadline = new Promise<boolean>((resolve) => {
+    timer = setTimeout(() => resolve(false), drainMs)
+  })
+  const settled = await Promise.race([
+    Promise.allSettled(pending.map((entry) => entry.promise)).then(() => true),
+    deadline,
+  ])
+  if (timer !== null) clearTimeout(timer)
+
+  if (settled) {
+    log.info('打标 worker 已停止')
+    return
+  }
+
+  // 到点还没跑完：掐掉在途的外部调用，把任务放回队列。
+  // 掐掉是**省钱的**（那次视觉请求不会再回结果），但**不改变正确性**——
+  // 就算它晚一步写回来，那些写入都带着领取标识，命不中已经是 pending 的行。
+  const leftover = [...self.inFlight.values()]
+  for (const entry of leftover) entry.controller.abort()
+  const released = await releaseRunningTagJobs(leftover.map((entry) => entry.job.id))
+  log.warn(
+    { drainMs, inFlight: leftover.length, released },
+    '停机收尾超时，在途任务已放回队列（这些图会重新调用一次模型）',
+  )
+}
+
+/** 周期性地把僵死任务放回队列。异常只记日志，绝不让它打挂定时器。 */
+async function sweepStale(self: WorkerState): Promise<void> {
+  if (self.stopping) return
+  try {
+    const requeued = await requeueStaleRunningJobs(STALE_RUNNING_MS)
+    if (requeued > 0) {
+      log.warn({ requeued, staleMs: STALE_RUNNING_MS }, '回收了僵死的 running 任务')
+    }
+  } catch (error) {
+    log.error({ err: error }, '回收僵死任务失败，下轮再试')
+  }
 }
 
 async function runLoop(self: WorkerState): Promise<void> {
-  try {
-    const requeued = await requeueStaleRunningJobs(STALE_RUNNING_MS)
-    // 正常退出路径下这里永远是 0。非 0 说明上次是被砍死的，值得在日志里显眼
-    if (requeued > 0) log.warn({ requeued }, '回收了上次异常退出遗留的 running 任务')
-  } catch (error) {
-    log.error({ err: error }, '回收遗留任务失败，worker 继续启动')
-  }
+  // 启动时先扫一次：正常退出路径下这里永远是 0，非 0 说明上次是被砍死的，值得显眼
+  await sweepStale(self)
 
   while (!self.stopping) {
     try {
@@ -164,8 +276,10 @@ async function tick(self: WorkerState): Promise<void> {
   setFfmpegConcurrency(runtime?.ffmpegConcurrency ?? FFMPEG_CONCURRENCY)
 
   if (self.inFlight.size >= tagConcurrency) {
-    // 等任意一个跑完再来。这不是 sleep，是在等真实进度
-    await Promise.race([...self.inFlight.values()])
+    // 等任意一个跑完再来。这不是 sleep，是在等真实进度。
+    // ⚠️ **必须一起等 `stopSignal`**：否则停机时 `await self.loop` 会一直卡在这个 race 上，
+    //    要等到某个任务自然结束（最长 90 秒）才返回，收尾时限就形同虚设
+    await Promise.race([...self.inFlight.values()].map((entry) => entry.promise).concat(self.stopSignal))
     return
   }
 
@@ -182,24 +296,58 @@ async function tick(self: WorkerState): Promise<void> {
     .filter(([, count]) => count >= perUserInflight)
     .map(([userId]) => userId)
 
-  const job = await claimTagJob(busy)
-  if (job === null) {
+  const claim = await claimTagJob(busy)
+
+  if (claim.kind === 'empty') {
     await idle(self, IDLE_POLL_MS)
     return
   }
 
+  if (claim.kind === 'exhausted') {
+    // 重领次数已耗尽（判据在 claimTagJob 里，行已经被落成 failed）。
+    // 这里只负责把 `memes.tag_status` 对齐——**不能光改队列表**，那会留下
+    // 「任务说失败、图说还在打标」的矛盾，而它不报错、只是让那张图永远显示在打标中。
+    //
+    // 不睡轮询间隔：队列里可能还有下一条同样的任务，让它立刻被处理。
+    await finalizeTagFailure(claim.job.memeId, 'needs_manual')
+    log.warn(
+      { jobId: claim.job.id, memeId: claim.job.memeId, attempts: claim.job.attempts },
+      '任务重领次数已达上限，落终局失败',
+    )
+    return
+  }
+
+  const job = claim.job
+  const controller = new AbortController()
+
   self.perUser.set(job.userId, (self.perUser.get(job.userId) ?? 0) + 1)
-  const promise = runJob(job).finally(() => {
-    self.inFlight.delete(job.id)
-    const left = (self.perUser.get(job.userId) ?? 1) - 1
-    if (left <= 0) self.perUser.delete(job.userId)
-    else self.perUser.set(job.userId, left)
-  })
-  self.inFlight.set(job.id, promise)
+  const promise = runJob(job, controller)
+    // ⚠️ **`.catch` 不能省。** `finally` 不接拒绝，所以「`runJob` 的 catch 里那次写库
+    //    又失败了」会变成 unhandledRejection，而 Node 22 默认**直接退出进程**——
+    //    于是一次写库抖动就打挂整个 worker。这里记一条，任务留给周期扫描回收。
+    .catch((error: unknown) => {
+      log.error(
+        { err: error, jobId: job.id, memeId: job.memeId },
+        '打标任务收尾异常，任务可能停在 running，等周期扫描回收',
+      )
+    })
+    .finally(() => {
+      self.inFlight.delete(job.id)
+      const left = (self.perUser.get(job.userId) ?? 1) - 1
+      if (left <= 0) self.perUser.delete(job.userId)
+      else self.perUser.set(job.userId, left)
+    })
+  self.inFlight.set(job.id, { promise, job, controller })
 }
 
-async function runJob(job: TagJobRow): Promise<void> {
-  const controller = new AbortController()
+/**
+ * 跑一条任务。
+ *
+ * `tagMeme` 承诺不抛，所以**唯一可能从这里逃出去的是写库失败**（`applyFailure` 里那次
+ * `finalizeTagFailure` / `markTagJob*`）。调用方挂了 `.catch`，别把那条去掉。
+ */
+async function runJob(job: TagJobRow, controller: AbortController): Promise<void> {
+  const claim = claimOf(job)
   const timer = setTimeout(() => controller.abort(), JOB_TIMEOUT_MS)
 
   try {
@@ -211,24 +359,34 @@ async function runJob(job: TagJobRow): Promise<void> {
     ])
 
     if (outcome.kind === 'done') {
-      await markTagJobDone(job.id)
+      await writeBack(claim, '完成', await markTagJobDone(claim))
       return
     }
     if (outcome.kind === 'gone') {
       // 图在排队期间被删了。任务判完成，不是失败——没什么可重试的
-      await markTagJobDone(job.id)
+      await writeBack(claim, '图已删除', await markTagJobDone(claim))
       log.debug({ jobId: job.id, memeId: job.memeId }, '图已删除，任务跳过')
       return
     }
     if (outcome.kind === 'not_configured') {
       // 取任务和真正调用之间配置被清空了。**这次尝试不算数**
-      await deferTagJob(
-        job.id,
-        job.attempts - 1,
-        new Date(Date.now() + UNCONFIGURED_POLL_MS),
-        '视觉通道未配置',
+      await writeBack(
+        claim,
+        '未配置',
+        await deferTagJob(
+          claim,
+          job.attempts - 1,
+          new Date(Date.now() + UNCONFIGURED_POLL_MS),
+          '视觉通道未配置',
+        ),
       )
       return
+    }
+
+    if (outcome.kind === 'job_timeout') {
+      // ⚠️ **超时之后那份工作还在后台跑**（race 只是不再等它）。主动掐掉，让它别再烧钱、
+      //    也别再往下写。就算它晚一步写回来，带领取标识的写入也命不中已经被放回的行
+      controller.abort()
     }
 
     await applyFailure(job, outcome.failure, outcome.detail)
@@ -242,18 +400,36 @@ async function runJob(job: TagJobRow): Promise<void> {
   }
 }
 
+/**
+ * 迟到的写入会命中 0 行（任务已被放回 `pending`，或被别的进程重新领走）。
+ *
+ * 这不是错误，也不能当成成功：静默按成功处理的表现是「日志说完成了，库里还是 pending」。
+ */
+async function writeBack(claim: TagJobClaim, action: string, written: boolean): Promise<void> {
+  if (written) return
+  log.warn(
+    { jobId: claim.id, attempts: claim.attempts, action },
+    '任务已被放回队列或被别的进程领走，本次写入丢弃',
+  )
+}
+
 /** 重试矩阵的落点。**判断在 `lib/retry-policy.ts`，这里只执行。** */
 async function applyFailure(
   job: TagJobRow,
   failure: Parameters<typeof decideRetry>[0],
   detail: string,
 ): Promise<void> {
+  const claim = claimOf(job)
   const decision = decideRetry(failure, job.attempts)
   const lastError = `${failure}: ${detail}`.slice(0, 500)
 
   if (decision.action === 'retry') {
     // 退避靠推后 run_after，不靠 sleep
-    await markTagJobRetry(job.id, new Date(Date.now() + decision.delayMs), lastError)
+    const written = await markTagJobRetry(claim, new Date(Date.now() + decision.delayMs), lastError)
+    if (!written) {
+      await writeBack(claim, '排入重试', false)
+      return
+    }
     log.info(
       { jobId: job.id, memeId: job.memeId, failure, attempts: job.attempts, delayMs: decision.delayMs },
       '打标失败，已排入重试',
@@ -262,20 +438,37 @@ async function applyFailure(
   }
 
   // tagStatus 为 null 表示**不要动 tag_status**——embedding 失败不回滚打标
+  //
+  // ⚠️ 这里的顺序是「先写 memes、再写队列表」，和上面重试那一支不同（那边只有一个写入）。
+  //    两次写入不装在同一个事务里，所以存在一个极短的窗口：`memes` 已经翻了
+  //    `needs_manual`、而队列表那一行还没改。**这个窗口是自愈的**——任务还是 `running`，
+  //    下一个领到它的进程会照常写出自己的结论；反过来（先改队列表）留下的窗口是
+  //    「任务已终局、图还在打标中」，那需要一个外部动作才能对齐。
   if (decision.tagStatus !== null) {
     await finalizeTagFailure(job.memeId, decision.tagStatus)
   }
-  await markTagJobFailed(job.id, lastError)
+  const written = await markTagJobFailed(claim, lastError)
+  if (!written) {
+    await writeBack(claim, '落终局失败', false)
+    return
+  }
   log.warn(
     { jobId: job.id, memeId: job.memeId, failure, attempts: job.attempts, tagStatus: decision.tagStatus },
     '打标终局失败',
   )
 }
 
-function timeoutAfter(ms: number): Promise<{ kind: 'failed'; failure: 'unreachable'; detail: string }> {
+/**
+ * 整体超时那一支。**`kind` 必须和 `TagOutcome` 的取值都不同**——
+ * 撞名的话下面 `outcome.kind === 'job_timeout'` 的分支永远走不到，`controller.abort()`
+ * 静默失效，后台那份工作会一直烧到它自己结束。
+ */
+function timeoutAfter(
+  ms: number,
+): Promise<{ kind: 'job_timeout'; failure: 'unreachable'; detail: string }> {
   return new Promise((resolve) => {
     setTimeout(
-      () => resolve({ kind: 'failed', failure: 'unreachable', detail: `任务超过 ${ms}ms 整体超时` }),
+      () => resolve({ kind: 'job_timeout', failure: 'unreachable', detail: `任务超过 ${ms}ms 整体超时` }),
       ms,
     ).unref()
   })

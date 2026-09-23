@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
 import { importBatches, importItems, memes, users } from './schema.js'
 
@@ -128,14 +128,21 @@ export type ItemOutcome = {
  *
  * 先建条目再回填是有意的：处理中途进程被杀，批次快照里那些没结论的文件就是
  * `pending`，而不是「记录不存在」。后者会让前端在重连后收到一个总数对不上的快照。
+ *
+ * ⚠️ **条件里的 `result is null` 是「先写入者赢」。** 没有它的话，两个进程同时处理
+ *    同一条目时后完成的那个会覆盖前一个的结论——而这件事**是可能的**：
+ *    停机把在途批次放回队列、或另一个副本启动时续跑，都可能让两个进程同时跑一条。
+ *    覆盖的表现是「用户看到 exact_dup，库里其实导入了一张」或者反过来，不报错。
+ *
+ * @returns 这次写入有没有落到库上（false = 别的进程已经写了结论，本进程的作废）
  */
 export async function recordItemOutcome(
   batchId: string,
   fileName: string,
   outcome: ItemOutcome,
   db: Db = defaultDb,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const rows = await db
     .update(importItems)
     .set({
       result: outcome.result,
@@ -144,7 +151,15 @@ export async function recordItemOutcome(
       distance: outcome.distance ?? null,
       reason: outcome.reason ?? null,
     })
-    .where(and(eq(importItems.batchId, batchId), eq(importItems.fileName, fileName)))
+    .where(
+      and(
+        eq(importItems.batchId, batchId),
+        eq(importItems.fileName, fileName),
+        isNull(importItems.result),
+      ),
+    )
+    .returning({ fileName: importItems.fileName })
+  return rows.length > 0
 }
 
 /**
@@ -185,6 +200,70 @@ export async function getBatchSnapshot(batchId: string, db: Db = defaultDb) {
     needsReview,
     failed,
   }
+}
+
+/** 一个还能接着跑的批次：已提交、还剩没结论的条目、元信息还没过期。 */
+export type ResumableBatch = {
+  batchId: string
+  userId: string
+  items: { fileName: string; tempStorageKey: string }[]
+  /** 有 `pending` 条目但暂存键为空、跑不了的条数。**不为 0 时批次永远收不了尾**，要能看见。 */
+  brokenCount: number
+}
+
+/**
+ * 能续跑的批次——**进程死在半路的那些**（`services/import.ts` 的
+ * `resumeInterruptedBatches`，SPEC §1.4）。
+ *
+ * 「已提交」的判据只有 `committed_at` 非空。**没有「有没有进程在跑」这一列**，
+ * 所以这一层回答不了那个问题，调用方也**不能**假设它回答了：
+ * 多副本时另一个副本可能正在跑同一批。真正的互斥需要租约（一把带心跳的写锁），
+ * 而本项目不引入 Redis（§9.11）——代价与取舍写在 `resumeInterruptedBatches` 上。
+ *
+ * 两个过滤条件各有理由：
+ *
+ *   - `result is null` —— 只续没结论的。有结论的重跑一遍会覆盖用户的判断，
+ *     而且白花一次 AI 的钱。
+ *   - `expires_at > now()` —— 批次元信息 24 小时后被清理（`image-pipeline.md §6`），
+ *     在那之后这些条目已经不存在了，续跑一批只剩半截的记录没有意义。
+ *
+ * 用 `committed_at` 升序：先被提交的先续，和它们在线时的顺序一致。
+ */
+export async function listResumableBatches(db: Db = defaultDb): Promise<ResumableBatch[]> {
+  const rows = await db
+    .select({
+      batchId: importBatches.id,
+      userId: importBatches.userId,
+      fileName: importItems.fileName,
+      tempStorageKey: importItems.tempStorageKey,
+    })
+    .from(importBatches)
+    .innerJoin(importItems, eq(importItems.batchId, importBatches.id))
+    .where(
+      and(
+        isNotNull(importBatches.committedAt),
+        isNull(importItems.result),
+        gt(importBatches.expiresAt, new Date()),
+      ),
+    )
+    .orderBy(asc(importBatches.committedAt), asc(importItems.fileName))
+
+  const byBatch = new Map<string, ResumableBatch>()
+  for (const row of rows) {
+    let batch = byBatch.get(row.batchId)
+    if (batch === undefined) {
+      batch = { batchId: row.batchId, userId: row.userId, items: [], brokenCount: 0 }
+      byBatch.set(row.batchId, batch)
+    }
+    if (row.tempStorageKey === null) {
+      // 建批次时一定写了这个键，读到 null 说明数据被手工改过。这条跑不了，
+      // 但它不能被悄悄丢掉——丢掉的后果是批次永远停在「还有 pending」
+      batch.brokenCount += 1
+      continue
+    }
+    batch.items.push({ fileName: row.fileName, tempStorageKey: row.tempStorageKey })
+  }
+  return [...byBatch.values()]
 }
 
 /**

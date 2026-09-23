@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNotNull, isNull, lt, not, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
+import { MAX_TAG_CLAIMS } from '../lib/retry-policy.js'
 import { db as defaultDb, type Db } from './db.js'
 import { memes, tagJobs } from './schema.js'
 
@@ -22,6 +23,53 @@ import { memes, tagJobs } from './schema.js'
  */
 
 export type TagJobRow = typeof tagJobs.$inferSelect
+
+/**
+ * **一次领取的标识**。所有回写 `tag_jobs` 的语句都必须带上它做条件。
+ *
+ * ⚠️ 这不是为了防恶意，是为了防**迟到的写入**：任务有整体超时（`queue/worker.ts` 的
+ *    `JOB_TIMEOUT_MS`），超时之后原任务还在后台跑，它晚一步的完成 / 重试 / 失败
+ *    会把**已经被放回 `pending`、或已经被别的进程重新领走**的那一行改掉。表现是
+ *    「这张图刚被重排上就又变成 done 了」，不报错、也查不出来。
+ *
+ * `(id, attempts)` 是本表的全序：`claimTagJob` 每次领取都把 `attempts` +1，所以同一
+ * 行的两次领取**不可能拿到同一个 attempts**。条件里再带上 `status = 'running'`
+ * 是为了覆盖「被放回 pending 后还没人领」的那一段——那时 attempts 没变，只有状态变了。
+ *
+ * 用 `attempts` 而不是新加一列 `claimed_at`：它已经存在、已经单调递增，
+ * 加一列就要迁移，而迁移换来的信息量是一样的。
+ */
+export type TagJobClaim = { id: string; attempts: number }
+
+/** 从 `claimTagJob` 返回的行走一次，拿到这次领取的标识。 */
+export function claimOf(job: TagJobRow): TagJobClaim {
+  return { id: job.id, attempts: job.attempts }
+}
+
+/**
+ * 回写条件的唯一落点。**不要在任何调用方手写这几个条件**——漏掉 `attempts` 那一条
+ * 不会报错，只会让迟到的写入赢，而那正是这一整套要挡住的东西。
+ */
+function claimedWhere(claim: TagJobClaim): SQL {
+  return and(
+    eq(tagJobs.id, claim.id),
+    eq(tagJobs.status, 'running'),
+    eq(tagJobs.attempts, claim.attempts),
+  ) as SQL
+}
+
+/**
+ * `claimTagJob` 的三种结局。
+ *
+ * `exhausted` 单独成一支而不是「返回 null、顺便偷偷改一行」：收到它的调用方要做的
+ * 事和「没任务」完全不同——它得把 `memes.tag_status` 翻成 `needs_manual`
+ * （那是 `services/` 的活，本表不认识 `memes` 的状态机），并且**不能当成队列空**去睡轮询间隔。
+ */
+export type TagJobClaimResult =
+  | { kind: 'job'; job: TagJobRow }
+  /** 重领次数已耗尽，本函数已把它落成 `failed`。调用方负责对齐 `memes.tag_status`。 */
+  | { kind: 'exhausted'; job: TagJobRow }
+  | { kind: 'empty' }
 
 /**
  * 入队。
@@ -153,11 +201,17 @@ export async function requeueTagJobsForRetag(
  *
  * `run_after` 同时被推到 now()，作为「这条任务最后一次被碰」的时间戳，
  * 给 `requeueStaleRunningJobs` 用——单独加一列 started_at 只为这一个用途不划算。
+ *
+ * ⚠️ **毒任务在领取这**一步就被掐掉**（`MAX_TAG_CLAIMS`，见 `lib/retry-policy.ts`）。
+ *    每次领取都把进程打崩的任务永远走不到 `applyFailure`，重试矩阵根本没机会运行，
+ *    于是它会被无限重领。判据只能是 `attempts`——它没有 `last_error` 可看。
+ *    落终局**在这里**做而不是在 worker 里：worker 拿到的将是一条 `failed` 的行，
+ *    它再走一次领取判定就变成「先污染再判断」，多一个可以忘记的分支。
  */
 export async function claimTagJob(
   excludeUserIds: string[] = [],
   db: Db = defaultDb,
-): Promise<TagJobRow | null> {
+): Promise<TagJobClaimResult> {
   return db.transaction(async (tx) => {
     const conditions = [eq(tagJobs.status, 'pending'), sql`${tagJobs.runAfter} <= now()`]
     if (excludeUserIds.length > 0) {
@@ -173,7 +227,13 @@ export async function claimTagJob(
       .for('update', { skipLocked: true })
 
     const job = rows[0]
-    if (job === undefined) return null
+    if (job === undefined) return { kind: 'empty' }
+
+    if (job.attempts >= MAX_TAG_CLAIMS) {
+      const lastError = `重试次数已耗尽（已被领取 ${job.attempts} 次，一次都没产出结论）`
+      await tx.update(tagJobs).set({ status: 'failed', lastError }).where(eq(tagJobs.id, job.id))
+      return { kind: 'exhausted', job: { ...job, status: 'failed', lastError } }
+    }
 
     const attempts = job.attempts + 1
     await tx
@@ -181,13 +241,21 @@ export async function claimTagJob(
       .set({ status: 'running', attempts, runAfter: new Date() })
       .where(eq(tagJobs.id, job.id))
 
-    return { ...job, status: 'running', attempts }
+    return { kind: 'job', job: { ...job, status: 'running', attempts } }
   })
 }
 
-/** 把任务标成完成。 */
-export async function markTagJobDone(id: string, tx: Db = defaultDb): Promise<void> {
-  await tx.update(tagJobs).set({ status: 'done', lastError: null }).where(eq(tagJobs.id, id))
+/**
+ * 把任务标成完成。返回**是否真的写到了**——false 表示这次领取已经不作数了
+ * （超时放回队列后又被别人领走），调用方记一条日志，不要当成成功。
+ */
+export async function markTagJobDone(claim: TagJobClaim, tx: Db = defaultDb): Promise<boolean> {
+  const rows = await tx
+    .update(tagJobs)
+    .set({ status: 'done', lastError: null })
+    .where(claimedWhere(claim))
+    .returning({ id: tagJobs.id })
+  return rows.length > 0
 }
 
 /**
@@ -197,15 +265,17 @@ export async function markTagJobDone(id: string, tx: Db = defaultDb): Promise<vo
  * 退避上限与降级分支见 agents/rules/queue.md §3。
  */
 export async function markTagJobRetry(
-  id: string,
+  claim: TagJobClaim,
   runAfter: Date,
   lastError: string,
   tx: Db = defaultDb,
-): Promise<void> {
-  await tx
+): Promise<boolean> {
+  const rows = await tx
     .update(tagJobs)
     .set({ status: 'pending', runAfter, lastError })
-    .where(eq(tagJobs.id, id))
+    .where(claimedWhere(claim))
+    .returning({ id: tagJobs.id })
+  return rows.length > 0
 }
 
 /**
@@ -213,11 +283,16 @@ export async function markTagJobRetry(
  * 队列表不认识 `memes`。
  */
 export async function markTagJobFailed(
-  id: string,
+  claim: TagJobClaim,
   lastError: string,
   tx: Db = defaultDb,
-): Promise<void> {
-  await tx.update(tagJobs).set({ status: 'failed', lastError }).where(eq(tagJobs.id, id))
+): Promise<boolean> {
+  const rows = await tx
+    .update(tagJobs)
+    .set({ status: 'failed', lastError })
+    .where(claimedWhere(claim))
+    .returning({ id: tagJobs.id })
+  return rows.length > 0
 }
 
 /**
@@ -229,24 +304,63 @@ export async function markTagJobFailed(
  * **第一次网络抖动就直接判 needs_manual**——而它本该还有五次机会。
  */
 export async function deferTagJob(
-  id: string,
+  claim: TagJobClaim,
   attempts: number,
   runAfter: Date,
   lastError: string,
   tx: Db = defaultDb,
-): Promise<void> {
-  await tx
+): Promise<boolean> {
+  const rows = await tx
     .update(tagJobs)
     .set({ status: 'pending', attempts, runAfter, lastError })
-    .where(eq(tagJobs.id, id))
+    .where(claimedWhere(claim))
+    .returning({ id: tagJobs.id })
+  return rows.length > 0
+}
+
+/** 进程退出时把在途任务放回队列的理由。它会原样进 `last_error`。 */
+export const RELEASED_ON_SHUTDOWN = '进程退出，任务被放回队列'
+
+/**
+ * 停机时把**本进程正在跑**的任务放回 `pending`。
+ *
+ * ⚠️ **这是「放回」而不是「等它们跑完」**，理由是一个算术：compose 的
+ *    `stop_grace_period` 默认 10 秒，而单个任务的整体超时是 90 秒——退出时等在途任务
+ *    跑完是**不可能**的，等下去的结果是被 SIGKILL 强杀，任务永远停在 `running`
+ *    （表现是「这几张图再也不会被打标」，不报错、不告警）。
+ *
+ * **已知代价：被放回的图会重新调一次视觉模型，也就是同一张图付两次钱。**
+ * 这是有意的取舍——静默卡死比重复花钱严重得多。
+ *
+ * 条件里的 `status = 'running'` 是精确的，不需要 `attempts`：别的进程只能领 `pending`，
+ * 所以一条还在 `running` 的行只可能属于我们。反过来，已经跑完写了结论的行不会被碰。
+ */
+export async function releaseRunningTagJobs(
+  ids: string[],
+  reason: string = RELEASED_ON_SHUTDOWN,
+  db: Db = defaultDb,
+): Promise<number> {
+  if (ids.length === 0) return 0
+  const rows = await db
+    .update(tagJobs)
+    .set({ status: 'pending', runAfter: new Date(), lastError: reason })
+    .where(and(inArray(tagJobs.id, ids), eq(tagJobs.status, 'running')))
+    .returning({ id: tagJobs.id })
+  return rows.length
 }
 
 /**
- * 把卡在 running 的任务放回队列。**进程启动时调一次。**
+ * 把卡在 running 的任务放回队列。**启动时扫一次，之后周期性地扫**
+ * （周期在 `queue/worker.ts` / `queue/reindex-worker.ts`）。
  *
- * 优雅退出会等在途任务跑完，所以正常路径下这里什么都捞不到。它防的是
- * SIGKILL / OOM / 断电——那种情况下任务永远停在 running，**表现是「这张图再也不会被打标」，
- * 不报错、不告警**。没有这个兜底，一次容器重启就能静默废掉一批图。
+ * ⚠️ **只在启动时扫一次是不够的**，这正是本函数从「启动一次」改成「周期性」的原因：
+ *    进程被 OOM 或强杀后如果**几秒内就重启**，那些在途任务还没超过回收阈值，
+ *    启动时那一次扫描一条都捞不到——之后再也没人扫它。表现是一批图静默停在
+ *    「打标中」，界面上也没有入口能把它们捞出来。
+ *
+ * 正常退出路径下这里什么都捞不到：停机时在途任务由 `releaseRunningTagJobs` 直接放回。
+ * 它防的是 SIGKILL / OOM / 断电，以及**别的副本**死在半路（多副本时每个进程都扫，
+ * 谁先扫到都一样，条件是幂等的）。
  *
  * 判据是 `run_after`（取任务时被推到 now()）早于 `now() - staleMs`。
  * `staleMs` 要明显大于任务整体超时，否则会把正在跑的任务抢走导致重复调用 AI。

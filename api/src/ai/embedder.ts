@@ -98,10 +98,14 @@ function parseEmbedding(payload: unknown): number[] | null {
  *               的模型名和真正算向量的模型对不上，**不报错**，只是那条记录
  *               从此被当成「已经是新模型了」永远不再重算。
  */
-export async function embedText(text: string, config: EmbedderConfig): Promise<EmbedResult> {
+export async function embedText(
+  text: string,
+  config: EmbedderConfig,
+  signal?: AbortSignal,
+): Promise<EmbedResult> {
   // 能力从配置读。实测支持 dimensions 就直接要 1024 维，从根上没有「截断后忘了归一化」的机会
   const useDimParam = config.dimParamWorks === true
-  const result = await callEmbeddings(text, config, useDimParam ? EMBED_DIM : null)
+  const result = await callEmbeddings(text, config, useDimParam ? EMBED_DIM : null, signal)
   if (!result.ok) return { ok: false, reason: result.reason }
 
   if (useDimParam) return { ok: true, vector: result.vector }
@@ -127,21 +131,28 @@ export async function callEmbeddings(
   text: string,
   config: ProviderCredentials,
   dimensions: number | null,
+  signal?: AbortSignal,
 ): Promise<EmbedCallResult> {
   const body: Record<string, unknown> = { model: config.model, input: text }
   if (dimensions !== null) body['dimensions'] = dimensions
 
   let response: Response
   try {
-    response = await fetchWithTimeout(joinEndpoint(config.baseUrl, '/v1/embeddings'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // ⚠️ 解密后的 key 只在调用这一瞬间存在，不进日志、不进错误 details（SPEC §3.5）
-        Authorization: `Bearer ${config.apiKey}`,
+    response = await fetchWithTimeout(
+      joinEndpoint(config.baseUrl, '/v1/embeddings'),
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // ⚠️ 解密后的 key 只在调用这一瞬间存在，不进日志、不进错误 details（SPEC §3.5）
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        // 任务整体超时之后 worker 会 abort，让在途的这次调用别再烧钱。
+        // 这里传 undefined 是合法的（`fetchWithTimeout` 会退回单次超时那一条）
+        signal,
       },
-      body: JSON.stringify(body),
-    })
+    )
   } catch {
     // 超时和网络错误都归 unreachable，**不记 err 原文**：中转服务的报错里可能
     // 回显 Authorization 头（error-handling.md §4 的警告）。记状态码和 reason 就够定位。

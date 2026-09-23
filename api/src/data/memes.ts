@@ -436,41 +436,69 @@ export async function hasEmbeddedMemes(db: Db = defaultDb): Promise<boolean> {
   return rows.length > 0
 }
 
+/** 翻页游标。`(created_at, id)` 的**全序**，两个字段都返回是为了让调用方能接着翻。 */
+export type StaleEmbeddingCursor = { createdAt: Date; id: string }
+
+/** 一行过期记录。`createdAt` 是翻页用的，不是给业务看的。 */
+export type StaleEmbeddingRow = { id: string; createdAt: Date }
+
 /**
- * 向量过期的记录 id：有 `search_text` 可以重算，但 `embed_model` 不是当前模型
+ * 向量过期的记录：有 `search_text` 可以重算，但 `embed_model` 不是当前模型
  * （含 `embed_model is null` ——打标成功、向量化失败的那些，SPEC §6.3.1）。
  *
- * **只取 id，不取 search_text。** 一次重算几万条，把文本全拉进内存没有意义；
+ * **只取 id 和翻页键，不取 search_text。** 一次重算几万条，把文本全拉进内存没有意义；
  * worker 取到任务后按 id 单条回查。
  *
  * `search_text` 为空的跳过：重算是「从 search_text 重新算向量」（§6.5.4），
  * 没有 search_text 就没有可算的东西，排进队列只会得到一条必然失败的任务。
  *
- * @param offset 分批取。入队**不会**让这些行不再过期（`embed_model` 要等算完才改），
- *               所以不能反复取第一页——那是个死循环。按 `created_at` 排序 + offset
- *               往后翻，中途有图被删会漏掉几条，再点一次「重建索引」就能补上
- *               （入队幂等）。
+ * ⚠️ **keyset 翻页，不是 `OFFSET`。** 这里不能用心自问「offset 有什么错」——
+ *    入队与消费是**同时**发生的：`enqueueAllStale` 在翻页，而 worker 正在把算完的记录
+ *    的 `embed_model` 改成当前模型，于是那些行**掉出 WHERE 集合**，后面的 offset
+ *    整体前移、跳过同样数量的行。表现是「重建跑完了，搜索报 `degraded: false`，
+ *    但有一批图永远召不回来」——正是 SPEC §9.20 要防的那种静默失效。
+ *
+ *    游标取 `(created_at, id)` 而不是只取 `created_at`：后者的默认值是 `now()`，
+ *    同一次导入的几百张图 `created_at` 完全相同，只按它排序时**每一页的顺序都不确定**。
+ *    `ORDER BY` 和游标条件必须是同一对键，否则漏行会以另一种形式回来。
+ *    这条规则和 `listMemesForRetag` 是同一条（那边写了完整推导），
+ *    但**重建可以直接用 keyset 修掉，重打当初靠 tiebreaker 就收了**——
+ *    因为重建入队幂等，而重打再点一次要重新花钱。
+ *
+ * @param cursor null 表示从头开始；否则传上一页最后一行的游标。
  */
 export async function listStaleEmbeddingMemeIds(
   currentModel: string,
+  cursor: StaleEmbeddingCursor | null,
   limit: number,
-  offset = 0,
   db: Db = defaultDb,
-): Promise<string[]> {
-  const rows = await db
-    .select({ id: memes.id })
-    .from(memes)
-    .where(
-      and(
-        isNull(memes.deletedAt),
-        sql`${memes.searchText} is not null and ${memes.searchText} <> ''`,
-        or(isNull(memes.embedModel), sql`${memes.embedModel} <> ${currentModel}`),
-      ),
+): Promise<StaleEmbeddingRow[]> {
+  const conditions: SQL[] = [
+    isNull(memes.deletedAt),
+    sql`${memes.searchText} is not null and ${memes.searchText} <> ''`,
+    or(isNull(memes.embedModel), sql`${memes.embedModel} <> ${currentModel}`) as SQL,
+  ]
+  if (cursor !== null) {
+    // 行值比较。**两边都带上显式类型转换**：游标是从 JS 传回去的参数，不给 Postgres
+    // 定位类型的依据时它会按 `text` 处理，于是 uuid 那一半比较的语义就不对了。
+    //
+    // ⚠️ 时间那一半传的是 **ISO 字符串**，不是 `Date` 对象。写上 `::timestamptz` 之后
+    //    postgres.js 会按「这个参数是字符串」来编码它（它照 cast 的类型选编码器），
+    //    而 `Date` 没有 `str()`——报的是 `The "string" argument must be of type string`，
+    //    抛在**绑定参数那一步**，和这条 SQL 看起来毫无关系。
+    //    走 drizzle 的列比较（`lt(memes.runAfter, new Date())`）不会有这个问题，
+    //    因为那边由列类型决定编码方式；这里是手写 cast，只能自己把值转成字符串。
+    conditions.push(
+      sql`(${memes.createdAt}, ${memes.id}) > (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id}::uuid)`,
     )
-    .orderBy(memes.createdAt)
+  }
+
+  return await db
+    .select({ id: memes.id, createdAt: memes.createdAt })
+    .from(memes)
+    .where(and(...conditions))
+    .orderBy(memes.createdAt, memes.id)
     .limit(limit)
-    .offset(offset)
-  return rows.map((row) => row.id)
 }
 
 /** 重算要用的原文。**只读 `search_text`，不碰 AI 产出字段**（§6.5.4：重算不重跑视觉）。 */
