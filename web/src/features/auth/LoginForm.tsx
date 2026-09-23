@@ -9,6 +9,7 @@ import { type ApiError, login, toStateError } from '../../lib/api'
 import { TOUCH } from '../../lib/touch'
 import { useAuth } from '../../contexts/auth'
 import { AuthError, PasswordField } from './auth-fields'
+import { useCooldown } from './use-cooldown'
 
 /**
  * 只在 `next` 确实是**站内路径**时回跳（state-navigation.md §5 要的那次回跳）。
@@ -35,6 +36,12 @@ export function LoginForm() {
   const [error, setError] = useState<ApiError | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
+
+  /**
+   * 限流退避（SPEC §2.2）。倒计时挂在**按钮文案**上而不是错误面板里：`Alert` 是
+   * `role="alert"`，里面每秒变一次的文字会被读屏一句一句念出来。
+   */
+  const cooldown = useCooldown(error?.code === 'RATE_LIMITED' ? error.retryAfterSeconds : null)
 
   // 「打开就能打字」，但**只在精确指针上**（styling.md「自动聚焦」）：
   // 手机上抢焦点会直接弹起软键盘，把下半屏连同提交按钮一起盖住。
@@ -95,10 +102,16 @@ export function LoginForm() {
       {error && <AuthError title="登录失败" error={error} />}
 
       <div className="grid gap-4">
-        <Button type="submit" size="lg" className={cn(TOUCH, 'w-full')} disabled={submitting}>
+        <Button
+          type="submit"
+          size="lg"
+          className={cn(TOUCH, 'w-full')}
+          disabled={submitting || cooldown > 0}
+        >
           {/* 转圈与文案二选一不变：单改文案的话，慢网络下按钮看着像没反应 */}
           {submitting && <LoaderCircle className="animate-spin" />}
-          {submitting ? '登录中…' : '登录'}
+          {/* 退避期间按钮禁用并把剩余秒数说出来——否则用户只会觉得按钮坏了，然后一直点 */}
+          {submitting ? '登录中…' : cooldown > 0 ? `${cooldown} 秒后可重试` : '登录'}
         </Button>
         <p className="text-center text-sm text-muted-foreground">
           没有账号？{' '}

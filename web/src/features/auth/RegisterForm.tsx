@@ -9,6 +9,7 @@ import { type ApiError, register, toStateError } from '../../lib/api'
 import { TOUCH } from '../../lib/touch'
 import { useAuth } from '../../contexts/auth'
 import { AuthError, PasswordField } from './auth-fields'
+import { useCooldown } from './use-cooldown'
 
 export function RegisterForm() {
   const { setUser } = useAuth()
@@ -19,6 +20,10 @@ export function RegisterForm() {
   const [error, setError] = useState<ApiError | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const nameRef = useRef<HTMLInputElement>(null)
+
+  // 限流退避（SPEC §2.2）。倒计时挂在按钮文案上，理由同 `LoginForm.tsx`（读屏会把
+  // `role="alert"` 里每秒变一次的文字念出来）。
+  const cooldown = useCooldown(error?.code === 'RATE_LIMITED' ? error.retryAfterSeconds : null)
 
   // 只在精确指针上抢焦点，理由同登录页（styling.md「自动聚焦」）。
   useEffect(() => {
@@ -101,9 +106,14 @@ export function RegisterForm() {
       {error && <AuthError title="注册失败" error={error} />}
 
       <div className="grid gap-4">
-        <Button type="submit" size="lg" className={cn(TOUCH, 'w-full')} disabled={submitting}>
+        <Button
+          type="submit"
+          size="lg"
+          className={cn(TOUCH, 'w-full')}
+          disabled={submitting || cooldown > 0}
+        >
           {submitting && <LoaderCircle className="animate-spin" />}
-          {submitting ? '注册中…' : '注册'}
+          {submitting ? '注册中…' : cooldown > 0 ? `${cooldown} 秒后可重试` : '注册'}
         </Button>
         <p className="text-center text-sm text-muted-foreground">
           已有账号？{' '}
