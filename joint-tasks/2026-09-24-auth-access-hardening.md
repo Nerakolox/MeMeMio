@@ -64,7 +64,55 @@
 
 ## 6. api 端验收
 
-（待回填）
+**八条都改完了**（§4 两项按任务要求未动）。**没改 SPEC**。回填人：api 执行者，2026-09-24。
+
+### 6.1 逐条
+
+| # | 落地 | 证据 |
+|---|---|---|
+| 1 | `routes/memes.ts` / `routes/search.ts` 都挂 `.use('*', requireAuth)`，`Vars` 收窄成 `AuthVariables`（`currentUser` 非空）。handler 里那七处 `actor === null` 判断连同「匿名 favorited 恒 false」的分支一起删了。`middleware/auth.ts` 的 `optionalAuth` / `OptionalAuthVariables` **也删了**——收口之后它没有调用方，留着就是下次有人挂回去的入口 | `tests/read-path-auth.test.ts`（12 条） |
+| 2 | `routes/auth.ts` 注册/登录各挂 `rateLimit()`（注册 5/分钟、登录 10/分钟，**按客户端 IP 分桶**）；`app.ts` 加全局 `bodyLimit` | `tests/auth-rate-limit.test.ts`（6 条）、`tests/body-limit.test.ts`（3 条）、§6.2 的反代实测 |
+| 3 | 注册顺序改成**邀请码预检 → 查重名 → scrypt**（`routes/auth.ts` 的 `needsInvite` 段），判定仍以事务里那条 UPDATE 为准 | `tests/auth-register.test.ts`「没带邀请码时，即使重名也报邀请码的错」 |
+| 4 | 首个用户判定进事务，第一句 `select pg_advisory_xact_lock(76453102)`，之后才 `countUsers` | 同上「两个并发注册同时抢第一个用户」 |
+| 5 | `consumeInviteCode` 改成单条 `update … where used_by is null and (expires_at is null or expires_at > now()) returning`，影响 0 行即无效（之后那次读只为了让 message 准一点，不承担判定） | 同上「两个并发注册用同一个邀请码」「过期的邀请码不能用」 |
+| 6 | 新增 `lib/uuid.ts`（纯函数）。**路径参数 → 404 `NOT_FOUND`**：`/memes/:id` 系列（5 处）、`/imports/:batchId`（4 处）、`PATCH /admin/users/:id`。**查询参数 → 400**：`?uploader=`。游标在 `data/memes.ts` 的 `decodeCursor` 里判 uuid，不合法就**当没传游标**（沿用既有「解不出来即忽略」的约定，不新增错误码） | `tests/read-path-auth.test.ts` 的「uuid 形状」组、`tests/admin-users.test.ts` |
+| 7 | `routes/admin.ts` 的配额解析换成 `parseQuotaBytes`：只收十进制字符串与安全范围内的整数，`BigInt()` 会静默吞下的写法（`0x10` / `' 12 '` / `true` / 浮点）一律 400 | `tests/admin-users.test.ts`（8 条，含 `'abc'` 那条） |
+| 8 | `ai/provider.ts` 的 `fetchWithTimeout` 统一带上 `redirect: 'manual'`（放在 init 展开**之后**，调用方覆盖不掉）。测试连接与生产打标走的是这同一个函数，没有第二条请求构造 | `src/ai/probe.test.ts` 新增 3 条：两条断言视觉/embedding 探测的**每次**调用都带 `manual`，一条断言 3xx 判失败且只发一次 |
+
+**关于限流的键**（任务 §3 的陷阱）：取 `X-Forwarded-For` 的**最后一项**（反代追加的那一跳，`TRUSTED_PROXY_HOPS = 1`），取不到再退到 socket 地址，都没有则归到一个共享的 `unknown` 桶——**不因为取不到 IP 就放行**。实现与推导在 `src/lib/client-ip.ts`、`src/middleware/rate-limit.ts`，计数在进程内存里（与 §5.6 同一类，注释里写明了「每进程」）。
+
+### 6.2 实测手段与结果
+
+- **单测**：`npm run test:unit` → 19 文件 / **187 条**全绿（含新增 `lib/uuid.test.ts` 4 条、`lib/client-ip.test.ts`，以及 probe 新增的重定向 3 条）。
+- **全套（含集成，真 Postgres）**：`npx vitest run` → **44 文件 / 490 条全绿**（其中单测 187 条，集成 303 条）。新增 5 个文件：`read-path-auth`、`auth-register`、`auth-rate-limit`、`admin-users`、`body-limit`；改了两个既有文件（`search.test.ts` 加登录态并把 favorited 那条改成**双向**断言、`random-sample.test.ts` 的 `list()` 去掉「actor 可空」的默认值）。
+- **反代后面的限流实测**（任务 §2 明确要求「在反代后面实测一次」）：本机起真 api（`tsx src/server.ts`，指向 `_test` 库，端口 3100），前面挂一个**按 Caddy 语义实现的反代**（把真实 socket 来源地址**追加**到 `X-Forwarded-For` 末尾，再转发），用 `curl --interface` 从两个不同的环回地址发起（Windows 支持 `127.0.0.0/8`，两侧实测都拿得到独立来源地址）。结果：
+  - 客户端 `127.0.0.1` 连打 12 次登录：前 10 次 401，**第 11、12 次 429，`Retry-After: 59`**，信封 `{"code":"RATE_LIMITED","message":"请求过于频繁，请 59 秒后再试"}`（头里的秒数与 message 里的数字一致）。
+  - **换一个客户端 `127.0.0.2`（同一个反代、同一个上游进程）仍然是 401** —— 这条是「按客户端 IP 分桶」与「全站共用一个计数器」的分界点：两个请求在服务端看到的 socket 地址都是反代的 `127.0.0.1`，只有 XFF 末尾那一项不同。
+  - 伪造前缀不产生新桶：`127.0.0.2` 打满后再发 `X-Forwarded-For: 1.2.3.4`，仍 429（`Retry-After: 55`）——取的是末尾那一项，不是第一项。
+  - 规则之间互不牵连：被登录限流的是同一个 IP，注册口照样放行。
+  - **这是本机的反代替身，不是部署机的 Caddy**；两者的差别只在替身只有几十行、只做追加与转发。上真机后值得按 [首次部署](2026-09-24-first-deploy.md) 的清单再量一次。
+- **web 侧类型**：`web/` 跑 `tsc --noEmit` 干净（路由的中间件换成了 `requireAuth`，`AppType` 派生出来的请求/响应形状没变）。
+
+### 6.3 与任务写的三处不同（都不改 SPEC）
+
+1. **请求体过大用的是 `VALIDATION_FAILED`（400），不是新错误码。** SPEC §2.2/§2.3 里没有「请求体过大」这一条，`QUOTA_EXCEEDED` 说的是存储配额。为一次超限去加错误码要改 SPEC，本轮不划算——**留个记号**：如果产品希望客户端能区分「传太大了、请分批」和「参数写错了」，那就该在 §2.2 加一条并让 web 显示不同的文案。
+2. **bodyLimit 的上限取了 `MAX_FILES_PER_BATCH * 1 KiB`（≈1 MiB）而不是「每条约 2 KiB」。** 起草时把批次上限记成了 100，算出来 200 KiB 偏小；实际是 1000，导入清单每条约 0.6 KiB（文件名 ≤255B + 暂存键 ≈300B + JSON 外壳）。⚠️ **服务端没有对文件名单独设长度上限**，所以这个常数是「我方客户端会发出什么」的判断，不是从某个字段推出来的——真要为它找硬依据，那该是给文件名加长度限制，不是调这个数。
+3. **`optionalAuth` 连同类型一起删了**（任务只说「不用那条分支」）。理由写在 `middleware/auth.ts`：收口之后它没有调用方，留着的那天会有人顺手挂回去。
+
+### 6.4 一处需要产品负责人知道的语义（不阻塞）
+
+**首个账号注册的并发竞争里，落败的那个请求现在是 400，不是「第二个 member」。** 它轮到 advisory lock 时库里已经有人了，于是不再享受引导期豁免、必须出示邀请码（§3.1），而此刻邀请码还不存在（admin 刚建出来）。它能得到的唯一诚实回应就是「邀请码不能为空」。反过来让它静默变成 member 才不对——那等于绕过邀请制。
+
+这条符合契约原文（§3.2 只说第一个是 admin，其余按 §3.1 要邀请码），**所以没有改 SPEC**；但空实例上两个人同时注册时，第二个人看到的文案是「邀请码不能为空」，而他在那一刻**不可能有邀请码**。要不要给这种情形一句更准的话（「这个实例已经有人注册过了」），归 §4 第 1 项（引导方式）一起裁定比较合适——`BOOTSTRAP_TOKEN` 或 CLI 建 admin 都会让这个窗口消失。
+
+### 6.5 未做
+
+- **§4 两项按任务要求未实现**：`BOOTSTRAP_TOKEN` / CLI 建 admin 的取舍、测试连接是否拒私网地址（只做了第 8 条 `redirect: 'manual'`）。
+- **没跑评测集**，因为没动打标提示词、词表和检索参数（`api/AGENTS.md §5` 的那条只在动这三样时才要求）。
+- **§8 联合验收还没做**：web 的 §7.4 列的三点现在有答案了，需要 web 执行者拿真 api 重跑一遍——
+  - `Retry-After` 的实际形式是 **delta-seconds**（正整数秒，如 `59`），不是 HTTP-date；
+  - 限流**按客户端 IP**，反代后面取 `X-Forwarded-For` 的**最后一项**（§6.2 已实测）；
+  - 会话过期后读路径的 401 触发点：`GET /memes`、`GET /memes/{id}`、`/search`、`GET /memes?random=true` 四条都是 401 `UNAUTHENTICATED`（另有 `tag-status`、`retag` 与三个写路径），由 `read-path-auth.test.ts` 钉住。跳转后 web 的 `?next=` 回跳机制不变。
 
 ## 7. web 端验收
 
