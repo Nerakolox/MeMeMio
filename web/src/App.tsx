@@ -11,6 +11,7 @@ import {
   SidebarTrigger,
 } from './components/ui/sidebar'
 import { TooltipProvider } from './components/ui/tooltip'
+import { loginPath } from './lib/api'
 import { HomePage } from './routes/home'
 import { BrowsePage } from './routes/browse'
 import { ImportPage } from './routes/import'
@@ -39,8 +40,7 @@ function RequireAuth() {
   const { user } = useAuth()
   const location = useLocation()
   if (!user) {
-    const next = encodeURIComponent(location.pathname + location.search)
-    return <Navigate to={`/login?next=${next}`} replace />
+    return <Navigate to={loginPath(location.pathname + location.search)} replace />
   }
   return <Outlet />
 }

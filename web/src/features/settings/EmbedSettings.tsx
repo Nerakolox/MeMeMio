@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../lib/api'
 import {
   fetchEmbedConfig,
@@ -24,7 +23,7 @@ import { Button } from '../../components/ui/button'
 import { ConfigFields } from './ConfigFields'
 import { SettingsCard } from './SettingsCard'
 import { TestResultPanel } from './TestResultPanel'
-import { describeSaveError, loginRedirectPath } from './save-error'
+import { describeSaveError } from './save-error'
 import { EMBED_NOTICE } from './settings-copy'
 import { NOTICE, TOUCH } from './settings-ui'
 import { embedNotes, embedProbes } from './test-probes'
@@ -41,7 +40,6 @@ import { useConfigForm } from './use-config-form'
  */
 
 export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () => void }) {
-  const navigate = useNavigate()
   const form = useConfigForm(testEmbedConfig)
 
   const [config, setConfig] = useState<EmbedConfig | null>(null)
@@ -112,10 +110,6 @@ export function EmbedSettings({ onReindexTriggered }: { onReindexTriggered: () =
         return
       }
       const view = describeSaveError(err)
-      if (view.needsLogin) {
-        navigate(loginRedirectPath(), { replace: true })
-        return
-      }
       if (view.retest) form.resetTest()
       setSaveError(view.text)
     } finally {

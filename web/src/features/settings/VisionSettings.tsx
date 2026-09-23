@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { ChevronDownIcon } from 'lucide-react'
 import { ApiError } from '../../lib/api'
 import { cn } from '../../lib/utils'
@@ -17,7 +16,7 @@ import { Separator } from '../../components/ui/separator'
 import { ConfigFields } from './ConfigFields'
 import { SettingsCard } from './SettingsCard'
 import { TestResultPanel } from './TestResultPanel'
-import { describeSaveError, loginRedirectPath } from './save-error'
+import { describeSaveError } from './save-error'
 import { VISION_NOTICE } from './settings-copy'
 import { NOTICE, TOUCH } from './settings-ui'
 import { visionProbes } from './test-probes'
@@ -40,7 +39,6 @@ function sourceLabel(source: VisionConfig['source']): string {
 }
 
 export function VisionSettings() {
-  const navigate = useNavigate()
   const form = useConfigForm(testVisionConfig)
 
   const [config, setConfig] = useState<VisionConfig | null>(null)
@@ -91,10 +89,6 @@ export function VisionSettings() {
       setSaved(true)
     } catch (err) {
       const view = describeSaveError(err)
-      if (view.needsLogin) {
-        navigate(loginRedirectPath(), { replace: true })
-        return
-      }
       if (view.retest) form.resetTest()
       setSaveError(view.text)
     } finally {

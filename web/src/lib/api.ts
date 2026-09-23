@@ -29,30 +29,80 @@ export class ApiError extends Error {
   readonly requestId: string
   readonly status: number
   readonly details: Record<string, unknown> | undefined
+  /**
+   * `RATE_LIMITED` 的退避秒数（SPEC §2.2「按 `Retry-After` 退避」）。
+   *
+   * 头缺失或格式不认识时是 `null`——那时只能把 message 摆出来，没有倒计时可给。
+   * 解析放在这里而不是各个调用点：登录页只认得秒数，而头有两种合法形式（见 `parseRetryAfter`）。
+   */
+  readonly retryAfterSeconds: number | null
 
-  constructor(status: number, body: ApiErrorBody['error']) {
+  constructor(
+    status: number,
+    body: ApiErrorBody['error'],
+    retryAfterSeconds: number | null = null,
+  ) {
     super(body.message)
     this.name = 'ApiError'
     this.status = status
     this.code = body.code
     this.requestId = body.requestId
     this.details = body.details
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
-/** 服务端可能新增错误码（那是兼容变更），所以解析不出信封时也要给出能用的错误，不能白屏。 */
+/**
+ * `Retry-After` → 秒数。**两种形式都要认**：`120`（delta-seconds）与 HTTP-date
+ * （`Wed, 21 Oct 2026 07:28:00 GMT`）。RFC 允许任一，而 SPEC §2.2 只写了「按 `Retry-After`
+ * 退避」没钉形式——只认数字的表现是换个服务端写法倒计时就消失，且不报错。
+ */
+function parseRetryAfter(header: string | null): number | null {
+  if (header === null) return null
+  const raw = header.trim()
+
+  const seconds = Number(raw)
+  if (Number.isInteger(seconds) && seconds >= 0) return seconds
+
+  const at = Date.parse(raw)
+  if (Number.isNaN(at)) return null
+  return Math.max(0, Math.ceil((at - Date.now()) / 1000))
+}
+
+/**
+ * 服务端可能新增错误码（那是兼容变更），所以解析不出信封时也要给出能用的错误，不能白屏。
+ *
+ * ⚠️ **它不只是个解析函数，还是会话过期的统一拦截点**：401 且不是下面那四个 auth 端点时，
+ * 会顺手清 user 并跳到登录页（`onUnauthenticated`）。所有读路径都经过这里，这正是要的效果
+ * ——**副作用发生在「造错误对象」这一刻**，调用点不需要各自记得处理 401。
+ */
 export async function toApiError(res: Response): Promise<ApiError> {
+  const retryAfter = parseRetryAfter(res.headers.get('Retry-After'))
+
+  let err: ApiError | null = null
   try {
     const body = (await res.json()) as ApiErrorBody
-    if (body?.error?.code) return new ApiError(res.status, body.error)
+    if (body?.error?.code) err = new ApiError(res.status, body.error, retryAfter)
   } catch {
     // 落到下面的兜底
   }
-  return new ApiError(res.status, {
-    code: 'INTERNAL',
-    message: `请求失败（HTTP ${res.status}）`,
-    requestId: res.headers.get('X-Request-Id') ?? '未知',
-  })
+
+  err ??= new ApiError(
+    res.status,
+    {
+      code: 'INTERNAL',
+      message: `请求失败（HTTP ${res.status}）`,
+      requestId: res.headers.get('X-Request-Id') ?? '未知',
+    },
+    retryAfter,
+  )
+
+  // 会话过期：清 user + 跳登录页（SPEC §2.2）。**放在唯一发请求的地方**，不是为了少写几行
+  // ——读路径有十几条（浏览 / 搜索 / 图墙 / 打标 / 导入 / 设置），逐个调用点去写，
+  // 漏掉任何一条的表现都是「会话过期后一直提示加载失败，用户只能反复点重试」。
+  if (err.code === 'UNAUTHENTICATED' && !isSessionPath(res.url)) onUnauthenticated?.()
+
+  return err
 }
 
 /**
@@ -69,6 +119,64 @@ export function toStateError(err: unknown): ApiError {
     message: '连不上服务端，确认 api 是否已启动',
     requestId: '无',
   })
+}
+
+// --- 会话过期：唯一的拦截点 -------------------------------------------------
+
+/**
+ * 会话过期时的处置函数，由 `AuthProvider` 在挂载时注册（`contexts/auth.tsx`）。
+ *
+ * 用注册而不是在这里直接 import context / router：这个模块是**非 React 的**，
+ * 拿不到 `useNavigate`，而把它变成 hook 就要每个调用点自己记得调一次——那又回到
+ * 「十几条读路径逐个去写」的老问题。
+ */
+let onUnauthenticated: (() => void) | null = null
+
+export function setUnauthenticatedHandler(fn: (() => void) | null): void {
+  onUnauthenticated = fn
+}
+
+/**
+ * 登录页地址，**带 `next` 回跳参数**（state-navigation.md §5）。
+ *
+ * 回跳是这一端最容易被用户抱怨的细节：从别人发来的搜索链接进来、登录完被丢到首页，
+ * 搜索词就没了。所以生成地址的地方**只有这一个**——`RequireAuth`（路由拦下）、
+ * 会话过期的拦截器、设置页保存时都用它，各写一份迟早会有一份忘了带 `next`。
+ *
+ * ⚠️ **`next` 是攻击者可控的，回跳前必须在登录页校验。** 那道闸门是
+ * `features/auth/LoginForm.tsx` 的 `safeNext`（挡 `//evil.com` 这类跨源），
+ * 这里只负责生成，不负责信任。
+ */
+export function loginPath(from: string): string {
+  return `/login?next=${encodeURIComponent(from)}`
+}
+
+/**
+ * 会话类端点。**这四条路径上的 401 不是「会话过期」**：
+ *
+ *   - `login` / `register`：这时根本还没有会话，401 是**凭据不对**（api 对两种情况
+ *     返回同一条消息以免枚举用户名）；
+ *   - `me`：启动时的一次探测，`AuthProvider` 自己区分「未登录」与「连不上服务器」，
+ *     见 `contexts/auth.tsx`；
+ *   - `logout`：会话本来就可能是已经没了的那个状态。
+ *
+ * 不排除它们的话，「密码输错一次」会被当成会话过期：清掉刚填的表单、把人从 `/login`
+ * 再跳一次 `/login`，而且 `next` 变成 `/login` 自己——登录成功后原地打转。
+ */
+const SESSION_PATHS = new Set([
+  '/api/v1/auth/login',
+  '/api/v1/auth/register',
+  '/api/v1/auth/logout',
+  '/api/v1/auth/me',
+])
+
+/** 取不到 URL 时按普通接口处理：宁可跳一次登录，也不放过真的会话过期。 */
+function isSessionPath(rawUrl: string): boolean {
+  try {
+    return SESSION_PATHS.has(new URL(rawUrl).pathname)
+  } catch {
+    return false
+  }
 }
 
 // 路径段带连字符，只能走下标访问；而 `typeof x['a'].b` 这种混写不合法，

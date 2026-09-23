@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../../lib/api'
 import {
   fetchRuntimeConfig,
@@ -15,7 +14,7 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { SettingsCard } from './SettingsCard'
-import { describeSaveError, loginRedirectPath } from './save-error'
+import { describeSaveError } from './save-error'
 import { RUNTIME_NOTICE } from './settings-copy'
 import { NOTICE, TOUCH } from './settings-ui'
 
@@ -109,7 +108,6 @@ function renderNotice(text: string) {
 }
 
 export function RuntimeSettings() {
-  const navigate = useNavigate()
   const [config, setConfig] = useState<RuntimeConfig | null>(null)
   const [values, setValues] = useState<Record<FieldName, string> | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -169,12 +167,9 @@ export function RuntimeSettings() {
     } catch (err) {
       // 复用配置卡片那一份错误呈现（http.md §3：按 code 分支，不解析 message）。
       // `view.retest` 在这里恒为 false——本卡片没有「测试连接」那一步，`CONFIG_TEST_REQUIRED`
-      // / `EMBED_DIM_TOO_SMALL` 两个分支走不到，非 admin 与未登录两条正是要的。
+      // / `EMBED_DIM_TOO_SMALL` 两个分支走不到，非 admin 那条正是要的（未登录那条由
+      // lib/api.ts 统一拦走）。
       const view = describeSaveError(err)
-      if (view.needsLogin) {
-        navigate(loginRedirectPath(), { replace: true })
-        return
-      }
       setSaveError(view.text)
     } finally {
       setSaving(false)
