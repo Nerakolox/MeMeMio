@@ -453,7 +453,7 @@ Embedding 实测维度 < 1024 直接拒绝保存，返回 `EMBED_DIM_TOO_SMALL`�
 
 ## §6.6 打标状态
 
-> **状态：`proposed`**（2026-09-19）。新增能力，两端确认后转 `accepted`。见[打标状态界面](../joint-tasks/2026-09-19-tagging-status.md)。
+> **状态：`accepted`**（2026-09-19 新增为 `proposed`，2026-09-24 转档）。两端实现已落、契约文本两端各自确认。**还不是 `stable`**：差的是一次验证——真库里造一张 `needs_manual`，核对汇总的 `needsManual` 等于列表条数。见[打标状态界面](../joint-tasks/2026-09-19-tagging-status.md)、[§9.28](09-decisions.md)。
 
 导入的终点是 `tag_status = pending`（[§6.2.2](#622-服务端处理顺序)），打标在后台队列里跑。**在补上本节之前，这件事对用户没有任何反馈**——打完了不知道，打失败了也不知道。
 

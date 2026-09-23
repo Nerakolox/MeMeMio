@@ -38,9 +38,11 @@
 | stable | 已通过验证并进入基线 | 可以按现行约定消费 |
 | deprecated | 已有替代方案，处于退出窗口 | 按迁移计划处理 |
 
-未注明状态的章节为 `accepted`——它们来自已对齐的设计文档，但**本项目当前没有任何 `stable` 条目**，因为还没有实现和验证。
+未注明状态的章节为 `accepted`——它们来自已对齐的设计文档。**本项目当前没有任何 `stable` 条目**：`stable` 要求验证过，而本项目还没有一次真实部署。
 
-明确标记 `proposed` 的：桌面端拖拽发送路径（[§9.2](09-decisions.md)）、各供应商的 `dimensions` 与 `json_object` 实际支持情况（[§9.7](09-decisions.md)）、词表 v0.1 的具体词条（[§4.2](04-vocabulary.md)）、打标状态接口（[§6.6](06-endpoints.md)，2026-09-19 新增，待两端确认）。前几项依赖 [供应商探测任务](../joint-tasks/2026-09-13-provider-spikes.md) 和 [评测集任务](../joint-tasks/2026-09-13-eval-set.md) 的结果。
+**状态标记记的是契约是否对齐，不记实现进度。** 两端可以按 `proposed` 的语义落代码——这是有意的选择，理由与代价见 [§9.28](09-decisions.md)——所以「标着 `proposed`」不等于「没实现」，反过来「代码跑起来了」也不该自动让某条转 `accepted`。
+
+明确标记 `proposed` 的：桌面端拖拽发送路径（[§9.2](09-decisions.md) 内）、各供应商的 `dimensions` 与 `json_object` 实际支持情况（[§9.7](09-decisions.md) 内）、敏感内容双通道（[§9.5](09-decisions.md)）、默认推荐配置与模型选型（[§9.8](09-decisions.md)）、[§9.12](09-decisions.md) 起的待验证项表、梗名别名层（[§9.18](09-decisions.md)），以及词表 v0.3.0 的具体词条（[§4.2](04-vocabulary.md)——它的升级门槛是 §9.12 表的 9.17，要评测集跑出结果）。这些要么依赖[供应商探测任务](../joint-tasks/2026-09-13-provider-spikes.md)，要么依赖[评测集任务](../joint-tasks/2026-09-13-eval-set.md)，两个都还没有结果。
 
 ## §0.4 基线与兼容
 
