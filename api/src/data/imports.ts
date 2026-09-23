@@ -43,6 +43,10 @@ export async function createBatch(input: {
         batchId: batch.id,
         fileName: f.fileName,
         sizeBytes: f.sizeBytes,
+        // ⚠️ 这个模板必须和 `storage/r2.ts` 的 `tempKeyFor` **逐字一致**：签发预签名
+        //    PUT 用的是那边拼出来的键，而 commit 以这一列为准（见 listBatchTempKeys）。
+        //    两边写岔的表现是**每一次 commit 都 VALIDATION_FAILED**——响亮地坏，
+        //    不会静默放行。导入的每个端到端用例都会踩到它，所以改这里必然打红。
         tempStorageKey: `temp/${batch.id}/${f.fileName}`,
       })),
     )
@@ -87,6 +91,27 @@ export async function claimBatchCommit(
 }
 
 // ── 处理过程中：写结果 ──────────────────────────────────────────────
+
+/**
+ * 批次里每个文件的暂存键。**commit 用它决定「处理哪些文件、各自的键是什么」**，
+ * 客户端在请求体里传的 tempKey 只用来对照（见 `routes/imports.ts` 的 `resolveCommitItems`）。
+ *
+ * 这一列是导入里唯一可信的暂存键来源：它在 `createBatch` 时写死，客户端没有任何一步
+ * 能改它。反过来，拿客户端传来的键直接去 `getObject` / `deleteObject` 等于把 R2 的
+ * 删除权交给了请求体——正式图片的键能从响应里的 `url` 推出来，而那条路不经过任何
+ * `memes` 写接口，`assertCanMutate` 拦不到（SPEC §3.4 的硬边界）。
+ *
+ * 不返回整行：commit 只需要文件名和键，其余列（`result`、`similar_to`……）由管线回填。
+ */
+export async function listBatchTempKeys(
+  batchId: string,
+  db: Db = defaultDb,
+): Promise<{ fileName: string; tempStorageKey: string | null }[]> {
+  return await db
+    .select({ fileName: importItems.fileName, tempStorageKey: importItems.tempStorageKey })
+    .from(importItems)
+    .where(eq(importItems.batchId, batchId))
+}
 
 export type ItemResult = 'imported' | 'exact_dup' | 'needs_review' | 'failed'
 

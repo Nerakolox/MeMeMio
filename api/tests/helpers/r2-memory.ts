@@ -18,17 +18,27 @@ export type R2Command =
   | { kind: 'delete'; key: string }
   | { kind: 'head'; key: string }
 
-export type R2Calls = { commands: R2Command[]; urls: string[] }
+/**
+ * 一次预签名。**记下 `contentLength`** —— 它是签名绑定的那个大小。
+ *
+ * 真的 R2 会拿实际 `Content-Length` 和它比，不符直接 403；替身没有「浏览器 PUT」这一步
+ * （测试用 `seedObject` 直接放字节），所以在这里断言签名里**绑了**这个值，
+ * 而不是假装替身能复现 R2 的拒绝。
+ */
+export type PresignCall = { key: string; contentLength: number | undefined }
+
+export type R2Calls = { commands: R2Command[]; urls: string[]; presigns: PresignCall[] }
 
 /** 对象键 → 字节。键是**带前缀的完整键**，和 R2 里真实存的一致。 */
 const objects = new Map<string, { body: Buffer; contentType: string | undefined }>()
 
-export const r2Calls: R2Calls = { commands: [], urls: [] }
+export const r2Calls: R2Calls = { commands: [], urls: [], presigns: [] }
 
 export function resetR2(): void {
   objects.clear()
   r2Calls.commands.length = 0
   r2Calls.urls.length = 0
+  r2Calls.presigns.length = 0
 }
 
 /**
@@ -105,6 +115,12 @@ export function installR2Memory(): void {
       options: { expiresIn?: number } = {},
     ): Promise<string> => {
       const objectKey = String(command.input['Key'])
+      const contentLength = command.input['ContentLength']
+      r2Calls.presigns.push({
+        key: objectKey,
+        // 没绑的话 `input` 里根本没有这个字段，断言会看到 undefined——那正是要测的
+        contentLength: typeof contentLength === 'number' ? contentLength : undefined,
+      })
       const url = `https://r2.test/${objectKey}?X-Amz-Expires=${options.expiresIn ?? 0}`
       r2Calls.urls.push(url)
       return url

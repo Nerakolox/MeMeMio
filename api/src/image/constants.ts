@@ -75,6 +75,27 @@ export const FRAME_DEDUP_DISTANCE = 4
 export const MAX_FILE_BYTES = 20n * 1024n * 1024n
 
 /**
+ * 送进 sharp 的图片**像素数**上限。超出报 FILE_TOO_LARGE（sharp 报
+ * `Input image exceeds pixel limit`，`asImageError` 认这句话）。
+ *
+ * **为什么不能只靠 `MAX_FILE_BYTES`：** 20MB 是**压缩后**的字节数，PNG/WebP 的压缩比
+ * 可以到几百倍，一个 20MB 的纯色或噪声图能解出上亿像素。**全解码内存 ≈ 像素 × 4 字节**
+ * （RGBA），所以上限要单独按像素数设，字节数管不了它。
+ *
+ * 取 50 MP 的依据：**单次解码峰值约 200 MB**，是「够用」和「不炸」之间的位置——
+ *
+ * - 够用：覆盖手机直出的最大一档（48MP），截图、表情包这类内容远在这之下。
+ * - 不炸：sharp 默认的 `limitInputPixels` 是 16383² ≈ 2.68 亿像素，全解码约 1 GB。
+ *   一个进程同时解两张就足以把 2 核小机器打到 OOM，而用户看到的只是「导入卡住」。
+ *
+ * ⚠️ **它是单次解码的量，不是进程峰值**：同时解几张由 `runtime_config.importConcurrency`
+ *    决定（SPEC §5.6），管理员把它调大时峰值跟着成倍涨。调大这个常量之前先看那个数。
+ *
+ * 超过的图按 FILE_TOO_LARGE 拒掉、失败原因具体到文件，而不是让 sharp 去解它。
+ */
+export const MAX_INPUT_PIXELS = 50_000_000
+
+/**
  * 入库近似重复的 Hamming 阈值（**不是**帧间去重那个，见 FRAME_DEDUP_DISTANCE）。
  *
  * 64 位哈希取 8 相当于 ~12.5% 的位差异。**这是保守值，理由是不对称的**：

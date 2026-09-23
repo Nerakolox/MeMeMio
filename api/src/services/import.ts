@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { db } from '../data/db.js'
 import { createMeme, findMemeByContentHash, findNearestByPhash } from '../data/memes.js'
+import { findUserById, getStorageUsedBytes } from '../data/auth.js'
 import {
   getBatchSnapshot,
   recordItemOutcome,
@@ -17,7 +18,14 @@ import { computePhash, readSize, toThumbnail } from '../image/decode.js'
 import { extractFrames, isAnimatedByFrames } from '../image/frames.js'
 import { probeMetadata, setFfmpegConcurrency } from '../image/probe.js'
 import { withTempFile } from '../image/temp-file.js'
-import { deleteObject, getObject, permanentKeyFor, putObject, thumbKeyFor } from '../storage/r2.js'
+import {
+  deleteObject,
+  getObject,
+  headObject,
+  permanentKeyFor,
+  putObject,
+  thumbKeyFor,
+} from '../storage/r2.js'
 import { publish } from './import-events.js'
 
 /**
@@ -54,6 +62,92 @@ export const PIPELINE_CONCURRENCY_DEFAULT = 2
 
 export type FileToProcess = { fileName: string; tempKey: string }
 
+/** `MAX_FILE_BYTES` 的 MB 数。只用来拼给用户看的文案，判定一律用 bigint 比。 */
+const MAX_FILE_MB = Number(MAX_FILE_BYTES / (1024n * 1024n))
+
+/**
+ * 条目 `reason` 直接给错误码原文的唯一情形。
+ *
+ * 其余失败都是「这个文件怎么了」（损坏、格式不支持、太大），reason 是给人看的一句话；
+ * 而配额用满是**批次级**结局——从这一刻起剩下的文件都不用再传了。客户端要能按这个
+ * 字面值把剩余条目一次性说明白，所以它跟其余的 reason 不是一个东西（SPEC §3.6）。
+ */
+const QUOTA_EXCEEDED_REASON = 'QUOTA_EXCEEDED'
+
+/**
+ * 配额检查（SPEC §3.6）。**三处都要调**：签发预签名 URL 前、commit 时、以及每个文件
+ * 去重之后真正入库前（后面两处在 `runPipeline` 的 ⑥ 和 `importReviewedFile`）。
+ *
+ * 为什么必须有三处：前两处面对的是**声明值**，而声明值可以撒谎，也可能只是传了一半。
+ * 真正决定装不装得下的是读回来的字节数，所以判定在第三处；前两处只是让「整批传到一半
+ * 才发现装不下」提前成「一开始就被拒」，省掉一次白传。
+ *
+ * ⚠️ 第三处**必须在去重之后**：字节完全相同的图和相似的图都不占空间，放在去重之前
+ * 会让「库里已经有一模一样的一张」变成「存储空间不足」。
+ *
+ * 配额**每次现查**，不吃调用方手里的快照：它可能在批次跑到一半时被管理员改小，
+ * 也可能被并发的另一个批次吃掉——用批次开头那一份等于「改了不生效」。
+ */
+export async function assertQuota(userId: string, incomingBytes: bigint): Promise<void> {
+  const user = await findUserById(userId)
+  if (user === null) throw new AppError('NOT_FOUND', '用户不存在')
+
+  const used = await getStorageUsedBytes(userId)
+  const remaining = user.storageQuotaBytes - used
+  if (incomingBytes > remaining) {
+    throw new AppError('QUOTA_EXCEEDED', '存储空间不足', {
+      // 客户端要能告诉用户「还差多少」，否则他只能反复试
+      remaining: (remaining > 0n ? remaining : 0n).toString(),
+      required: incomingBytes.toString(),
+      used: used.toString(),
+      quota: user.storageQuotaBytes.toString(),
+    })
+  }
+}
+
+/**
+ * 取暂存对象的字节。**导入的两条读路径共用**（批次管线、待确认队列的「仍然导入」）。
+ *
+ * ⚠️ 大小上限的两道关**都在读字节之前**（第一道）/ 紧接着读回来之后（第二道）：
+ *    一个声明 1KB、实际 300MB 的对象，等整份读进内存再比较 `MAX_FILE_BYTES` 时
+ *    内存已经吃完了，表现是进程被 OOM 杀掉，而不是「这个文件太大」。
+ *
+ * **配额不在这里查**，虽然时机上也可以：字节完全相同的图会走 `exact_dup`、
+ * 相似的图会进待确认队列，两种都不占空间，不该因为「装不下」被判失败。
+ * 判定在去重之后、真正要吃空间的那一步之前（调用方各自的位置见 `runPipeline`
+ * 的 ⑥ 和 `importReviewedFile`），两处都用**读回来的实际字节数**。
+ */
+async function readTempObject(tempKey: string): Promise<Buffer> {
+  const head = await headObject(tempKey)
+  if (head === null) {
+    // 预签名直传之后这里是「没传成功」的正常落点：断网、关掉页面，或者 PUT 被 R2 拒了
+    // （声明大小与实际不符会 403，见 storage/r2.ts 的 presignUpload）
+    throw new AppError('NOT_FOUND', '文件没有上传成功，请重新上传')
+  }
+  if (head.sizeBytes > MAX_FILE_BYTES) {
+    // 超限的文件永远进不来，留着只占空间
+    await deleteObject(tempKey)
+    throw new AppError('FILE_TOO_LARGE', `文件超过 ${MAX_FILE_MB}MB 上限`)
+  }
+
+  const bytes = await getObject(tempKey)
+
+  // 取回来再比一次：两次调用之间对象理论上能被换掉（预签名 PUT 在 15 分钟有效期内
+  // 可以反复覆盖同一个键），那时上面那次比较就没意义了。同一份字节本来也要算实际大小
+  // 落进 `memes.size_bytes`，所以这次比较是顺手的。
+  const sizeBytes = BigInt(bytes.byteLength)
+  if (sizeBytes > MAX_FILE_BYTES) {
+    await deleteObject(tempKey)
+    throw new AppError('FILE_TOO_LARGE', `文件超过 ${MAX_FILE_MB}MB 上限`)
+  }
+  return bytes
+}
+
+/** 失败原因是不是「装不下」。两处要用：条目 `reason` 的字面值，和「不删 temp 对象」。 */
+function isQuotaExceeded(error: unknown): boolean {
+  return isAppError(error) && error.code === 'QUOTA_EXCEEDED'
+}
+
 /**
  * 跑完一整批。**调用方不 await 它**——commit 接口返回 202，这批在后台继续。
  *
@@ -79,9 +173,31 @@ export async function runBatch(
     log.info({ batchId, pipelineConcurrency }, '导入批次使用运行参数')
 
     // 分批并发，不是一次性全开——一千张同时开一千个 ffmpeg 会把机器打满
+    //
+    // 中途配额用尽之后**剩下的不再跑管线**（每张都要 ffmpeg 抽帧、算哈希，全是白跑），
+    // 但仍然逐条发 `item` 判失败：SPEC §3.6 要的是「剩余文件全部标记失败」，
+    // 不是静默停下（error-handling.md §7）。
+    let quotaExhausted = false
     for (let i = 0; i < files.length; i += pipelineConcurrency) {
       const slice = files.slice(i, i + pipelineConcurrency)
-      await Promise.all(slice.map((file) => processOneFile(batchId, userId, file)))
+      if (quotaExhausted) {
+        await Promise.all(
+          slice.map((file) =>
+            finish(batchId, file.fileName, {
+              result: 'failed',
+              reason: QUOTA_EXCEEDED_REASON,
+            }),
+          ),
+        )
+        continue
+      }
+      const results = await Promise.all(
+        slice.map((file) => processOneFile(batchId, userId, file)),
+      )
+      quotaExhausted = results.some((result) => result.quotaExhausted)
+    }
+    if (quotaExhausted) {
+      log.warn({ batchId, userId }, '配额用尽，批次剩余文件全部标记失败')
     }
 
     const snapshot = await getBatchSnapshot(batchId)
@@ -116,12 +232,15 @@ export async function runBatch(
  * 单个文件。**任何异常都在这里被收成 `failed` 结果 + `item` 事件**，
  * 不允许冒泡出去——一个损坏文件不该让整批停下，也不该让用户看到一条错误码
  * 而不知道是哪个文件（image-pipeline.md §7：失败要具体到文件）。
+ *
+ * 返回值只回答一件事：**这一张是不是撞上了配额上限**。是的话 `runBatch` 把剩下的
+ * 全部判失败——配额不会因为少传一张就变得够用。
  */
 async function processOneFile(
   batchId: string,
   userId: string,
   file: FileToProcess,
-): Promise<void> {
+): Promise<{ quotaExhausted: boolean }> {
   try {
     const result = await runPipeline(userId, file)
     await finish(batchId, file.fileName, {
@@ -131,10 +250,17 @@ async function processOneFile(
       distance: result.distance ?? null,
       reason: result.reason ?? null,
     })
+    return { quotaExhausted: false }
   } catch (error) {
     // 原始 message 进日志，**不进响应**（SPEC §2.1）。事件里带的是可读原因。
     log.warn({ err: error, batchId, fileName: file.fileName }, '导入单文件失败')
-    await finish(batchId, file.fileName, { result: 'failed', reason: readableReason(error) })
+
+    const quotaExhausted = isQuotaExceeded(error)
+    await finish(batchId, file.fileName, {
+      result: 'failed',
+      reason: quotaExhausted ? QUOTA_EXCEEDED_REASON : readableReason(error),
+    })
+    return { quotaExhausted }
   }
 }
 
@@ -169,15 +295,10 @@ async function runPipeline(
   userId: string,
   file: FileToProcess,
 ): Promise<PipelineResult> {
-  const bytes = await getObject(file.tempKey)
-
-  // ① 大小。**用实际字节数，不用前端声明的 sizeBytes** —— 声明值可以撒谎，
-  //    也可能只是传了一半。声明值只在签发预签名 URL 时用于配额预检。
+  // ① 大小上限、取字节。见 readTempObject：上限在读字节之前就比掉了。
+  //    用实际字节数而不是前端声明的 sizeBytes —— 声明值可以撒谎，也可能只是传了一半。
+  const bytes = await readTempObject(file.tempKey)
   const sizeBytes = BigInt(bytes.byteLength)
-  if (sizeBytes > MAX_FILE_BYTES) {
-    await deleteObject(file.tempKey)
-    throw new AppError('FILE_TOO_LARGE', `文件超过 ${Number(MAX_FILE_BYTES / (1024n * 1024n))}MB 上限`)
-  }
 
   // ② magic bytes。**不信扩展名，也不信 mime** —— 微信「另存为」改名是常态。
   const detected = detectFormat(bytes.subarray(0, SNIFF_BYTES))
@@ -199,44 +320,97 @@ async function runPipeline(
   }
 
   // ④ 到这里才值得解码。前面两步都只读字节，坏了也不该让 sharp 白跑一趟。
-  const size = await readSize(bytes)
-  const phash = await computePhash(bytes)
+  //
+  // ⚠️ **从这里往下的任何失败都要连 temp 对象一起收走**：解码失败、R2 写失败、入库失败
+  //    留下的暂存对象没有任何记录指向它，而 temp/ 只跟着批次元信息在 24 小时后被清
+  //    （image-pipeline.md §6）——在此之前重试一次就多叠一份。
+  //    唯一不删的是 `needs_review`：它是**待办不是失败**，用户可能选「仍然导入」，
+  //    那时还要用这个对象。它是 `return`，走不到下面的 catch。
+  try {
+    const size = await readSize(bytes)
+    const phash = await computePhash(bytes)
 
-  // ⑤ pHash 全库扫描。命中就攒进待确认队列，**不打标** —— 等用户确认「仍然导入」
-  //    之后才进队列，否则被判重复的那些白花钱（SPEC §6.2.2）。
-  const neighbor = await findNearestByPhash(phash, NEAR_DUP_DISTANCE)
-  if (neighbor !== null) {
-    // ⚠️ 不删 temp 对象：用户可能选「仍然导入」，那时还要用它。
-    //    7 天未处理的由定时任务连同对象一起清（image-pipeline.md §6）。
-    //
-    // `similarTo` / `distance` **必须带到条目上**：待确认队列接口要给用户并排对比
-    // （`listReviewQueue` 靠 `similar_to` 关联出 existing，靠 `distance` 显示相似度）。
-    // 只在 `reason` 那句话里写「距离 7」是不够的——那是给人看的文本，程序读不出来。
-    return {
-      result: 'needs_review',
-      similarTo: neighbor.meme.id,
-      distance: neighbor.distance,
-      reason: `库里已有一张相近的图（距离 ${neighbor.distance}）`,
+    // ⑤ pHash 全库扫描。命中就攒进待确认队列，**不打标** —— 等用户确认「仍然导入」
+    //    之后才进队列，否则被判重复的那些白花钱（SPEC §6.2.2）。
+    const neighbor = await findNearestByPhash(phash, NEAR_DUP_DISTANCE)
+    if (neighbor !== null) {
+      // `similarTo` / `distance` **必须带到条目上**：待确认队列接口要给用户并排对比
+      // （`listReviewQueue` 靠 `similar_to` 关联出 existing，靠 `distance` 显示相似度）。
+      // 只在 `reason` 那句话里写「距离 7」是不够的——那是给人看的文本，程序读不出来。
+      return {
+        result: 'needs_review',
+        similarTo: neighbor.meme.id,
+        distance: neighbor.distance,
+        reason: `库里已有一张相近的图（距离 ${neighbor.distance}）`,
+      }
     }
+
+    // ⑥ 配额按**实际字节**查（SPEC §3.6）。放在这里而不是读字节之前：上面两条去重路径
+    //    都不占空间（exact_dup 什么都没写、needs_review 还只是个待办），真正吃空间的
+    //    只有下面这一步入库。声明值在预签名和 commit 各查过一次，但它们都只能「早一点拒」，
+    //    判定必须是这里读回来的字节数。
+    await assertQuota(userId, sizeBytes)
+
+    // ⑦ 入库。**先写 R2 再写库**（agents/rules/database.md §5）：反过来会出现
+    //    「库里有记录但文件不存在」，那个用户能看见。
+    const persisted = await persistBytes({
+      bytes,
+      detected,
+      fileName: file.fileName,
+      userId,
+      sizeBytes,
+      contentHash,
+      phash,
+      size,
+    })
+
+    // ⑧ 暂存对象使命结束。删除失败只留日志，不影响结果。
+    await deleteObject(file.tempKey)
+
+    // 同批两张字节相同的图会有一条在唯一约束上让位（见 persistBytes）。
+    // 对用户来说那就是它本来要得到的结论：库里已经有一张一模一样的。
+    return persisted.exactDup
+      ? { result: 'exact_dup', memeId: persisted.id }
+      : { result: 'imported', memeId: persisted.id }
+  } catch (error) {
+    // 配额用尽是**唯一不删 temp 对象**的失败：空间可以腾出来（管理员调大配额、
+    // 用户删掉几张图），那一刻这条还能重来。其余失败留下的暂存对象没有任何记录指向它，
+    // 现在收掉比等 24 小时清理干净。
+    if (!isQuotaExceeded(error)) await deleteObject(file.tempKey)
+    throw error
   }
+}
 
-  // ⑥ 入库。**先写 R2 再写库**（agents/rules/database.md §5）：反过来会出现
-  //    「库里有记录但文件不存在」，那个用户能看见。
-  const meme = await persistBytes({
-    bytes,
-    detected,
-    fileName: file.fileName,
-    userId,
-    sizeBytes,
-    contentHash,
-    phash,
-    size,
-  })
+/** `memes.content_hash` 唯一约束的名字。定义处是 `data/schema.ts` 的 `memes_content_hash_key`。 */
+const CONTENT_HASH_CONSTRAINT = 'memes_content_hash_key'
 
-  // ⑦ 暂存对象使命结束。删除失败只留日志，不影响结果。
-  await deleteObject(file.tempKey)
-
-  return { result: 'imported', memeId: meme.id }
+/**
+ * 这个错误是不是「同一个 `content_hash` 已经有一条记录」。
+ *
+ * postgres.js 把唯一约束违反报成 `code === '23505'` 并带上约束名，但 drizzle 在某些
+ * 路径上会**再包一层**，把它放进 `cause` 里。所以沿 cause 链找，只看最外层的话
+ * 并发去重会悄悄退回「failed + R2 孤儿对象」——也就是这段代码本来要修的那个表现，
+ * 而且不报错。
+ *
+ * 约束名取不到时（不同驱动版本字段名不同）按「是」处理。**这不会误吞别的错误**：
+ * 调用方回查不到相同 `content_hash` 的记录时会原样抛出，宽判的代价只是多一次回查。
+ */
+function isContentHashConflict(error: unknown): boolean {
+  let current: unknown = error
+  for (let depth = 0; current !== null && current !== undefined && depth < 5; depth += 1) {
+    const candidate = current as {
+      code?: unknown
+      constraint_name?: unknown
+      constraint?: unknown
+      cause?: unknown
+    }
+    if (candidate.code === '23505') {
+      const name = candidate.constraint_name ?? candidate.constraint
+      if (name === undefined || name === CONTENT_HASH_CONSTRAINT) return true
+    }
+    current = candidate.cause
+  }
+  return false
 }
 
 /**
@@ -245,6 +419,10 @@ async function runPipeline(
  * **导出是因为「待确认队列里点仍然导入」也要走这条路**（routes/imports.ts）。
  * 那条路径的格式探测、帧数解析、R2 写入顺序和导入完全一样，重写一遍必然分叉——
  * 而分叉的地方会是「先写库还是先写 R2」这种不报错、只留脏数据的东西。
+ *
+ * 返回值里的 `exactDup` 表示**这次插入没成，命中的是并发写进来的同一条**（见函数末尾）。
+ * 两条路径对它的处置不同：批次管线如实报 `exact_dup`；「仍然导入」那条路用户已经做过
+ * 判断，回同一个 `memeId` 即可。
  */
 /**
  * 删临时目录的重试逻辑搬去了 `image/temp-file.ts`：打标那条路径要抽同样的帧，
@@ -260,7 +438,7 @@ export async function persistBytes(params: {
   contentHash: string
   phash: bigint
   size: { width: number; height: number }
-}): Promise<{ id: string }> {
+}): Promise<{ id: string; exactDup: boolean }> {
   const { bytes, detected, fileName, userId, sizeBytes, contentHash, phash, size } = params
 
   // 帧数只能靠 ffmpeg 真的解析容器拿到。**不能从 mime 推断**：WebP 和 APNG 都可能是
@@ -303,31 +481,58 @@ export async function persistBytes(params: {
 
   // ⚠️ 「写 memes + 入队打标」必须在同一个事务里（agents/rules/database.md §5）。
   // 这是不用 Redis 换来的最大好处：「图片入库了但队列任务丢了」不可能发生。
-  const meme = await db.transaction(async (tx) => {
-    const row = await createMeme(
-      {
-        uploaderId: userId,
-        storageKey,
-        originalFilename: fileName,
-        contentHash,
-        phash,
-        mime: detected.mime,
-        width: size.width,
-        height: size.height,
-        sizeBytes,
-        isAnimated,
-        // 导入只负责入库，打标由队列消费者做。这里只能承诺到 pending 这一步。
-        tagStatus: 'pending',
-      },
-      tx,
-    )
-    // userId 取 createMeme 的返回行，不另外传参：入队用的两个 id 都来自 `data/memes.ts`
-    // 的查询结果，队列表因此永远不需要 join memes（queue.md §8）
-    await enqueueTagJob(row.id, row.uploaderId, tx)
-    return row
-  })
+  try {
+    const meme = await db.transaction(async (tx) => {
+      const row = await createMeme(
+        {
+          uploaderId: userId,
+          storageKey,
+          originalFilename: fileName,
+          contentHash,
+          phash,
+          mime: detected.mime,
+          width: size.width,
+          height: size.height,
+          sizeBytes,
+          isAnimated,
+          // 导入只负责入库，打标由队列消费者做。这里只能承诺到 pending 这一步。
+          tagStatus: 'pending',
+        },
+        tx,
+      )
+      // userId 取 createMeme 的返回行，不另外传参：入队用的两个 id 都来自 `data/memes.ts`
+      // 的查询结果，队列表因此永远不需要 join memes（queue.md §8）
+      await enqueueTagJob(row.id, row.uploaderId, tx)
+      return row
+    })
+    return { id: meme.id, exactDup: false }
+  } catch (error) {
+    // 撞上 `content_hash` 的唯一约束：**同一个批次里两张字节相同的图会一起走到这里**。
+    // 去重查询（`findMemeByContentHash`）在管线里读的是「库里有没有」，两张并发处理的
+    // 图读到的是同一个「还没有」，于是两条 INSERT 只有一条能成——晚的那条撞唯一索引。
+    //
+    // 这不是「这个文件坏了」，是**另一个条目先落了库**：回查之后按精确重复处理，
+    // 用户的结论和串行处理时完全一样（第二张就是重复）。不回查的话它变成一条 failed，
+    // 库里明明有这张图，用户却看到「导入失败」。
+    //
+    // ⚠️ **必须把刚写的正式对象和缩略图删掉**：它们在 R2 上，事务回滚管不到，
+    //    而且 `memes/`、`thumbs/` 前缀**不在定时清理的范围内**（清理只碰 temp/ 和缩略图，
+    //    见 image-pipeline.md §6）——留着就是永久的孤儿对象。
+    if (!isContentHashConflict(error)) throw error
 
-  return { id: meme.id }
+    const winner = await findMemeByContentHash(contentHash)
+    // 回查不到就说明不是「别人先写了同样的字节」，原样抛出去（也顺带保证了上面那个
+    // 宽松的约束名判定不会把别的唯一约束错误吞成「重复」）
+    if (winner === null) throw error
+
+    await deleteObject(storageKey)
+    await deleteObject(thumbKeyFor(storageKey))
+    log.info(
+      { storageKey, memeId: winner.id, fileName },
+      '内容哈希撞唯一约束，按精确重复处理并收回刚写的对象',
+    )
+    return { id: winner.id, exactDup: true }
+  }
 }
 
 function extensionForFormat(format: string): string {
@@ -338,22 +543,22 @@ function extensionForFormat(format: string): string {
 /**
  * 「仍然导入」这一条路径：把暂存对象当成一个全新的文件重新走一遍入库。
  *
- * ⚠️ **不查精确重复，也不查近似重复。** 用户已经在待确认队列里看过对比并选了
- * 「仍然导入」——他刚刚做过那个判断，这里再判一次只会把他送回同一个队列，
- * 变成点了没反应的死循环。这正是「判断权在人」那条decision 的落点。
+ * ⚠️ **不查近似重复。** 用户已经在待确认队列里看过对比并选了「仍然导入」——他刚刚
+ * 做过那个判断，这里再判一次只会把他送回同一个队列，变成点了没反应的死循环。
+ * 这正是「判断权在人」那条 decision 的落点。
+ *
+ * 精确重复是另一回事：字节完全相同是硬事实，`content_hash` 上有唯一约束，所以
+ * 下面仍然要查一次（连着点两次「仍然导入」也是这条路径上的并发）。
  */
 export async function importReviewedFile(params: {
   fileName: string
   tempKey: string
   userId: string
 }): Promise<{ memeId: string }> {
-  const bytes = await getObject(params.tempKey)
+  // 对象在不在、大小上限两道关在 readTempObject 里，**都在读字节之前**。
+  const bytes = await readTempObject(params.tempKey)
 
   const sizeBytes = BigInt(bytes.byteLength)
-  if (sizeBytes > MAX_FILE_BYTES) {
-    throw new AppError('FILE_TOO_LARGE', '文件超过单文件上限')
-  }
-
   const detected = detectFormat(bytes.subarray(0, SNIFF_BYTES))
   if (detected === null || !isIngestible(detected.format)) {
     throw new AppError('UNSUPPORTED_FORMAT', detected === null ? '这不是一张图片' : `不支持 ${detected.format} 格式`)
@@ -368,7 +573,13 @@ export async function importReviewedFile(params: {
   const existing = await findMemeByContentHash(contentHash)
   if (existing !== null) return { memeId: existing.id }
 
-  const meme = await persistBytes({
+  // 配额（SPEC §3.6）**按实际字节**查，位置和批次管线一致：精确重复上面已经返回了，
+  // 走到这里的这一份字节是真的要占空间的。这一处不吞错误——配额不足抛 QUOTA_EXCEEDED
+  // 出去变成 413，而且**不删 temp 对象**：待确认条目是待办不是日志，用户腾出空间之后
+  // 还能再点一次「仍然导入」（SPEC §6.2.3）。
+  await assertQuota(params.userId, sizeBytes)
+
+  const persisted = await persistBytes({
     bytes,
     detected,
     fileName: params.fileName,
@@ -379,10 +590,12 @@ export async function importReviewedFile(params: {
     size,
   })
 
-  // 用户已经确认过了，暂存对象可以删了
+  // 用户已经确认过了，暂存对象可以删了。
+  // ⚠️ 放在这里而不是上面的 catch 里：入库失败时**保留**暂存对象，用户还能再点一次
+  //    （这条路径和批次不同，它是可重试的）。
   await deleteObject(params.tempKey)
 
-  return { memeId: meme.id }
+  return { memeId: persisted.id }
 }
 
 /**

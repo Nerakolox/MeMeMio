@@ -2,16 +2,15 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { AppError } from '../lib/app-error.js'
 import { requireAuth, type AuthVariables } from '../middleware/auth.js'
-import { getStorageUsedBytes } from '../data/auth.js'
 import {
   MAX_FILES_PER_BATCH,
   claimBatchCommit,
   createBatch,
-  findBatchById,
   findOwnedBatch,
   findReviewItem,
   getBatchDeclaredBytes,
   getBatchSnapshot,
+  listBatchTempKeys,
   listReviewQueue,
   resolveReviewItem,
 } from '../data/imports.js'
@@ -19,7 +18,12 @@ import { getMemeById } from '../data/memes.js'
 import { MAX_FILE_BYTES } from '../image/constants.js'
 import { deleteObject, presignUpload, publicUrlFor } from '../storage/r2.js'
 import { publish, subscribe } from '../services/import-events.js'
-import { importReviewedFile, runBatch, type FileToProcess } from '../services/import.js'
+import {
+  assertQuota,
+  importReviewedFile,
+  runBatch,
+  type FileToProcess,
+} from '../services/import.js'
 import { serializeMeme } from '../serialize/meme.js'
 
 /**
@@ -124,29 +128,48 @@ function parseCommitBody(raw: unknown): FileToProcess[] {
 }
 
 /**
- * 配额检查。**两处都要调**：签发预签名 URL 前，和 commit 时（SPEC §6.2.1）。
+ * 把 commit 的条目对齐到**库里记着的**暂存键上。
  *
- * 为什么要两次：两次之间用户可以并发开另一个批次，也可以同时把配额调小。
- * 只查第一次的话，超额的那部分图会照常入库。
+ * ⚠️ **这是硬边界「写路径归属检查」在导入这一侧的落点**（SPEC §3.4）。
  *
- * 软删记录在保留期内仍计入配额，由 `getStorageUsedBytes` 保证（SPEC §3.6）。
+ * 直接用客户端传来的 `tempKey` 去 `getObject` / `deleteObject` 是一个能删掉**别人正式图片**
+ * 的洞：R2 的对象键能从响应里的 `url` 推出来（`memes/<uuid>.png` 这种形状），攻击者把它
+ * 当 tempKey 传进来，管线就会把它当成自己的暂存对象——走到 `exact_dup` 或
+ * `UNSUPPORTED_FORMAT` 分支时那个对象会被物理删除。而这条路**不经过任何 `memes` 写接口**，
+ * `assertCanMutate` 拦不到它（SPEC §3.3 的三条规则管的是「改动这条记录」，不是「删这个对象」）。
+ *
+ * 所以键的唯一来源是 `import_items.temp_storage_key`——它在建批次时写死，客户端没有任何
+ * 一步能改它。客户端传的值只用来对照：对不上就整条 `VALIDATION_FAILED`，
+ * 不「宽容处理」成静默跳过（要么是客户端拼错了键，要么是有人在试，两种都该被拒）。
  */
-async function assertQuota(
-  userId: string,
-  storageQuotaBytes: bigint,
-  incomingBytes: bigint,
-): Promise<void> {
-  const used = await getStorageUsedBytes(userId)
-  const remaining = storageQuotaBytes - used
-  if (incomingBytes > remaining) {
-    throw new AppError('QUOTA_EXCEEDED', '存储空间不足', {
-      // 客户端要能告诉用户「还差多少」，否则他只能反复试
-      remaining: (remaining > 0n ? remaining : 0n).toString(),
-      required: incomingBytes.toString(),
-      used: used.toString(),
-      quota: storageQuotaBytes.toString(),
-    })
-  }
+async function resolveCommitItems(
+  batchId: string,
+  requested: FileToProcess[],
+): Promise<FileToProcess[]> {
+  const stored = await listBatchTempKeys(batchId)
+  const keyByFileName = new Map(stored.map((row) => [row.fileName, row.tempStorageKey]))
+
+  return requested.map((item) => {
+    const storedKey = keyByFileName.get(item.fileName)
+    if (storedKey === undefined) {
+      throw new AppError('VALIDATION_FAILED', `这个批次里没有文件 ${item.fileName}`, {
+        fileName: item.fileName,
+      })
+    }
+    if (storedKey === null) {
+      // 建批次的时候一定写了这个键，能读到 null 说明数据被手工改过。
+      // 这是服务端的问题，不该报成客户端的 400（同待确认那条路径的处置）。
+      throw new AppError('INTERNAL', '这条记录的暂存键丢失，无法处理', {
+        fileName: item.fileName,
+      })
+    }
+    if (storedKey !== item.tempKey) {
+      throw new AppError('VALIDATION_FAILED', `${item.fileName} 的 tempKey 与上传时签发的不一致`, {
+        fileName: item.fileName,
+      })
+    }
+    return { fileName: item.fileName, tempKey: storedKey }
+  })
 }
 
 type Vars = AuthVariables
@@ -168,7 +191,6 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
 
     await assertQuota(
       actor.id,
-      actor.storageQuotaBytes,
       files.reduce((sum, f) => sum + f.sizeBytes, 0n),
     )
 
@@ -180,6 +202,9 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
         const { uploadUrl, tempKey } = await presignUpload({
           batchId: batch.id,
           fileName: f.fileName,
+          // 声明的大小绑进签名：R2 会拿实际的 Content-Length 和它比，不符直接 403。
+          // 前端声明的是 `file.size`，所以正常上传不受影响（storage/r2.ts 的 presignUpload）
+          sizeBytes: f.sizeBytes,
         })
         return { fileName: f.fileName, uploadUrl, tempKey }
       }),
@@ -229,7 +254,11 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
   .post('/reviews/:batchId/:fileName', async (c) => {
     const actor = c.get('currentUser')
     const batchId = c.req.param('batchId')
-    const fileName = decodeURIComponent(c.req.param('fileName'))
+    // ⚠️ **不要在这里再 decodeURIComponent 一次**：Hono 的 `c.req.param()` 已经解过码
+    //（`request.js` 的 `#getDecodedParam` 走 `tryDecodeURIComponent`）。再解一次的话，
+    // 文件名里的 `%` 会让它抛 URIError —— 表现是「文件名带百分号的图永远处理不了」，
+    // 而且返回 500 而不是 404/400。
+    const fileName = c.req.param('fileName')
 
     const raw: unknown = await c.req.json().catch(() => {
       throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
@@ -258,9 +287,9 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
       throw new AppError('INTERNAL', '这条记录的暂存对象丢失，无法导入', { fileName })
     }
 
-    // 配额在这里也要查：这条图之前没进库，现在才真正占空间
-    const declared = item.sizeBytes ?? 0n
-    await assertQuota(actor.id, actor.storageQuotaBytes, declared)
+    // 配额**不在这里查**：这一刻能拿来判定的只有条目上那个声明值，而它可能撒谎。
+    // 真正的判定在 importReviewedFile → readTempObject 里，按读回来的**实际字节**算，
+    // 而且是在读字节之前就拒（SPEC §3.6）。
 
     const { memeId } = await importReviewedFile({
       fileName,
@@ -286,23 +315,30 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
     const raw: unknown = await c.req.json().catch(() => {
       throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
     })
-    const items = parseCommitBody(raw)
+    const requested = parseCommitBody(raw)
 
-    // 归属检查 + 一次性标志写在同一条条件更新里（见 claimBatchCommit）
+    // 归属检查放在校验之前：不是自己的批次一律「不存在」，**不能因为条目对不上变成 400**——
+    // 那会泄露「这个 batchId 存不存在」。
+    const batch = await findOwnedBatch(batchId, actor.id)
+    if (batch === null) throw new AppError('NOT_FOUND', '没有这个导入批次')
+
+    // 键一律取库里的那份，客户端传的只用来对照（见 resolveCommitItems）。
+    // 必须在 claimBatchCommit **之前**：校验失败时这一批还没被标成已提交，
+    // 客户端改正之后还能重来一次；放在 claim 之后的话这一批会永远卡在 pending。
+    const items = await resolveCommitItems(batchId, requested)
+
+    // 抢「这一批开始处理」的原子标志（见 claimBatchCommit）
     const claimed = await claimBatchCommit(batchId, actor.id)
     if (claimed === null) {
-      const existing = await findBatchById(batchId)
-      if (existing === null || existing.userId !== actor.id) {
-        // 不是自己的批次，对外统一是「不存在」——不泄露别人的 batchId 存不存在
-        throw new AppError('NOT_FOUND', '没有这个导入批次')
-      }
-      // 是自己的、但已经 commit 过。**这不该报错**：客户端重试是常态，报错会让
-      // 用户以为导入失败了，而实际上它正在跑。返回同一批的幂等结果。
-      return c.json({ batchId, accepted: existing.total, alreadyCommitted: true }, 202)
+      // 走到这里只可能是**已经 commit 过**：归属上面已经查过了。
+      // **这不该报错**：客户端重试是常态，报错会让用户以为导入失败了，而实际上它正在跑。
+      // 返回同一批的幂等结果。
+      return c.json({ batchId, accepted: batch.total, alreadyCommitted: true }, 202)
     }
 
-    // commit 时再查一次配额（SPEC §6.2.1）：期间可能有别的批次入库了
-    await assertQuota(actor.id, actor.storageQuotaBytes, await getBatchDeclaredBytes(batchId))
+    // commit 时再查一次配额（SPEC §6.2.1）：期间可能有别的批次入库了。
+    // 这一处用的是**声明值**，只是「早一点拒绝」；判定在每个文件入库前按实际字节再做一次。
+    await assertQuota(actor.id, await getBatchDeclaredBytes(batchId))
 
     // ⚠️ 故意不 await：这批在后台跑，进度走 SSE。
     //    catch 是必须的——不接的话 promise 拒绝会变成 unhandledRejection 打挂进程。

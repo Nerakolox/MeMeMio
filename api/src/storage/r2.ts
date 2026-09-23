@@ -86,21 +86,43 @@ export function thumbKeyFor(storageKey: string): string {
   return `thumbs/${stem}.webp`
 }
 
-/** 签发预签名直传 URL。文件字节不经过 api，只给一个指定键的上传权。 */
+/**
+ * 签发预签名直传 URL。文件字节不经过 api，只给一个指定键的上传权。
+ *
+ * ⚠️ **`ContentLength` 必须绑进签名**：不绑的话这个 URL 就是一个「内容多大多小都收」
+ *    的上传权，声明 1KB 实际传 500MB 照样能传完，而 api 只能在整份读进内存之后才发现
+ *    （`MAX_FILE_BYTES` 挡的是读，不是写）。绑上之后 R2 拿实际 `Content-Length` 和签名
+ *    里的值比，不符直接 403 —— 检查发生在字节进入 bucket 之前。
+ *
+ * 调用方传的是**用户声明的大小**（前端就是 `file.size`），所以只有声明值本身不合法
+ * （非整数、为负、超上限）时才会误伤；那三种在 `parseSizeBytes` 里已经被拒掉了。
+ * 代价是**声明值和实际不符的上传会在 R2 那里 403**，而不是留着以后被静默接受。
+ */
 export async function presignUpload(params: {
   batchId: string
   fileName: string
+  sizeBytes: bigint
 }): Promise<{ uploadUrl: string; tempKey: string }> {
   const tempKey = tempKeyFor(params.batchId, params.fileName)
   const uploadUrl = await getSignedUrl(
     client,
-    new PutObjectCommand({ Bucket: env.r2.bucket, Key: key(tempKey) }),
+    new PutObjectCommand({
+      Bucket: env.r2.bucket,
+      Key: key(tempKey),
+      ContentLength: Number(params.sizeBytes),
+    }),
     { expiresIn: UPLOAD_URL_TTL_SECONDS },
   )
   return { uploadUrl, tempKey }
 }
 
-/** 读对象。图片管线要在本地解码，所以整份取回——大小上限由 MAX_FILE_BYTES 兜住。 */
+/**
+ * 读对象，整份取回。图片管线要在本地解码，没法流式。
+ *
+ * ⚠️ **调用方必须先 `headObject` 核大小**（导入那两条读路径走 `services/import.ts` 的
+ *    `readTempObject`）。直接调这里的表现是：一个声明 1KB、实际 2GB 的对象被整份读进
+ *    内存，然后才在比较 `MAX_FILE_BYTES` 时被拒——那时内存已经吃完了。
+ */
 export async function getObject(objectKey: string): Promise<Buffer> {
   const result = await client.send(
     new GetObjectCommand({ Bucket: env.r2.bucket, Key: key(objectKey) }),
@@ -115,6 +137,9 @@ export async function getObject(objectKey: string): Promise<Buffer> {
 /**
  * 对象是否存在及大小。预签名直传后**必须实际核一下**：用户可能根本没上传成功
  * （网络断了、关掉页面了），也可能声明 1MB 实际传了 50MB。前端给的 sizeBytes 不可信。
+ *
+ * 唯一的调用方是 `services/import.ts` 的 `readTempObject`：导入管线和「仍然导入」
+ * 两条路都在**读字节之前**用它挡掉超限的对象，顺带确认对象真的传上来了。
  */
 export async function headObject(objectKey: string): Promise<{ sizeBytes: bigint } | null> {
   try {

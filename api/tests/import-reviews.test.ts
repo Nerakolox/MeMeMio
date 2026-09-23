@@ -375,6 +375,30 @@ describe('处理待确认（POST /reviews/{batchId}/{fileName}）', () => {
     expect(await listReviews(alice)).toHaveLength(1)
   })
 
+  it('文件名里有 % 也能处理 —— 路由不再解第二次码', async () => {
+    const alice = await signIn()
+    await runImport(alice, await sample([FIXTURES.nearResized]))
+
+    // 同一个近重复样本换个名字：判重看字节，不看文件名（`%` 不是路径分隔符，建批次放行）
+    const fileName = '100%.jpg'
+    const { batchId } = await runImport(alice, [
+      { name: fileName, bytes: await loadFixture(FIXTURES.nearJpeg) },
+    ])
+    expect(await itemOf(batchId, fileName)).toMatchObject({ result: 'needs_review' })
+
+    const res = await call(
+      alice,
+      'POST',
+      `/reviews/${batchId}/${encodeURIComponent(fileName)}`,
+      { action: 'skip' },
+    )
+    // 修之前这里是 500：`c.req.param()` 已经解过一次码，再解一次 `100%.jpg`
+    // 会抛 URIError —— 表现是「文件名带百分号的图永远处理不了」，而且报 500 不是 400。
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ fileName, result: 'skipped' })
+    expect(await listReviews(alice)).toEqual([])
+  })
+
   it('action 不是 import/skip 时 VALIDATION_FAILED', async () => {
     const alice = await signIn()
     const { batchId, fileName } = await makeReviewItem(alice)

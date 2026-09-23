@@ -1,5 +1,5 @@
 import sharp from 'sharp'
-import { AI_LONG_EDGE, THUMB_LONG_EDGE } from './constants.js'
+import { AI_LONG_EDGE, MAX_INPUT_PIXELS, THUMB_LONG_EDGE } from './constants.js'
 import { HASH_HEIGHT, HASH_WIDTH, dHashFromGray } from '../lib/phash.js'
 import { AppError } from '../lib/app-error.js'
 import { log } from '../logger.js'
@@ -10,6 +10,20 @@ import { log } from '../logger.js'
  * 和 `probe.ts` 的分工：**容器层的事问 ffmpeg（帧数、抽帧），像素层的事问 sharp（缩放、哈希）**。
  * 两者都会遇到损坏文件，转成的错误码也一致。
  */
+
+/**
+ * 本文件**所有** sharp 解码共用的入参。新建解码路径时用它，不要另写一份：
+ * 单个调用点漏掉 `limitInputPixels` 的表现是那张图能把进程解到 OOM，**不报错**。
+ *
+ * ⚠️ `limitInputPixels` **必须显式给**。sharp 的默认值是 16383² ≈ 2.68 亿像素、
+ *    全解码约 1 GB，而 `MAX_FILE_BYTES` 管不到它——20MB 是压缩后的字节数，PNG/WebP
+ *    的压缩比可以到几百倍。取值依据见 `image/constants.ts` 的 `MAX_INPUT_PIXELS`；
+ *    超限时 sharp 报 `Input image exceeds pixel limit`，`asImageError` 转成 FILE_TOO_LARGE。
+ *
+ * `failOn: 'none'` 是原有口径：损坏的文件不在这里抛，交给下面的分类报具体原因
+ * （「文件损坏」和「格式不支持」对用户是两条信息，image-pipeline.md §7）。
+ */
+const SHARP_INPUT_OPTS = { failOn: 'none', limitInputPixels: MAX_INPUT_PIXELS } as const
 
 /**
  * 把 sharp 的失败转成具体错误。
@@ -37,7 +51,7 @@ export type ImageSize = { width: number; height: number }
 
 export async function readSize(bytes: Buffer): Promise<ImageSize> {
   try {
-    const meta = await sharp(bytes, { failOn: 'none' }).metadata()
+    const meta = await sharp(bytes, SHARP_INPUT_OPTS).metadata()
     if (meta.width === undefined || meta.height === undefined) {
       throw new AppError('UNSUPPORTED_FORMAT', '读不到图片尺寸，文件可能已损坏')
     }
@@ -56,7 +70,7 @@ export async function readSize(bytes: Buffer): Promise<ImageSize> {
  */
 export async function computePhash(bytes: Buffer): Promise<bigint> {
   try {
-    const gray = await sharp(bytes, { failOn: 'none' })
+    const gray = await sharp(bytes, SHARP_INPUT_OPTS)
       .greyscale()
       .resize(HASH_WIDTH, HASH_HEIGHT, { fit: 'fill', kernel: 'lanczos3' })
       .raw()
@@ -77,7 +91,7 @@ export async function computePhash(bytes: Buffer): Promise<bigint> {
  */
 export async function computeFramePhash(framePng: Buffer): Promise<bigint> {
   try {
-    const gray = await sharp(framePng, { failOn: 'none' })
+    const gray = await sharp(framePng, SHARP_INPUT_OPTS)
       .greyscale()
       .resize(HASH_WIDTH, HASH_HEIGHT, { fit: 'fill', kernel: 'lanczos3' })
       .raw()
@@ -102,7 +116,7 @@ export async function computeFramePhash(framePng: Buffer): Promise<bigint> {
  */
 export async function extractWebpFramePng(filePath: string, index: number): Promise<Buffer> {
   try {
-    return await sharp(filePath, { animated: true, page: index, pages: 1 })
+    return await sharp(filePath, { ...SHARP_INPUT_OPTS, animated: true, page: index, pages: 1 })
       .png()
       .toBuffer()
   } catch (error) {
@@ -121,7 +135,7 @@ export async function extractWebpFramePng(filePath: string, index: number): Prom
  */
 export async function toAiPng(bytes: Buffer): Promise<Buffer> {
   try {
-    return await sharp(bytes, { failOn: 'none' })
+    return await sharp(bytes, SHARP_INPUT_OPTS)
       .resize({ width: AI_LONG_EDGE, height: AI_LONG_EDGE, fit: 'inside', withoutEnlargement: true })
       .png()
       .toBuffer()
@@ -154,7 +168,7 @@ export async function composeCollage(pngs: Buffer[]): Promise<Buffer> {
     // 每帧先按 contain 缩进格子并补白，保证每格尺寸一致，composite 的落点才算得准
     const cells = await Promise.all(
       pngs.map((png) =>
-        sharp(png, { failOn: 'none' })
+        sharp(png, SHARP_INPUT_OPTS)
           .resize(cell, cell, {
             fit: 'contain',
             background: { r: 255, g: 255, b: 255, alpha: 1 },
@@ -196,7 +210,7 @@ export async function composeCollage(pngs: Buffer[]): Promise<Buffer> {
  */
 export async function toThumbnail(bytes: Buffer): Promise<Buffer> {
   try {
-    return await sharp(bytes, { failOn: 'none' })
+    return await sharp(bytes, SHARP_INPUT_OPTS)
       .resize({
         width: THUMB_LONG_EDGE,
         height: THUMB_LONG_EDGE,
