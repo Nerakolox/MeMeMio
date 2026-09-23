@@ -88,4 +88,4 @@
 
 长期决策进 [SPEC §9](spec/09-decisions.md)，临时进度进任务，运行手册进 `docs/`，本端实现约束进本端规则。交付时说明本次修改、实测范围、阻塞及下一步，不复述整套规范。
 
-# 提交不允许Co-Authored-By加上claude的名字！
+提交信息里不加 `Co-Authored-By` 或任何 AI / 工具署名行，见 [git-and-delivery.md](agents/rules/git-and-delivery.md)。

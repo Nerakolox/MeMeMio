@@ -58,4 +58,4 @@ Hono RPC 直接消费 `api` 导出的类型，**没有代码生成步骤，不�
 
 **动了复制 / 分享路径，必须说明在桌面和手机上各测了什么。** 这条路径是产品的价值所在，且两端行为完全不同，「本地看起来没问题」不算测过。
 
-# 提交不允许 Co-Authored-By 加上 claude 的名字！
+提交信息里不加 `Co-Authored-By` 或任何 AI / 工具署名行，见 [git-and-delivery.md](../agents/rules/git-and-delivery.md)。
