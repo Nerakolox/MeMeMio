@@ -1,4 +1,4 @@
-import { TriangleAlert } from 'lucide-react'
+import { SearchX, Sparkles, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
@@ -26,6 +26,25 @@ const RESULT_GRID =
 /** 一屏骨架的格数。**与结果无关，只是占位**——够铺满一屏即可。 */
 const SKELETON_COUNT = 12
 
+/**
+ * 状态说明的**承载面板**（2026-09-24 加）。
+ *
+ * 这三条文案（降级、改写、空结果）此前是裸 `<p>`，直接铺在页面底色上——文字没有承载物，
+ * 看起来像页面漏渲染了一块。现在统一给一个浅底细边的面板。
+ *
+ * **不用 `Alert`**：它自带 `role="alert"`，而这几条都是状态说明、不是警报，抢着打断读屏是错的
+ * （`http.md` §5「降级不是错误」）。所以这里手写容器，只保留与原实现一致的 `role="status"`。
+ *
+ * **底色用 `bg-card` + `border`，不用 `bg-muted`**：`text-muted-foreground` 落在
+ * `--muted` 上（浅色 `oklch(0.97)`）对比度约 4.3，低于 4.5；落在 `bg-card` 上就是页面底色
+ * （浅色为白，深色为 `oklch(0.205)`），两条都是 4.7 以上。**换底色要重量对比度。**
+ *
+ * `w-fit` 而不是撑满：首页内容列到 1152px，一句 30 字的说明撑满一条横幅会留下一大片空白。
+ *
+ * 模块内私有（同 `RESULT_GRID`）：这个文件是唯一使用者。
+ */
+const NOTICE = 'flex w-fit items-start gap-2 rounded-2xl border bg-card px-3 py-2 text-sm'
+
 /** `matchedBy` 里的通路标识翻成中文标签，未知取值原样显示（服务端可能新增通路）。 */
 function matchedBadges(matchedBy: string[]): string[] {
   return matchedBy.map((m) => MATCHED_BY_LABELS[m] ?? m)
@@ -42,7 +61,7 @@ function readableName(meme: Meme): string {
  * 吃整个 `SearchState` 而不是拆成几个布尔量，是因为这几个形态互斥——拆开就会出现
  * 「既 loading 又 error」这种渲染不出来的组合（`code-style.md`「每个异步操作都要有三态」）。
  *
- * 结果区顶部的两句话**不能和结果抢位置**：降级与改写提示是一条普通段落，
+ * 结果区顶部的两句话**不能和结果抢位置**：降级与改写提示是一块普通面板（`NOTICE`），
  * 不遮不挡、不弹层，底下照常出图（http.md §5、SPEC §6.3.1）。
  */
 export function SearchResults({
@@ -99,21 +118,29 @@ export function SearchResults({
   return (
     <>
       {/* 降级不是错误：照常展示结果，只在顶部说明一句，不遮挡、不阻断（http.md §5）。
-          用普通段落不用 Alert —— Alert 自带 `role="alert"`，而这条是状态说明，
-          抢着打断读屏是错的（本端其它状态文案同理，见 EmbedSettings / ImportProgress） */}
+          `role="status"` 不是 `alert`，理由见 `NOTICE` 的注释 */}
       {state.degraded && (
-        <p role="status" className="text-sm">
+        <div role="status" className={NOTICE}>
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           向量通路当前不可用，本次只用了 OCR 和标签匹配，结果可能不全。
-        </p>
+        </div>
       )}
 
       {/* 展示改写结果是为了让用户理解「为什么搜出这些」，可以为 null（SPEC §6.3.1） */}
       {state.rewritten && (
-        <p className="text-sm text-muted-foreground">搜索理解为：{state.rewritten}</p>
+        <div className={cn(NOTICE, 'text-muted-foreground')}>
+          <Sparkles className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          搜索理解为：{state.rewritten}
+        </div>
       )}
 
+      {/* 空结果：这一屏只有这句话，所以它是这块地方的**唯一内容**——给一个居中的空态块，
+          不是一行浮在空白里的字（图墙在这种状态下不渲染，见 home.tsx） */}
       {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">没有找到相关的图，换个说法试试</p>
+        <div className="flex flex-col items-center gap-2 rounded-2xl border bg-card px-6 py-8 text-center">
+          <SearchX className="size-6 text-muted-foreground" aria-hidden="true" />
+          <p className="text-sm text-muted-foreground">没有找到相关的图，换个说法试试</p>
+        </div>
       ) : (
         // 这一批就是「用户看的那一批」：全屏里 ←/→ 翻的就是这次搜索的结果
         <MemeGallery items={items}>

@@ -1,3 +1,4 @@
+import { CornerDownLeft } from 'lucide-react'
 import { DiscoverWall } from '../features/discover/DiscoverWall'
 import { SearchBar } from '../features/search/SearchBar'
 import { SearchResults } from '../features/search/SearchResults'
@@ -56,8 +57,20 @@ export function HomePage() {
       */}
       {state.kind === 'idle' && (
         <>
-          {/* 输入了但还没提交（还没回车、也没失焦）时才提示，正常情况下用户看的是图 */}
-          {trimmedDraft && <p className="text-sm text-muted-foreground">按回车搜索</p>}
+          {/*
+            输入了但还没提交（还没回车、也没失焦）时才提示，正常情况下用户看的是图。
+
+            **提示要有承载物**（2026-09-24）：这一行此前是裸 `<p>`，直接铺在页面底色上。
+            现在是一枚吃到键帽的胶囊——它是**说明不是按钮**，所以不给边框色以外的任何
+            交互态（没有 hover、没有 pointer、不放进 tab 序）：能点的样子会让人去点它。
+            形状用 `rounded-full` 与结果区的说明面板（`NOTICE`）区分开。
+          */}
+          {trimmedDraft && (
+            <p className="flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground">
+              <CornerDownLeft className="size-3" aria-hidden="true" />
+              按回车搜索
+            </p>
+          )}
           <DiscoverWall />
         </>
       )}
