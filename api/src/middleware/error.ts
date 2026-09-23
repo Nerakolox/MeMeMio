@@ -25,6 +25,9 @@ export const onError: ErrorHandler<Env> = (err, c) => {
 
   if (isAppError(err)) {
     log.warn({ requestId, code: err.code, path: c.req.path }, err.message)
+    // 协议层的头（目前只有 429 的 `Retry-After`）挂在这里，不挂进 details。
+    // c.header() 必须在 c.json() 之前：它改的是正在构造的那个响应
+    for (const [name, value] of Object.entries(err.headers ?? {})) c.header(name, value)
     return c.json(
       envelope(err.code, err.message, requestId, err.details),
       err.status as ContentfulStatusCode,

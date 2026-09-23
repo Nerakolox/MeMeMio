@@ -7,6 +7,7 @@ import {
   updateUser,
 } from '../data/admin.js'
 import { AppError } from '../lib/app-error.js'
+import { isUuid } from '../lib/uuid.js'
 import { toIsoSecondsOrNull } from '../serialize/meme.js'
 import { enqueueAllStale, getReindexStatus } from '../services/ai-config.js'
 import {
@@ -22,6 +23,36 @@ function inviteStatus(row: {
   if (row.usedBy !== null) return 'used'
   if (row.expiresAt !== null && row.expiresAt < new Date()) return 'expired'
   return 'unused'
+}
+
+const QUOTA_RE = /^\d+$/
+
+/**
+ * `storageQuotaBytes` 的解析。
+ *
+ * SPEC §7.1：`bigint` 列在 JSON 里是**十进制字符串**。这里同时接受安全范围内的整数
+ * `number`（客户端做算术后传回来时更自然），但**不接受 `BigInt()` 自己会吞下的那些写法**
+ * ——`"0x10"`、`" 12 "`、浮点、布尔值都能被 `BigInt()` 静默转成某个数，而它们是
+ * 「参数写错了」，不是「配额等于 16 字节」。静默接受的表现是管理员填错一位、保存成功、
+ * 配额变成一个他没想过的数。
+ *
+ * ⚠️ **必须兜住异常**：`BigInt('abc')` 抛 `SyntaxError`，它不是 `AppError`，落到
+ *    `app.onError` 就是 500（错误信封只有一个出口，agents/rules/error-handling.md §1）。
+ *    一个写错的配额值回应「服务器内部错误」，把管理员送去查日志。
+ */
+function parseQuotaBytes(value: unknown): bigint {
+  const invalid = () =>
+    new AppError('VALIDATION_FAILED', 'storageQuotaBytes 必须是非负整数字符串')
+
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw invalid()
+  } else if (typeof value !== 'string' || !QUOTA_RE.test(value)) {
+    throw invalid()
+  }
+
+  const n = BigInt(value)
+  if (n < 0n) throw invalid()
+  return n
 }
 
 export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
@@ -87,7 +118,15 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
   })
 
   .patch('/users/:id', async (c) => {
+    /*
+     * ⚠️ **形状要先挡掉。** 不挡的话 `eq(users.id, 'abc')` 会撞 Postgres 的
+     *    `invalid input syntax for type uuid` —— 那是 500，不是 404。
+     *    报 404 而不是 400：与「uuid 合法但库里没这个人」对客户端是同一件事，
+     *    分开报只会让人以为格式对了就查得到（memes 那边同一条规矩）。
+     */
     const id = c.req.param('id')
+    if (!isUuid(id)) throw new AppError('NOT_FOUND', '用户不存在')
+
     const body = await c.req.json().catch(() => {
       throw new AppError('VALIDATION_FAILED', '请求体必须是 JSON')
     })
@@ -104,9 +143,7 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
     }
 
     if (storageQuotaBytes !== undefined) {
-      const n = BigInt(storageQuotaBytes as string | number)
-      if (n < 0n) throw new AppError('VALIDATION_FAILED', 'storageQuotaBytes 不能为负')
-      patch.storageQuotaBytes = n
+      patch.storageQuotaBytes = parseQuotaBytes(storageQuotaBytes)
     }
 
     const updated = await updateUser(id, patch)

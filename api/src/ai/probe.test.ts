@@ -26,7 +26,13 @@ const CREDENTIALS = { baseUrl: 'https://relay.example.test', apiKey: KEY, model:
 type Reply = { status: number; body: string }
 
 let replies: Reply[] = []
-let requests: { url: string; authorization: string; body: unknown }[] = []
+let requests: {
+  url: string
+  authorization: string
+  body: unknown
+  /** `RequestInit` 的取值，不写 `RequestRedirect`——那个类型名来自 DOM lib，本项目没有它 */
+  redirect: RequestInit['redirect']
+}[] = []
 
 beforeEach(() => {
   replies = []
@@ -37,6 +43,9 @@ beforeEach(() => {
       url: String(url),
       authorization: headers['Authorization'] ?? '',
       body: JSON.parse(String(init.body)),
+      // 记下来是为了断言**不跟随重定向**（见下面的用例）：它是这一层的安全边界，
+      // 光在 provider.ts 里写一行看不出有没有被谁覆盖掉
+      redirect: init.redirect,
     })
     // 依次取，用完之后重复最后一条——探测会发 1~3 次，用例只关心前几次
     const reply = replies[Math.min(requests.length - 1, replies.length - 1)]
@@ -124,6 +133,61 @@ describe('rawResponse / rawError 里不可能出现 API Key', () => {
     expect(report.ok).toBe(true)
     expect(report.rawResponse).not.toContain(KEY)
     expect(report.rawResponse).toContain(MASKED)
+  })
+})
+
+// ── 重定向 ────────────────────────────────────────────────────────
+
+describe('provider 层的重定向边界', () => {
+  /*
+   * ⚠️ 这里挡的是一条**完整的 SSRF**，不是「顺手加个安全头」。
+   *
+   * `baseUrl` 是用户自己填的（任意中转服务），所以「去哪里」由攻击者决定。跟随重定向的话：
+   *
+   *   ① 302 之后 fetch 会把 POST 降成 GET、丢掉 body——请求语义已经变了；
+   *   ② 上游可以先用一个正常响应骗过「这个地址看起来没问题」，再把请求引到内网；
+   *   ③ 测试连接把**原始响应体回显给用户**，于是内网服务返回什么，前端就拿到什么。
+   *
+   * `redirect: 'manual'` 让 3xx 变成一个非 2xx 响应，落进调用方已有的失败分支
+   * （`!response.ok` → `classifyHttpFailure`），不需要新代码路径。
+   *
+   * 断言的是**每次调用都带上它**，而不是某一次的返回值：漏一处就等于没做。
+   */
+  it('视觉探测的每一次调用都不跟随重定向', async () => {
+    replies = [{ status: 200, body: chatOk(GOOD_FIELDS) }]
+
+    await probeVision(CREDENTIALS)
+
+    expect(requests.length).toBeGreaterThan(0)
+    for (const request of requests) expect(request.redirect).toBe('manual')
+  })
+
+  it('embedding 探测也走同一条路径（两个供应商不各写一份）', async () => {
+    replies = [{ status: 200, body: JSON.stringify({ data: [{ embedding: new Array(1024).fill(0) }] }) }]
+
+    await probeEmbed(CREDENTIALS)
+
+    expect(requests.length).toBeGreaterThan(0)
+    for (const request of requests) expect(request.redirect).toBe('manual')
+  })
+
+  /*
+   * 3xx 不许被当成成功。
+   *
+   * 只写 `redirect: 'manual'` 而不检查状态码的话，一个 302 响应体（通常是空串）
+   * 会掉进 `JSON.parse` 失败那条分支，判定成 `invalid_output`——
+   * 「输出不合格」和「你填的地址把我们指向了别处」对用户是两件事，
+   * 前者会让他去改提示词。
+   */
+  it('3xx 是失败，不是「输出不合格」', async () => {
+    replies = [{ status: 302, body: '' }]
+
+    const report = await probeVision(CREDENTIALS)
+
+    expect(report.ok).toBe(false)
+    expect(report.canReceiveImage).toBe(false)
+    // 只发一次就收手：状态码不会因为重试而变成 200，重试只是再花一遍用户的钱
+    expect(requests).toHaveLength(1)
   })
 })
 

@@ -32,6 +32,7 @@ process.env['DATABASE_URL'] = testDatabaseUrl(requireDatabaseUrl())
 
 const { createTestDb, truncateAll } = await import('./helpers/test-db.js')
 const { createUser, favoriteMeme, makeMeme, unitVector } = await import('./helpers/factories.js')
+const { createSession } = await import('../src/data/auth.js')
 const { softDeleteMeme } = await import('../src/data/memes.js')
 const { onError, onNotFound } = await import('../src/middleware/error.js')
 const { requestId } = await import('../src/middleware/request-id.js')
@@ -56,15 +57,28 @@ afterAll(async () => {
   await sql.end()
 })
 
+type Actor = { id: string; role: 'admin' | 'member'; cookie: string }
+
+/**
+ * 建一个用户并给他一个会话。**每个用例里的 alice 都得是登录状态**：
+ * 搜索整条路由要求登录（SPEC §3.3），没有 cookie 的请求是 401，
+ * 那样测的就不是搜索而是认证了。
+ */
+async function signIn(role: 'admin' | 'member' = 'member'): Promise<Actor> {
+  const user = await createUser(db, { role })
+  const session = await createSession(user.id, db)
+  return { id: user.id, role, cookie: `sid=${session.id}` }
+}
+
 // `request` 的返回类型是 `Response | Promise<Response>`，直接 return 会撞上声明里的
 // `Promise<Response>`。这个 app 没有 requestId 之外的异步中间件，包一层 async 最省事。
-async function search(qs: string): Promise<Response> {
-  return await testApp.request(`/api/v1/search${qs}`)
+async function search(qs: string, actor: Actor): Promise<Response> {
+  return await testApp.request(`/api/v1/search${qs}`, { headers: { cookie: actor.cookie } })
 }
 
 describe('GET /search', () => {
   it('三路融合，被多路召回的排在前面', async () => {
-    const alice = await createUser(db, { name: 'alice' })
+    const alice = await signIn()
     // 查询是两个词条，两条记录**都有这两个标签**，所以标签路上各召回一次、名次也相同。
     // 差别只在文字路：只有 bothPaths 的正文里含「无语 猫」这个串。
     //   bothPaths → tags + ocr → 2/(k+r)
@@ -83,7 +97,7 @@ describe('GET /search', () => {
       tags: ['猫'],
     })
 
-    const res = await search('?q=无语 猫')
+    const res = await search('?q=无语 猫', alice)
     expect(res.status).toBe(200)
 
     const body = (await res.json()) as { items: { id: string; matchedBy: string[] }[] }
@@ -101,10 +115,10 @@ describe('GET /search', () => {
   })
 
   it('embedding 未配置时 degraded: true，OCR + 标签仍然出结果，不报错', async () => {
-    const alice = await createUser(db)
+    const alice = await signIn()
     const hit = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只趴在桌上的猫' })
 
-    const res = await search('?q=趴在桌上的猫')
+    const res = await search('?q=趴在桌上的猫', alice)
     expect(res.status).toBe(200)
 
     const body = (await res.json()) as {
@@ -122,12 +136,12 @@ describe('GET /search', () => {
   })
 
   it('软删的记录不出现在结果里', async () => {
-    const alice = await createUser(db)
+    const alice = await signIn()
     const alive = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只很生气的猫' })
     const deleted = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只很生气的猫' })
     await softDeleteMeme(deleted.id, alice, db)
 
-    const body = (await (await search('?q=生气的猫')).json()) as { items: { id: string }[] }
+    const body = (await (await search('?q=生气的猫', alice)).json()) as { items: { id: string }[] }
     const ids = body.items.map((i) => i.id)
 
     expect(ids).toContain(alive.id)
@@ -135,22 +149,30 @@ describe('GET /search', () => {
   })
 
   it('结果带 favorited（当前登录用户）', async () => {
-    const alice = await createUser(db)
-    const bob = await createUser(db)
+    const alice = await signIn()
+    const bob = await signIn()
     const meme = await makeMeme(db, { uploaderId: alice.id, ocrText: '一只打哈欠的猫' })
     await favoriteMeme(db, bob.id, meme.id)
 
-    // 这个测试挂载的 app 不带鉴权中间件，所以 currentUser 恒为 null → favorited 恒 false。
-    // favorited 的真实取值由 `search-paths.test.ts` 在数据层直接测（那边能传 actorId）
-    const body = (await (await search('?q=打哈欠的猫')).json()) as {
+    // 收藏的人看到 true、没收藏的人看到 false —— **两个方向都要断言**：
+    // 只测一边的话，「恒 true」和「恒 false」这两种写法各有一次能过。
+    // 这曾经是个恒 false 的断言，理由是「这个测试挂的 app 没有鉴权中间件」；
+    // 现在路由要求登录（SPEC §3.3），currentUser 一定存在，没有那个中间态可测了。
+    const asBob = (await (await search('?q=打哈欠的猫', bob)).json()) as {
       items: { id: string; favorited: boolean }[]
     }
-    expect(body.items.find((i) => i.id === meme.id)?.favorited).toBe(false)
+    expect(asBob.items.find((i) => i.id === meme.id)?.favorited).toBe(true)
+
+    const asAlice = (await (await search('?q=打哈欠的猫', alice)).json()) as {
+      items: { id: string; favorited: boolean }[]
+    }
+    expect(asAlice.items.find((i) => i.id === meme.id)?.favorited).toBe(false)
   })
 
   it('q 缺失或全空白返回 VALIDATION_FAILED', async () => {
+    const alice = await signIn()
     for (const qs of ['', '?q=', '?q=%20%20']) {
-      const res = await search(qs)
+      const res = await search(qs, alice)
       expect(res.status).toBe(400)
       const body = (await res.json()) as { error: { code: string } }
       expect(body.error.code).toBe('VALIDATION_FAILED')
@@ -158,15 +180,15 @@ describe('GET /search', () => {
   })
 
   it('limit 非法报错，超过上限则截断', async () => {
-    expect((await search('?q=猫&limit=0')).status).toBe(400)
-    expect((await search('?q=猫&limit=abc')).status).toBe(400)
+    const alice = await signIn()
+    expect((await search('?q=猫&limit=0', alice)).status).toBe(400)
+    expect((await search('?q=猫&limit=abc', alice)).status).toBe(400)
 
-    const alice = await createUser(db)
     for (let i = 0; i < 3; i += 1) {
       await makeMeme(db, { uploaderId: alice.id, ocrText: '一只睡觉的猫' })
     }
 
-    const body = (await (await search('?q=睡觉的猫&limit=999')).json()) as {
+    const body = (await (await search('?q=睡觉的猫&limit=999', alice)).json()) as {
       items: unknown[]
     }
     // 999 被压到 100，而库里只有 3 条 —— 能跑通就说明没有因为超上限而报错
@@ -174,10 +196,10 @@ describe('GET /search', () => {
   })
 
   it('没有任何一路召回时返回空数组，不是 404', async () => {
-    const alice = await createUser(db)
+    const alice = await signIn()
     await makeMeme(db, { uploaderId: alice.id, ocrText: '一只狗' })
 
-    const res = await search('?q=完全不相干的一句话')
+    const res = await search('?q=完全不相干的一句话', alice)
     expect(res.status).toBe(200)
 
     const body = (await res.json()) as { items: unknown[]; degraded: boolean }
@@ -187,10 +209,12 @@ describe('GET /search', () => {
   })
 
   it('响应里不含 storageKey', async () => {
-    const alice = await createUser(db)
+    const alice = await signIn()
     await makeMeme(db, { uploaderId: alice.id, ocrText: '一只很开心的猫' })
 
-    const body = (await (await search('?q=开心的猫')).json()) as { items: Record<string, unknown>[] }
+    const body = (await (await search('?q=开心的猫', alice)).json()) as {
+      items: Record<string, unknown>[]
+    }
     expect(body.items.length).toBeGreaterThan(0)
     // 与浏览接口共用 serializeMeme，这条断言挡的是「搜索自己手写一份序列化」的改动
     expect(body.items[0]).not.toHaveProperty('storageKey')
@@ -206,7 +230,7 @@ describe('向量路可用时', () => {
     // `embedModel` 两边必须是同一个：向量路按它过滤（SPEC §9.20），
     // 种子不写的话这里会查出空数组，而那不是这条用例想测的东西。
     const model = 'test-embed-model'
-    const alice = await createUser(db)
+    const alice = await signIn()
     const meme = await makeMeme(db, {
       uploaderId: alice.id,
       embedding: unitVector(7),

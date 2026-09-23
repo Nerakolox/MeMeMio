@@ -14,6 +14,7 @@ const DEFAULT_QUOTA_BYTES = BigInt(10 * 1024 * 1024 * 1024)
 
 export type UserRow = typeof users.$inferSelect
 export type SessionRow = typeof sessions.$inferSelect
+export type InviteCodeRow = typeof inviteCodes.$inferSelect
 
 // ── 密码 ─────────────────────────────────────────────────────────────
 
@@ -69,11 +70,15 @@ export async function createUser(
 
 // ── 邀请码 ────────────────────────────────────────────────────────────
 
-export async function consumeInviteCode(
+/**
+ * 邀请码是否可用。**只是预检，不消耗、不判定**——判定在 `consumeInviteCode` 那条
+ * 单语句 UPDATE 里。调用方（routes/auth.ts）拿它挡掉没有邀请码的注册请求，
+ * 让注册顺序能排成「邀请码 → 查重名 → scrypt」。
+ */
+export async function findUsableInviteCode(
   code: string,
-  userId: string,
   db: Db = defaultDb,
-): Promise<void> {
+): Promise<InviteCodeRow | null> {
   const rows = await db
     .select()
     .from(inviteCodes)
@@ -81,22 +86,58 @@ export async function consumeInviteCode(
       and(
         eq(inviteCodes.code, code),
         isNull(inviteCodes.usedBy),
+        sql`(${inviteCodes.expiresAt} is null or ${inviteCodes.expiresAt} > now())`,
       ),
     )
     .limit(1)
+  return rows[0] ?? null
+}
 
-  const invite = rows[0]
-  if (!invite) throw new AppError('VALIDATION_FAILED', '邀请码无效或已被使用')
-
-  // 检查是否过期
-  if (invite.expiresAt !== null && invite.expiresAt < new Date()) {
-    throw new AppError('VALIDATION_FAILED', '邀请码已过期')
-  }
-
-  await db
+/**
+ * 消耗一个邀请码。同一个码只能用一次（SPEC §3.1）。
+ *
+ * ⚠️ **`UPDATE ... RETURNING` 是唯一判定点，`where` 里的三个条件缺一不可。**
+ *    「先 select 看能不能用，再 update」在并发下是错的：两个请求会都读到
+ *    `used_by is null`、都认为可以用，然后两条 UPDATE 都成功——同一个码进了两个人。
+ *    改成单语句之后，第二个 UPDATE 在行锁解开时会重新求值 where，影响 0 行。
+ *
+ *    过期判定也必须在 `where` 里（不是先读出来再比 JS 的 Date）：读出来的那一刻
+ *    还没过期、写下去时过期了，那是同一个竞态。`now()` 用数据库时钟。
+ */
+export async function consumeInviteCode(
+  code: string,
+  userId: string,
+  db: Db = defaultDb,
+): Promise<void> {
+  const rows = await db
     .update(inviteCodes)
-    .set({ usedBy: userId, usedAt: new Date() })
-    .where(and(eq(inviteCodes.code, code), isNull(inviteCodes.usedBy)))
+    .set({ usedBy: userId, usedAt: sql`now()` })
+    .where(
+      and(
+        eq(inviteCodes.code, code),
+        isNull(inviteCodes.usedBy),
+        sql`(${inviteCodes.expiresAt} is null or ${inviteCodes.expiresAt} > now())`,
+      ),
+    )
+    .returning({ code: inviteCodes.code })
+
+  if (rows.length > 0) return
+
+  /*
+   * 影响 0 行。**判定已经做完了**，下面这一次读只为了让 message 准一点
+   * （「已被使用」和「已过期」对用户是两件事）——它不承担任何判定责任，
+   * 所以读出来的结果和刚才那条 UPDATE 不一致也无所谓。
+   */
+  const existing = await findInviteCode(code, db)
+  if (existing === null || existing.usedBy !== null) {
+    throw new AppError('VALIDATION_FAILED', '邀请码无效或已被使用')
+  }
+  throw new AppError('VALIDATION_FAILED', '邀请码已过期')
+}
+
+async function findInviteCode(code: string, db: Db): Promise<InviteCodeRow | null> {
+  const rows = await db.select().from(inviteCodes).where(eq(inviteCodes.code, code)).limit(1)
+  return rows[0] ?? null
 }
 
 // ── 会话 ──────────────────────────────────────────────────────────────

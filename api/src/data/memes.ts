@@ -7,6 +7,7 @@ import { buildSearchText } from '../lib/vision-output.js'
 import type { VocabField } from '../lib/vision-output.js'
 import { VOCAB_FIELDS } from '../vocab.js'
 import { AppError } from '../lib/app-error.js'
+import { isUuid } from '../lib/uuid.js'
 
 /**
  * memes 的**唯一入口**。
@@ -24,7 +25,7 @@ export type NewMeme = typeof memes.$inferInsert
 
 /**
  * 一条记录 + 两个**不属于这张表**的字段：`uploaderName` 来自 join `users`，
- * `favorited` 来自 join `user_favorites`（当前登录用户，未登录恒 false）。
+ * `favorited` 来自 join `user_favorites`（当前提问的那个用户）。
  *
  * 浏览、详情、编辑三处给的是同一个形状，所以它只写一遍——三份的话，
  * 迟早有一处少一个字段，而那表现为「同一个对象在不同接口里字段不一样」。
@@ -705,6 +706,12 @@ export type ListMemesParams = {
  * 游标解码结果。游标是 base64(created_at ISO + '|' + id)，不透明，客户端不解析。SPEC §1.3
  *
  * 用 created_at + id 双字段确保同秒上传的多张图也有稳定游标。
+ *
+ * ⚠️ **这里必须校验 id 的 uuid 形状，返回 `null` 而不是放进 where。** 游标是客户端
+ *    拿来就用的不透明串，改一个字符就能造出「解出来是合法 base64、但 id 是 `abc`」
+ *    的输入；`lt(memes.id, 'abc')` 会撞 Postgres 的 `invalid input syntax for type uuid`
+ *    ——500，不是「游标无效」。判据和这里已有的那些一样：**解不出来就当没传游标**，
+ *    从第一页开始（约定见 §1.3），不新增一个错误码，也不把服务端错误吐给客户端。
  */
 function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
   try {
@@ -713,7 +720,7 @@ function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
     if (sep < 0) return null
     const createdAt = new Date(raw.slice(0, sep))
     const id = raw.slice(sep + 1)
-    if (isNaN(createdAt.getTime()) || id === '') return null
+    if (isNaN(createdAt.getTime()) || !isUuid(id)) return null
     return { createdAt, id }
   } catch {
     return null

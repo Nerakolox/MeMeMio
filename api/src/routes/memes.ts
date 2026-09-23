@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { AppError } from '../lib/app-error.js'
-import { optionalAuth, type OptionalAuthVariables } from '../middleware/auth.js'
+import { isUuid } from '../lib/uuid.js'
+import { requireAuth, type AuthVariables } from '../middleware/auth.js'
 import {
   addFavorite,
   listMemes,
@@ -21,15 +22,31 @@ import { serializeMeme } from '../serialize/meme.js'
 // 序列化器搬到了 `serialize/meme.ts`：搜索接口要输出同一批字段，
 // 两份实现迟早会在「不返回 storageKey」这类保证上分叉。见该文件顶部注释。
 
-// GET /memes 用 optionalAuth——未登录可能仍能浏览（取决于部署方，但接口本身不强制登录；
-// tagStatus 参数在内部做权限检查）。GET /memes/:id 同理。
-//
-// ⚠️ 整条路由只挂 optionalAuth，**收藏那两个端点不另挂 requireAuth**：两种中间件对
-//    `currentUser` 的类型要求相反（AuthUser vs AuthUser | null），同一个 Hono 实例上
-//    混挂会让整条路由的 Variables 退化。所以那两个 handler 自己判 `currentUser === null`
-//    并抛 UNAUTHENTICATED——错误码与 requireAuth 完全一致（SPEC §2.4）。
-//    这是登录判定，不是归属判定；归属判定仍然只在 `assertCanMutate` 一处（AGENTS.md §5）。
-type Vars = OptionalAuthVariables
+/**
+ * 整条路由**要求登录**（SPEC §3.3：搜索 / 浏览 / 使用，所有登录用户）。
+ *
+ * 「未登录也能浏览」曾经在这里挂过 `optionalAuth`，那等于把全库和部署方的 AI 额度
+ * 对外开放（匿名搜索走部署方的 embedding）——SPEC §3.3 从来没有给过这个选项。
+ * 权限只有一个来源：`requireAuth` 判「登录」，`assertCanMutate` 判「归属」
+ * （AGENTS.md §5），handler 里不自己拼任何一条。
+ */
+type Vars = AuthVariables
+
+/**
+ * `:id` 路径参数的 uuid 形状校验。
+ *
+ * ⚠️ **不挡的话 `eq(memes.id, 'abc')` 会撞 Postgres 的 `invalid input syntax for type uuid`**，
+ *    那是 500，不是 404 ——「服务器内部错误」回应了一个错字。
+ *
+ * 报 **404 而不是 400**：路径上的资源不存在，前端对 `/memes/xxx` 一律渲染空状态。
+ * 形状合法但不存在的 uuid 走的是同一条 `NOT_FOUND`，**这两种情况对客户端是同一件事**，
+ * 分开报只会让人以为「格式对了就查得到」。查询参数上的 uuid（`?uploader=`）相反，
+ * 那一个是「参数写错了」，报 `VALIDATION_FAILED`（见 `GET /` 里那段）。
+ */
+function requireUuidId(raw: string | undefined): string {
+  if (raw === undefined || !isUuid(raw)) throw new AppError('NOT_FOUND', '这张表情不存在')
+  return raw
+}
 
 // ── PATCH /memes/:id 的请求体（SPEC §6.4.1） ───────────────────────
 //
@@ -114,9 +131,6 @@ function parseEditBody(raw: unknown): MemeContentPatch {
 
 // ── POST /memes/retag 的请求体（SPEC §6.4.3） ──────────────────────
 
-/** uuid 的形状。**挡的是 Postgres 的转换错误，不是业务规则。** */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-
 /**
  * `{ memeIds: [...] }` 或 `{ filter: {...} }`——**恰好给一个**（SPEC §6.4.3）。
  *
@@ -131,7 +145,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * ⚠️ **uuid 形状要在这里挡掉。** 不挡的话 `inArray(memes.id, ['abc'])` 会撞
  *    Postgres 的 `invalid input syntax for type uuid`，那是 500 而不是 400
  *    （`app.onError` 把非 `AppError` 一律当 `INTERNAL`）。客户端传了个错字，
- *    得到的是「服务器内部错误」。
+ *    得到的是「服务器内部错误」。判定走 `lib/uuid.ts`，全端一份。
  */
 function parseRetagBody(raw: unknown, actor: Actor): RetagInput {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -158,7 +172,7 @@ function parseRetagBody(raw: unknown, actor: Actor): RetagInput {
     }
     // 去重放在服务层（它要拿去重后的数量比对查回来的行数），这里只校验形状
     for (const item of value) {
-      if (typeof item !== 'string' || !UUID_RE.test(item)) {
+      if (typeof item !== 'string' || !isUuid(item)) {
         throw new AppError('VALIDATION_FAILED', 'memeIds 的每一项必须是 uuid')
       }
     }
@@ -222,7 +236,7 @@ function parseRetagBody(raw: unknown, actor: Actor): RetagInput {
     // 形状先于角色，和上面 tagStatus 那条同一个道理：`uploader: 'everyone'` 是
     // **参数写错了**，不是「权限不够」。判成 403 会把用户送去要管理员权限，
     // 而他要改的是一个错字。
-    if (!UUID_RE.test(rawUploader)) {
+    if (!isUuid(rawUploader)) {
       throw new AppError('VALIDATION_FAILED', 'filter.uploader 必须是 "me" 或 uuid')
     }
     if (actor.role !== 'admin') {
@@ -235,7 +249,7 @@ function parseRetagBody(raw: unknown, actor: Actor): RetagInput {
 }
 
 export const memesRoutes = new Hono<{ Variables: Vars }>()
-  .use('*', optionalAuth)
+  .use('*', requireAuth)
 
   /**
    * GET /api/v1/memes
@@ -264,11 +278,21 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
 
     const uploader = c.req.query('uploader') ?? undefined
 
+    /*
+     * `uploader` 只有两个合法形态：`me` 或一个 uuid。
+     *
+     * ⚠️ **形状要在这里挡掉。** 不挡的话 `eq(memes.uploader_id, 'abc')` 会撞 Postgres 的
+     *    `invalid input syntax for type uuid` —— 那是 500，不是「查不到」。这里是查询参数，
+     *    所以报 `VALIDATION_FAILED`（路径参数上的 id 报 `NOT_FOUND`，见下面 `/:id`）。
+     */
+    if (uploader !== undefined && uploader !== 'me' && !isUuid(uploader)) {
+      throw new AppError('VALIDATION_FAILED', 'uploader 必须是 "me" 或 uuid')
+    }
+
     const tagStatus = c.req.query('tagStatus') ?? undefined
 
     // tagStatus 仅本人或 admin 可用。SPEC §3.3
     if (tagStatus !== undefined) {
-      if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
       // 只有 admin，或只查自己的图时，才能传 tagStatus
       const queryingOwn = uploader === 'me' || uploader === actor.id
       if (actor.role !== 'admin' && !queryingOwn) {
@@ -299,7 +323,7 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
 
     const { items, nextCursor } = await listMemes(
       { ...labels, isAnimated, favorited, uploader, tagStatus, cursor, limit, random },
-      actor?.id ?? null,
+      actor.id,
     )
 
     return c.json({ items: items.map(serializeMeme), nextCursor })
@@ -317,7 +341,6 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    */
   .get('/tag-status', async (c) => {
     const actor = c.get('currentUser')
-    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
 
     // ⚠️ **取值必须在下面那个判断之前挡掉。** 漏了校验的话 `scope=foo` 会掉进
     //    「不是 mine」那一支，等于给非管理员开了 `all` 的口子——静默越权。
@@ -358,7 +381,6 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    */
   .post('/retag', async (c) => {
     const actor = c.get('currentUser')
-    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
 
     const raw: unknown = await c.req.json().catch(() => {
       throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
@@ -373,10 +395,10 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    * 软删记录返回 NOT_FOUND。含 favorited 字段。SPEC §6.3.2
    */
   .get('/:id', async (c) => {
-    const id = c.req.param('id')
+    const id = requireUuidId(c.req.param('id'))
     const actor = c.get('currentUser')
 
-    const row = await getMemeById(id, actor?.id ?? null)
+    const row = await getMemeById(id, actor.id)
     if (row === null) throw new AppError('NOT_FOUND', '这张表情不存在')
 
     return c.json(serializeMeme(row))
@@ -389,18 +411,17 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    * 而归属判定**只在 `assertCanMutate` 一处**（AGENTS.md §5）——handler 里
    * **不要「顺手补一个归属检查」**，哪怕写对了也是错的：下一个人会照着它再写一遍。
    *
-   * 登录判定与收藏那两个端点同一写法（文件顶部解释了为什么不换 requireAuth）。
    * 响应是**更新后的完整 Meme**，与 `GET /:id` 同形，客户端据此就地更新列表、不再拉一次。
    */
   .patch('/:id', async (c) => {
     const actor = c.get('currentUser')
-    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
+    const id = requireUuidId(c.req.param('id'))
 
     const raw: unknown = await c.req.json().catch(() => {
       throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
     })
 
-    const updated = await updateMemeContent(c.req.param('id'), actor, parseEditBody(raw))
+    const updated = await updateMemeContent(id, actor, parseEditBody(raw))
     return c.json(serializeMeme(updated))
   })
 
@@ -417,9 +438,8 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    */
   .delete('/:id', async (c) => {
     const actor = c.get('currentUser')
-    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
 
-    await softDeleteMeme(c.req.param('id'), actor)
+    await softDeleteMeme(requireUuidId(c.req.param('id')), actor)
     return c.body(null, 204)
   })
 
@@ -435,9 +455,8 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    */
   .put('/:id/favorite', async (c) => {
     const actor = c.get('currentUser')
-    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
 
-    await addFavorite(actor.id, c.req.param('id'))
+    await addFavorite(actor.id, requireUuidId(c.req.param('id')))
     return c.body(null, 204)
   })
 
@@ -449,8 +468,7 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
    */
   .delete('/:id/favorite', async (c) => {
     const actor = c.get('currentUser')
-    if (actor === null) throw new AppError('UNAUTHENTICATED', '请先登录')
 
-    await removeFavorite(actor.id, c.req.param('id'))
+    await removeFavorite(actor.id, requireUuidId(c.req.param('id')))
     return c.body(null, 204)
   })

@@ -91,6 +91,21 @@ export function resolveCredentials(
  * `init.signal` 会**和本函数的超时叠加**，不是被它覆盖：队列里每个任务有整体超时
  * （queue.md §5），任务超时时要能把正在跑的这次调用也一起掐掉。写成覆盖的话，
  * 任务超时了但 fetch 还在跑，表现是「任务已经算失败了，AI 的钱照花」。
+ *
+ * ⚠️ **`redirect: 'manual'` 不是可选项，它是这一层的安全边界。** 地址由用户自己填
+ *    （任意中转服务，见 ai-providers.md），也就是**攻击者能让他自己的 URL 决定我们
+ *    去哪里**。跟随重定向的话：
+ *
+ *    ① 302 之后的第二次请求**不再是 POST**，body 被丢掉，方法按 fetch 的规则变成 GET；
+ *    ② 更糟的是它绕过了「只发给我填的这个域名」这个约定——上游可以先返回 302，
+ *       把请求引到内网或别的服务上；
+ *    ③ 测试连接那条路还把**原始响应体回显给用户**（`testVisionConnection`），
+ *       于是被指向的目标返回什么，前端就拿到什么。
+ *
+ *    三条合起来是一个完整的 SSRF：一次 `POST /config/vision/test` 就能读到内网服务
+ *    的响应。`manual` 让重定向变成「非 2xx」落到调用方已有的失败分支（降级/连接失败），
+ *    **不需要新代码路径**。放在这里而不是各个调用点：测连接与生产打标必须走同一条
+ *    请求构造（ai-providers.md），分叉的那一份迟早只有一处被修。
  */
 export async function fetchWithTimeout(
   url: string,
@@ -102,7 +117,9 @@ export async function fetchWithTimeout(
   const outer = init.signal
   const signal = outer ? AbortSignal.any([controller.signal, outer]) : controller.signal
   try {
-    return await fetch(url, { ...init, signal })
+    // `redirect` 放在展开**之后**，调用方传进来的值覆盖不掉它：这条边界是这一层
+    // 的职责，不该由一个顺手写下的 init 决定（上面那段说了它挡的是什么）
+    return await fetch(url, { ...init, redirect: 'manual', signal })
   } finally {
     clearTimeout(timer)
   }

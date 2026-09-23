@@ -65,16 +65,45 @@ export class AppError extends Error {
   /** 结构随 code 而定，客户端按 code 分支，不解析 message。见 SPEC §2.1。 */
   readonly details: Record<string, unknown> | undefined
 
-  constructor(code: ErrorCode, message: string, details?: Record<string, unknown>) {
+  /**
+   * 附加的响应头。**协议层的东西不进 `details`**：`Retry-After` 是 HTTP 头，
+   * 客户端按它退避（SPEC §2.2），塞进 JSON 会变成两份可能不一致的真相。
+   *
+   * 只有 `middleware/error.ts` 那个统一出口读它——handler 里仍然不手写响应。
+   */
+  readonly headers: Record<string, string> | undefined
+
+  constructor(
+    code: ErrorCode,
+    message: string,
+    details?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ) {
     super(message)
     this.name = 'AppError'
     this.code = code
     this.details = details
+    this.headers = headers
   }
 
   get status(): number {
     return httpStatusFor(this.code)
   }
+}
+
+/**
+ * 限流错误的**唯一构造点**。
+ *
+ * `Retry-After` 用 delta-seconds 形式（`Retry-After: 12`）：HTTP-date 形式要求客户端
+ * 解析日期、还依赖两端时钟一致，delta-seconds 不需要。两种客户端都要认，但这里只发前者。
+ *
+ * 秒数和 message 里的数字同源，不会出现「头说 12 秒、文案说 30 秒」。
+ */
+export function rateLimited(retryAfterSeconds: number): AppError {
+  const seconds = Math.max(1, Math.ceil(retryAfterSeconds))
+  return new AppError('RATE_LIMITED', `请求过于频繁，请 ${seconds} 秒后再试`, undefined, {
+    'Retry-After': String(seconds),
+  })
 }
 
 export function isAppError(value: unknown): value is AppError {

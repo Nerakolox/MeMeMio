@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { AppError } from '../lib/app-error.js'
+import { isUuid } from '../lib/uuid.js'
 import { requireAuth, type AuthVariables } from '../middleware/auth.js'
 import {
   MAX_FILES_PER_BATCH,
@@ -174,6 +175,21 @@ async function resolveCommitItems(
 
 type Vars = AuthVariables
 
+/**
+ * `:batchId` 路径参数的 uuid 形状校验。
+ *
+ * ⚠️ **不挡的话 `eq(import_batches.id, 'abc')` 会撞 Postgres 的
+ *    `invalid input syntax for type uuid`** —— 那是 500，不是 404。客户端拿一个
+ *    拼错的 batchId 去补快照（SSE 断线重连时最常发生），得到的是「服务器内部错误」。
+ *
+ * 报 **404 而不是 400**：路径上的批次不存在，与「uuid 合法但批次已清理」对客户端
+ * 是同一件事，前端两处都渲染「这批不在了」。查询参数上的 uuid 才报 400。
+ */
+function requireUuidBatchId(raw: string): string {
+  if (!isUuid(raw)) throw new AppError('NOT_FOUND', '没有这个导入批次')
+  return raw
+}
+
 export const importRoutes = new Hono<{ Variables: Vars }>()
   .use('*', requireAuth)
 
@@ -253,7 +269,7 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
    */
   .post('/reviews/:batchId/:fileName', async (c) => {
     const actor = c.get('currentUser')
-    const batchId = c.req.param('batchId')
+    const batchId = requireUuidBatchId(c.req.param('batchId'))
     // ⚠️ **不要在这里再 decodeURIComponent 一次**：Hono 的 `c.req.param()` 已经解过码
     //（`request.js` 的 `#getDecodedParam` 走 `tryDecodeURIComponent`）。再解一次的话，
     // 文件名里的 `%` 会让它抛 URIError —— 表现是「文件名带百分号的图永远处理不了」，
@@ -311,7 +327,7 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
    */
   .post('/:batchId/commit', async (c) => {
     const actor = c.get('currentUser')
-    const batchId = c.req.param('batchId')
+    const batchId = requireUuidBatchId(c.req.param('batchId'))
     const raw: unknown = await c.req.json().catch(() => {
       throw new AppError('VALIDATION_FAILED', '请求体不是合法 JSON')
     })
@@ -357,7 +373,7 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
    */
   .get('/:batchId', async (c) => {
     const actor = c.get('currentUser')
-    const batchId = c.req.param('batchId')
+    const batchId = requireUuidBatchId(c.req.param('batchId'))
     const batch = await findOwnedBatch(batchId, actor.id)
     if (batch === null) throw new AppError('NOT_FOUND', '没有这个导入批次')
 
@@ -381,7 +397,7 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
    */
   .get('/:batchId/events', async (c) => {
     const actor = c.get('currentUser')
-    const batchId = c.req.param('batchId')
+    const batchId = requireUuidBatchId(c.req.param('batchId'))
     const batch = await findOwnedBatch(batchId, actor.id)
     if (batch === null) throw new AppError('NOT_FOUND', '没有这个导入批次')
 

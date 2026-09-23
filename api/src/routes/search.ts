@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { AppError } from '../lib/app-error.js'
-import { optionalAuth, type OptionalAuthVariables } from '../middleware/auth.js'
+import { requireAuth, type AuthVariables } from '../middleware/auth.js'
 import { db as defaultDb } from '../data/db.js'
 import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, searchMemes } from '../services/search.js'
 import { serializeMeme } from '../serialize/meme.js'
@@ -12,11 +12,20 @@ import { serializeMeme } from '../serialize/meme.js'
  * 别把 `cursor` 加进来——融合分不是稳定可续的游标，分页会把 RRF 的排序切坏。
  */
 
-// 浏览接口用 optionalAuth，搜索同理：未登录也能搜，只是 favorited 恒为 false
-type Vars = OptionalAuthVariables
+/**
+ * **要求登录**（SPEC §3.3：搜索 / 浏览 / 使用，所有登录用户）。
+ *
+ * 曾经挂的是 `optionalAuth`，理由是「未登录也能搜，favorited 恒为 false」——
+ * 那是把 §3.3 读成了「匿名可用」。实际代价有两层：全库内容对未登录者开放，
+ * 以及每次匿名搜索都会走**部署方**的 embedding 通道（用户没带自己的配置时
+ * 按部署方解析），等于把部署方的 AI 额度挂在公网上。SPEC 里从来没有这个选项。
+ *
+ * 于是 `favorited` 不再需要一个「匿名就是 false」的分支：`actor` 一定存在。
+ */
+type Vars = AuthVariables
 
 export const searchRoutes = new Hono<{ Variables: Vars }>()
-  .use('*', optionalAuth)
+  .use('*', requireAuth)
 
   .get('/', async (c) => {
     const q = (c.req.query('q') ?? '').trim()
@@ -39,7 +48,7 @@ export const searchRoutes = new Hono<{ Variables: Vars }>()
     const actor = c.get('currentUser')
     const requestId = c.get('requestId')
 
-    const outcome = await searchMemes(q, limit, actor?.id ?? null, requestId, defaultDb)
+    const outcome = await searchMemes(q, limit, actor.id, requestId, defaultDb)
 
     return c.json({
       items: outcome.items.map((item) => ({ ...serializeMeme(item), matchedBy: item.matchedBy })),

@@ -52,13 +52,16 @@ async function signIn(role: 'admin' | 'member' = 'member'): Promise<Actor> {
 type Item = { id: string; tags: string[]; favorited: boolean }
 type ListBody = { items: Item[]; nextCursor: string | null }
 
-async function list(query: string, actor: Actor | null = null): Promise<Response> {
-  return testApp.request(`/api/v1/memes?${query}`, {
-    headers: actor === null ? {} : { cookie: actor.cookie },
-  })
+/*
+ * `actor` 是**必填**的，没有默认值：整组路由要求登录（SPEC §3.3），
+ * 「谁都行」在这里等于「拿一个匿名请求去测」，那是 401 而不是被测行为。
+ * 传一个真的登录者，顺带让每个用例写明这是谁的视角。
+ */
+async function list(query: string, actor: Actor): Promise<Response> {
+  return testApp.request(`/api/v1/memes?${query}`, { headers: { cookie: actor.cookie } })
 }
 
-async function listBody(query: string, actor: Actor | null = null): Promise<ListBody> {
+async function listBody(query: string, actor: Actor): Promise<ListBody> {
   const res = await list(query, actor)
   expect(res.status).toBe(200)
   return (await res.json()) as ListBody
@@ -78,7 +81,7 @@ describe('GET /memes?random=true', () => {
     const alice = await signIn()
     await seed(alice.id, 25)
 
-    const body = await listBody('random=true&limit=10')
+    const body = await listBody('random=true&limit=10', alice)
     expect(body.items.length).toBe(10)
     // 随机序没有「下一页」。给一个游标会让客户端把「随机的第二页」接在第一页后面，
     // 而那看起来像正常翻页（SPEC §6.3.2）。
@@ -89,7 +92,7 @@ describe('GET /memes?random=true', () => {
     const alice = await signIn()
     await seed(alice.id, 3)
 
-    const body = await listBody('random=true&limit=10')
+    const body = await listBody('random=true&limit=10', alice)
     expect(body.items.length).toBe(3)
     expect(body.nextCursor).toBeNull()
   })
@@ -104,7 +107,7 @@ describe('GET /memes?random=true', () => {
     }
 
     // limit 开得比存活数大：漏了过滤就一定会把已删的图带出来，不用靠概率
-    const body = await listBody('random=true&limit=100')
+    const body = await listBody('random=true&limit=100', alice)
     expect(body.items.map((m) => m.id)).toEqual([alive.id])
   })
 
@@ -115,7 +118,7 @@ describe('GET /memes?random=true', () => {
       await softDeleteMeme(id, actor, db)
     }
 
-    const body = await listBody('random=true&limit=10')
+    const body = await listBody('random=true&limit=10', alice)
     expect(body.items).toEqual([])
     expect(body.nextCursor).toBeNull()
   })
@@ -127,7 +130,7 @@ describe('GET /memes?random=true', () => {
 
     // 抽五轮：漏了筛选的话，每轮 30/35 的图都会是狗，不可能五轮全过
     for (let round = 0; round < 5; round++) {
-      const body = await listBody('random=true&limit=5&tags=%E7%8C%AB')
+      const body = await listBody('random=true&limit=5&tags=%E7%8C%AB', alice)
       expect(body.items.length).toBe(5)
       for (const m of body.items) {
         expect(cats.has(m.id)).toBe(true)
@@ -173,7 +176,7 @@ describe('GET /memes?random=true', () => {
 
     let sawOldest = false
     for (let round = 0; round < 10 && !sawOldest; round++) {
-      const body = await listBody('random=true&limit=10')
+      const body = await listBody('random=true&limit=10', alice)
       if (body.items.some((m) => oldest.has(m.id))) sawOldest = true
     }
     // 十轮全是新图的概率约 (C(20,10)/C(40,10))^10 ≈ 2e-38，不是一条会偶发红的断言
@@ -184,7 +187,7 @@ describe('GET /memes?random=true', () => {
     const alice = await signIn()
     await seed(alice.id, 3)
 
-    const res = await list('random=true&limit=2&cursor=whatever')
+    const res = await list('random=true&limit=2&cursor=whatever', alice)
     expect(res.status).toBe(400)
     const body = (await res.json()) as { error: { code: string } }
     expect(body.error.code).toBe('VALIDATION_FAILED')
@@ -205,12 +208,13 @@ describe('GET /memes?random=true', () => {
     const alice = await signIn()
     await seed(alice.id, 5)
 
-    const first = await listBody('limit=2')
+    const first = await listBody('limit=2', alice)
     expect(first.items.length).toBe(2)
     expect(first.nextCursor).not.toBeNull()
 
     const second = await listBody(
       `limit=2&cursor=${encodeURIComponent(first.nextCursor ?? '')}`,
+      alice,
     )
     expect(second.items.length).toBe(2)
 
