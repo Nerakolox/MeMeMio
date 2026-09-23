@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react'
 import { Link, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/auth'
 import { ImportProvider, useImport } from './contexts/import'
@@ -16,8 +17,22 @@ import { ImportPage } from './routes/import'
 import { LoginPage } from './routes/login'
 import { RegisterPage } from './routes/register'
 import { SettingsPage } from './routes/settings'
-import { UiPage } from './routes/ui'
 import { NotFoundPage } from './routes/not-found'
+
+/**
+ * 组件参照页（`/ui`）**不进生产包**。
+ *
+ * 它是给开发看「主题下 shadcn 组件长什么样」的，用户点不到也不需要，但它 import 了
+ * **全部** `components/ui/*`——留在包里等于让每个用户多下一份谁都用不上的代码。
+ *
+ * 三道一起才成立：`import.meta.env.DEV` 为假时这个三元表达式常量折叠成 `null`，
+ * 那条 `import()` 随之成为死代码（`vite build` 不再产出这个 chunk）；`lazy` 让开发
+ * 时它也只在真的访问 `/ui` 时才加载；`Suspense` 是 `lazy` 的必需搭配，没有它整页报错。
+ * 单独只用 `lazy` 是不够的——那会把参照页切成一个**仍然会发布**的 chunk。
+ */
+const UiPage = import.meta.env.DEV
+  ? lazy(() => import('./routes/ui').then((m) => ({ default: m.UiPage })))
+  : null
 
 /** 未登录就跳登录页，并把当前地址原样带过去（state-navigation.md §5）。 */
 function RequireAuth() {
@@ -155,7 +170,18 @@ export function App() {
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
 
-            <Route path="/ui" element={<UiPage />} />
+            {/* 开发期才有这条路由（见文件上方 `UiPage` 的推导）。生产包里 `UiPage` 是
+                `null`，真的有人手工敲 `/ui` 会落到下面的 `*` 路由，得到 404 页。 */}
+            {UiPage !== null && (
+              <Route
+                path="/ui"
+                element={
+                  <Suspense fallback={null}>
+                    <UiPage />
+                  </Suspense>
+                }
+              />
+            )}
 
             {/*
               三个管理页并进了 /settings（见 routes/settings.tsx）。旧地址保留成重定向而不是

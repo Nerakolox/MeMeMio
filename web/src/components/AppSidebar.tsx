@@ -50,7 +50,16 @@ const NAV: NavItem[] = [
   { to: '/browse', label: '浏览', icon: Images },
   { to: '/import', label: '导入', icon: Upload, authOnly: true },
   { to: '/settings', label: '设置', icon: Settings, authOnly: true },
-  { to: '/ui', label: '组件', icon: Blocks },
+  /*
+    组件参照页（`App.tsx` 的 `/ui`）只有开发期有这条路由，入口跟着一起消失。
+    判据用**同一个** `import.meta.env.DEV`，写成条件展开而不是「渲染时 filter 掉」：
+    filter 掉的只是渲染结果，那条 `label: '组件'` 仍然躺在生产包里（`vite build` 后
+    grep 得到）；条件展开能让 Rollup 判定整个字面量是死代码。两边分开写的话，
+    生产包里会出现一个点了就掉进 404 的入口。
+  */
+  ...(import.meta.env.DEV
+    ? [{ to: '/ui', label: '组件', icon: Blocks } satisfies NavItem]
+    : []),
 ]
 
 /**
