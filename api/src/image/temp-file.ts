@@ -15,11 +15,24 @@ export async function withTempFile<T>(
   label: string,
   fn: (filePath: string) => Promise<T>,
 ): Promise<T> {
-  const tempDir = await mkdtemp(join(tmpdir(), 'mememio-'))
-  const localPath = join(tempDir, 'source')
-  try {
+  return withTempDir(label, async (tempDir) => {
+    const localPath = join(tempDir, 'source')
     await writeFile(localPath, bytes)
-    return await fn(localPath)
+    return fn(localPath)
+  })
+}
+
+/**
+ * 建一个临时目录跑一段逻辑，跑完删掉。**清理语义与 `withTempFile` 完全一致。**
+ *
+ * 抽帧要的是一个**目录**而不是一个文件：一次 ffmpeg 调用输出的是整批帧文件
+ * （`probe.ts` 的 `extractAllFrames`）。两者共用同一个 `cleanupTempDir`——
+ * Windows 上那个 EBUSY 重试是在这里修的，多一条独立的删除路径就等于多一处会漏修。
+ */
+export async function withTempDir<T>(label: string, fn: (dir: string) => Promise<T>): Promise<T> {
+  const tempDir = await mkdtemp(join(tmpdir(), 'mememio-'))
+  try {
+    return await fn(tempDir)
   } finally {
     await cleanupTempDir(tempDir, label)
   }

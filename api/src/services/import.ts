@@ -16,8 +16,8 @@ import { AppError, isAppError } from '../lib/app-error.js'
 import { log } from '../logger.js'
 import { FFMPEG_CONCURRENCY, MAX_FILE_BYTES, NEAR_DUP_DISTANCE } from '../image/constants.js'
 import { computePhash, readSize, toThumbnail } from '../image/decode.js'
-import { extractFrames, isAnimatedByFrames } from '../image/frames.js'
-import { probeMetadata, setFfmpegConcurrency } from '../image/probe.js'
+import { isAnimatedByFrames } from '../image/frames.js'
+import { extractFramePng, probeMetadata, setFfmpegConcurrency } from '../image/probe.js'
 import { withTempFile } from '../image/temp-file.js'
 import {
   deleteObject,
@@ -499,8 +499,9 @@ function isContentHashConflict(error: unknown): boolean {
  * 判断，回同一个 `memeId` 即可。
  */
 /**
- * 删临时目录的重试逻辑搬去了 `image/temp-file.ts`：打标那条路径要抽同样的帧，
- * 落盘 + 清理这一段一模一样，共用一份免得只在一边修了 bug。
+ * 删临时目录的重试逻辑搬去了 `image/temp-file.ts`：打标那条路径也要把字节落成临时文件
+ * （ffmpeg / ffprobe 只认路径，不认 Buffer），落盘 + 清理这一段一模一样，
+ * 共用一份免得只在一边修了 bug。
  */
 
 export async function persistBytes(params: {
@@ -522,20 +523,21 @@ export async function persistBytes(params: {
     const metadata = await probeMetadata(localPath)
     const animated = isAnimatedByFrames(metadata)
 
-    // 动图导入期就跑一遍抽帧，**结果不落库**。目的是在导入时就暴露
-    // 「这个文件 ffmpeg 处理不了」，而不是等用户配好 key 之后才在打标阶段失败——
-    // 那时他面对的是一批 pending 到天荒地老的图，没有任何错误信息。
+    // 动图在导入期**只解一帧**，用来暴露「这个文件 ffmpeg 真的解得开」。
+    //
+    // 这条探活的理由没变：等到打标阶段才失败，用户面对的是一批 pending 到天荒地老的图，
+    // 没有任何错误信息；在导入期失败，条目直接是 failed 且带原因。
+    // **但一帧就够**——解不开的文件在第一帧就报错，没必要抽完全部再报。原来这里是跑
+    // 整套抽帧把结果丢掉，代价是 O(帧数²) 个解码步骤（每帧一个进程，`select=eq(n,i)`
+    // 要从头解到第 i 帧），几百帧的 GIF 就是几十秒，而导入批次这条路径**没有整体超时**。
+    //
+    // **「复用」在这里不成立**：帧不落库，打标时还要重新下载再抽一遍，
+    // 导入期抽出来的东西没有任何地方用得上。真要复用就得把帧存进对象存储并加一列，
+    // 那是契约变更（SPEC §5.2），不在本任务范围内。
     if (animated) {
-      const selection = await extractFrames(localPath, metadata)
-      log.debug(
-        {
-          fileName,
-          rawFrameCount: selection.rawFrameCount,
-          distinctFrameCount: selection.distinctFrameCount,
-          sentFrames: selection.frames.length,
-        },
-        '动图抽帧完成',
-      )
+      const startedAt = Date.now()
+      await extractFramePng(localPath, 0)
+      log.debug({ fileName, frameCount: metadata.frameCount, ms: Date.now() - startedAt }, '动图探活完成')
     }
     return animated
   })

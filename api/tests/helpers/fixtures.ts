@@ -47,6 +47,13 @@ export const FIXTURES = {
    * `animatedGif` 只有 4 帧，`planVisionAttempts` 排不出 10 帧那一级。
    */
   animatedLongGif: 'animated/animated-long.gif',
+  /**
+   * 240 帧，其中只有 30 个不同画面（每个画面连着重复 8 次）。抽帧那条路的**量级样本**：
+   * 旧的「每帧一个进程」在这个样本上要 12.7 秒（`select=eq(n,i)` 要从头解到第 i 帧，
+   * 总解码量是帧数的平方），几百帧的 GIF 正是「导入卡住 / 打标超时」的来源。
+   * 连着的重复帧同时是**长静止段**——去重存在的理由。预期结论见 `MANY_FRAMES_EXPECTED`。
+   */
+  manyFramesGif: 'animated/animated-many-frames.gif',
   /** 手写容器拼的：ffmpeg 读不出 ANIM/ANMF，只有 `lib/webp.ts` 认。见 image-pipeline.md §2。 */
   animatedWebp: 'animated/animated.webp',
   apng: 'animated/apng.png',
@@ -64,3 +71,20 @@ export const FIXTURES = {
 } as const
 
 export const HUGE_BYTES = 23_560_841
+
+/**
+ * `manyFramesGif` 在抽帧管线里的**预期结论**（`tests/frame-extraction.test.ts`）。
+ *
+ * `selected` 是 `pickFrames` 的尾部偏置算法作用在 30 个状态上的结果：头部 3 帧
+ * （等距铺开、不取第 0 个）+ 尾部 7 帧。**写成具体的帧号而不是「10 帧左右」**，
+ * 因为这条路的错法全是静默的：个数对不上是少送/多送，帧号错位是取错画面
+ * （选帧策略的全部意义就是取到「文字出现之后」那几帧），两者都不会报错。
+ *
+ * ⚠️ 帧号是**原始帧号**，不是去重后的序号：30 个状态里第 k 个出现在原始帧 `8k`，
+ *    所以去重列表的第 5 个状态对应原始帧 40。
+ */
+export const MANY_FRAMES_EXPECTED = {
+  raw: 240,
+  distinct: 30,
+  selected: [40, 88, 136, 184, 192, 200, 208, 216, 224, 232],
+} as const

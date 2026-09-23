@@ -189,10 +189,12 @@ async function genAnimated(): Promise<void> {
   ]
   const needShort = shortTargets.some(wanted)
   const needLong = wanted('animated/animated-long.gif')
-  if (!needShort && !needLong) return
+  const needMany = wanted('animated/animated-many-frames.gif')
+  if (!needShort && !needLong && !needMany) return
 
   if (needShort) await genAnimatedShort()
   if (needLong) await genAnimatedLong()
+  if (needMany) await genAnimatedManyFrames()
 }
 
 async function genAnimatedShort(): Promise<void> {
@@ -280,8 +282,57 @@ async function genAnimatedLong(): Promise<void> {
   ])
 }
 
-// ── edge/ 会出问题的那批（docs/fixtures.md §3） ─────────────────────────
+/**
+ * 帧数与其中不同画面的个数。**预期结论在 `tests/helpers/fixtures.ts`**（那里是
+ * 「样本在管线里的结论」的唯一落点），这里只是生成参数，两边改了要一起改。
+ */
+const MANY_FRAMES = 240
+const MANY_FRAMES_DISTINCT = 30
 
+/**
+ * 240 帧的 GIF，但只有 30 个不同画面——每个画面连着重复 8 次。
+ *
+ * 两个用途，都是前两个样本给不了的：
+ *
+ * 1. **抽帧的成本量级。** 帧数是那条路唯一的成本变量，而旧实现（每帧一个进程、
+ *    `select=eq(n,i)` 从头解到第 i 帧）在这里要起 240 个进程、总解码量上万帧——
+ *    实测几十秒，打标任务直接超时落成 `needs_manual`。12 帧的 `animated-long.gif`
+ *    跑不出这个量级，慢和快在它身上都只有几十毫秒。
+ * 2. **长静止段**——连着的 8 帧像素完全相同。这是表情包动图的真实形态（画面不动、
+ *    只有一行字在变），也是帧间去重存在的理由。它让去重结果**确定**：30 个状态，
+ *    采样 10 帧，帧号可预期（`tests/frame-extraction.test.ts` 断言的是具体帧号，
+ *    不是「大概 10 帧」）。
+ *
+ * 尺寸取 64×64：噪声图压不动，240 帧 120×120 在仓库里就是几 MB，而这个样本
+ * 只需要「帧数够多、有静止段」，画幅对它没有任何影响。
+ */
+async function genAnimatedManyFrames(): Promise<void> {
+  const repeats = MANY_FRAMES / MANY_FRAMES_DISTINCT
+  const seqDir = join(tmp, 'mememio-fixture-many')
+  await mkdir(seqDir, { recursive: true })
+
+  // 写成 ffmpeg 的 image2 序列（f000.png …）而不是 240 路 `-i` + concat：
+  // 那份 filter_complex 光命令行就十几 KB，Windows 的命令行长度上限容不下。
+  let n = 0
+  for (let i = 0; i < MANY_FRAMES_DISTINCT; i += 1) {
+    // 种子和 animated-long 的错开，免得两个样本的「不同画面」互相同得上
+    const png = await noisePng(64, 64, 300_001 + i * 1000)
+    for (let r = 0; r < repeats; r += 1) {
+      await writeFile(join(seqDir, `f${String(n).padStart(3, '0')}.png`), png)
+      n += 1
+    }
+  }
+
+  await ffmpeg([
+    '-framerate', '1',
+    '-i', join(seqDir, 'f%03d.png'),
+    '-filter_complex', 'split[a][b];[a]palettegen[p];[b][p]paletteuse',
+    '-loop', '0',
+    join(fixturesRoot, 'animated/animated-many-frames.gif'),
+  ])
+}
+
+// ── edge/ 会出问题的那批（docs/fixtures.md §3） ─────────────────────────
 async function genEdge(): Promise<void> {
   // 0 字节：连 magic bytes 都读不到
   if (wanted('edge/zero-byte.png')) {

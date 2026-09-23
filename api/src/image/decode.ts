@@ -109,9 +109,11 @@ export async function computeFramePhash(framePng: Buffer): Promise<bigint> {
  * 它跳过 ANIM / ANMF 块，抽帧产出 0 字节（ffmpeg 5.1 与 8.1 一致，
  * 详细根因见 `lib/webp.ts` 的文件头）。libvips 认得，所以这一路归 sharp。
  *
- * **帧序与 ffmpeg 的 `select=eq(n,index)` 一致**：libvips 把动图竖排堆叠
- * （240×240 的 4 帧读出来是 240×960），`page: index` 就是第 index 帧。
- * 两者对上很关键——`extractFrames` 对 ffmpeg 和 sharp 两条路都按同一个 index 语义调用，
+ * **帧序与 ffmpeg 的文件序号一致**：libvips 把动图竖排堆叠
+ * （240×240 的 4 帧读出来是 240×960），`page: index` 就是第 index 帧；
+ * ffmpeg 那一支靠 `-vsync 0` + `-start_number 0` 让写出的文件序号等于帧号
+ * （`probe.ts` 的 `extractAllFrames`）。
+ * 两者对上很关键——`extractAllFrames` 对 ffmpeg 和 sharp 两条路都用同一个 index 语义，
  * 错位了会静默丢掉「文字出现之后」的那几帧，而那正是选帧策略存在的理由。
  */
 export async function extractWebpFramePng(filePath: string, index: number): Promise<Buffer> {

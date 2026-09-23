@@ -1,7 +1,10 @@
+import { readFile } from 'node:fs/promises'
 import { COLLAGE_FRAMES, FRAME_DEDUP_DISTANCE, MAX_FRAMES } from './constants.js'
 import { computeFramePhash } from './decode.js'
-import { extractFramePng, type VideoMetadata } from './probe.js'
+import { extractAllFrames, type VideoMetadata } from './probe.js'
+import { withTempDir } from './temp-file.js'
 import { hammingDistance } from '../lib/phash.js'
+import { log } from '../logger.js'
 
 /**
  * 动图分帧。SPEC §9.4 / image-pipeline.md §3。
@@ -12,14 +15,19 @@ import { hammingDistance } from '../lib/phash.js'
  * 分开命名的原因。
  */
 
-/** 一张要送 AI 的帧。`index` 保留原始帧号，只为日志可读。 */
+/**
+ * 一张要送 AI 的帧。`index` 是**原始帧号**。
+ *
+ * 它不只是给日志看的：偏后段的采样、去重都按它定位，动态 WebP 那边还要拿它当
+ * libvips 的 `page`。帧号错位不会报错，只会让标签悄悄变差（见 `pickFrames`）。
+ */
 export type ExtractedFrame = { index: number; png: Buffer }
 
 export type FrameSelection = {
   frames: ExtractedFrame[]
   /** 去重后的不同状态数。用于日志，也是「采样是常态」那条结论的观测点。 */
   distinctFrameCount: number
-  /** 原始帧数。 */
+  /** **实际解出来的**原始帧数。可能与容器声明的 `metadata.frameCount` 不等，见下面的警告。 */
   rawFrameCount: number
 }
 
@@ -38,29 +46,48 @@ export type FrameSelection = {
  *
  * 实测参考（989 张真实库）：去重后状态数中位数 9、均值 15.3、最大 81，
  * 只有 55% 的动图 ≤10 帧。**所以采样是常态，不是例外**，这条路径和「全发」同等重要。
+ *
+ * **帧是一次 ffmpeg 调用抽完的**（`probe.ts` 的 `extractAllFrames`），落在临时目录里。
+ * 原来每帧起一个进程（`select=eq(n,i)` 要从头解到第 i 帧，总解码量是帧数的平方），
+ * 120 帧的 GIF 就要 8.6 秒，几百帧的直接把打标任务拖超时、重试五次落成 `needs_manual`。
  */
 export async function extractFrames(
   filePath: string,
   metadata: VideoMetadata,
 ): Promise<FrameSelection> {
-  const pngs: { index: number; png: Buffer }[] = []
-  for (let i = 0; i < metadata.frameCount; i += 1) {
-    pngs.push({ index: i, png: await extractFramePng(filePath, i) })
-  }
+  return withTempDir('frames', async (dir) => {
+    const decoded = await extractAllFrames(filePath, dir, metadata.frameCount)
 
-  const deduped: { index: number; png: Buffer; hash: bigint }[] = []
-  for (const frame of pngs) {
-    const hash = await computeFramePhash(frame.png)
-    // 线性比对：帧数上限由 ffmpeg 超时和文件大小兜住，不值得为它上索引
-    const seen = deduped.some((kept) => hammingDistance(kept.hash, hash) <= FRAME_DEDUP_DISTANCE)
-    if (!seen) deduped.push({ ...frame, hash })
-  }
+    if (decoded.length !== metadata.frameCount) {
+      // 容器声明的帧数与真的解出来的帧数**可以不一致**（有的容器是估的）。
+      // 以解出来的为准，不按声明去补齐：去重和采样走的都是这份实际帧列表，
+      // 少几帧不影响结果，凭空多出几帧才是问题。只记一条，不报错。
+      log.warn(
+        { declared: metadata.frameCount, decoded: decoded.length, filePath },
+        '实际解出的帧数与容器声明不一致',
+      )
+    }
 
-  return {
-    frames: pickFrames(deduped).map(({ index, png }) => ({ index, png })),
-    distinctFrameCount: deduped.length,
-    rawFrameCount: metadata.frameCount,
-  }
+    // 去重是**顺序**扫描，每个静止段保留的是它的第一帧——与「全部抽出来再顺序比对」
+    // 的结果完全一样（验收里「逐帧一致」比的就是这个顺序）。
+    //
+    // 只留帧号不留字节：去重后的帧可能上百张（实测最大 81），而真正要用的最多
+    // `MAX_FRAMES` 张。全留在内存里是几百 MB 的 PNG 缓冲，白占着。
+    const distinct: { index: number; path: string; hash: bigint }[] = []
+    for (const frame of decoded) {
+      const hash = await computeFramePhash(await readFile(frame.path))
+      // 线性比对：帧数上限由 MAX_RAW_FRAMES 兜住（image/constants.ts），不值得为它上索引
+      const seen = distinct.some((kept) => hammingDistance(kept.hash, hash) <= FRAME_DEDUP_DISTANCE)
+      if (!seen) distinct.push({ ...frame, hash })
+    }
+
+    const frames: ExtractedFrame[] = []
+    for (const frame of pickFrames(distinct)) {
+      frames.push({ index: frame.index, png: await readFile(frame.path) })
+    }
+
+    return { frames, distinctFrameCount: distinct.length, rawFrameCount: decoded.length }
+  })
 }
 
 /**
