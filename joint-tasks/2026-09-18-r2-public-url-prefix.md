@@ -1,6 +1,6 @@
 # R2 公开 URL 丢了键前缀
 
-**状态**：`in_progress` ｜ **性质**：api 单端 ｜ 开于 2026-09-18
+**状态**：`done`（2026-09-24 总管核对：三件全部落地、对真实 R2 验过，三次提交已合入；见 §5.5）｜ **性质**：api 单端 ｜ 开于 2026-09-18
 
 契约不变，不进 `planning`：SPEC §5.2.6 的 `url` / `thumbUrl` 和 §6.2.3 的 `tempUrl` 字段形状和含义都没动，本次修的是它们**算错了**。
 
@@ -177,5 +177,16 @@ export function publicUrlFor(objectKey: string): string {
 - SPEC 一个字没改。`url` / `thumbUrl` / `tempUrl` 的形状和含义都没动，本次修的是它们算错了。
 - §4「本次不做」两条照旧不做：checksum 那条今天仍未复现失败，web 的 `uploadToR2` 兜底是 web 单端。
 - 没跑评测集——本次没动打标提示词、词表或检索参数。
-- **未提交。** 本次授权里没有提交动作，改动留在工作区。建议拆成三次提交：`fix(api): 派生公开 URL 补上 R2 键前缀，删掉第二份实现` / `feat(api): 启动时探活 R2，配错就拒绝启动` / `docs: 补 R2_PUBLIC_BASE_URL 与 R2 开通及 CORS 手册`。
+- ~~**未提交。**~~ **（2026-09-24 总管更正）** 已按建议的三次提交合入：`09e6db9` `fix(api): 派生公开 URL 补上 R2 键前缀，删掉第二份实现`、`070f6a6` `feat(api): 启动时探活 R2，配错就拒绝启动`、`3feb565` `docs: 补 R2_PUBLIC_BASE_URL 与 R2 开通及 CORS 手册`。
+
+## 6. 总管核对（2026-09-24）
+
+`in_progress` 挂在这里挂了一周，实际三件早就做完了——**这条状态是本任务唯一没跟上现实的东西**，其余全部成立：
+
+- `publicUrlFor` 单一入口、启动探活、文档三处都已合入上述三次提交。
+- 「本地开发也必须有一个能连上的 bucket」这个副作用**总管认可**，不退回 warn：`env-validation.md §5` 只允许 cookie `Secure` 一处按环境分支，为开发态放行等于新开一个分支，而「配错了不报错」正是这次的病根。代价（web 单端开发的人也要配 R2）已写进 `docs/environments.md §4`。
+- §4「本次不做」两条照旧不做。checksum 那条至今未复现失败，**记在这里是为了下次**：若出现 400 `XAmzContentChecksumMismatch` / `BadDigest`，改 `S3Client` 的 `requestChecksumCalculation: 'WHEN_REQUIRED'`，别再从头查一遍。
+- `uploadToR2` 兜底把 fetch 层失败（CORS、TLS、DNS）和 HTTP 失败压成同一句「上传失败」（`use-import-queue.ts`）**仍然没修、也没人认领**——2026-09-24 总管核对时点过一遍，[web 交互缺陷批修](2026-09-24-web-interaction-fixes.md)的 12 条里没有它（那边第 9 条是 `item.reason` 的兜底文案，另一回事）。已登记到任务板的「已知缺口」。今天整条排查链走得这么长，这是放大器之一。
+
+→ 转 `done`，待归档。
 
