@@ -21,7 +21,10 @@
 | [运行参数](2026-09-23-runtime-config.md) | web 断言全对着替身，两端从未对话；按该任务「总管裁定」列的三条去盯 |
 | [打标状态界面](2026-09-19-tagging-status.md) | 造一张 `needs_manual`（连一个不存在的模型地址），核对「汇总 `needsManual` = 列表条数」 |
 | [批量重打标](2026-09-22-retag-endpoint.md) | 真库全量重打。**要花 admin 的额度、约 9–20 分钟，跑之前问产品负责人** |
-| [迁 Tailwind v4](2026-09-21-web-tailwind-v4-radix-luma.md) | 登录后四个业务页过一眼 |
+
+> ~~[迁 Tailwind v4](../_archive/joint-tasks/2026-09-21-web-tailwind-v4-radix-luma.md)：登录后四个业务页过一眼~~
+> —— **2026-09-25 已解**：四页走查用替身 + 真图实测，不依赖登录凭据，也就不用等部署（见
+> [`_archive/joint-tasks/2026-09-25-web-page-walkthrough.md`](../_archive/joint-tasks/2026-09-25-web-page-walkthrough.md)）。
 
 **需要部署**，要真域名、真 R2、真配额，或者真机：导入任务转出的遗留项（`existing` 为 null 的降级、SSE 断线重连、`QUOTA_EXCEEDED` 展示、移动端 / Safari / Firefox）、首页图墙的空库态和失败态、复制 / 分享真机（`web/AGENTS.md §6`）。
 

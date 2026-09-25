@@ -9,7 +9,7 @@
 - 主题是**自调的 shadcn preset `b1VlIttI`**（2026-09-21 换掉 new-york + zinc 默认值），
   颜色/圆角/阴影全部走 `src/index.css` 里的 CSS 变量 token（`--primary` 等 **oklch** 值），
   **组件与页面只引用语义 token，不写死 HEX**。
-- **样式载体是 Tailwind v4**（2026-09-21 从 v3.4 迁上来，见[该次任务](../../../joint-tasks/2026-09-21-web-tailwind-v4-radix-luma.md)）。
+- **样式载体是 Tailwind v4**（2026-09-21 从 v3.4 迁上来，见[该次任务](../../../_archive/joint-tasks/2026-09-21-web-tailwind-v4-radix-luma.md)）。
   没有 `tailwind.config.js`、没有 `postcss.config.js`：主题整块在 `src/index.css` 的
   `@theme inline` 里，构建走 `@tailwindcss/vite`。加 token 就在那两处加，别去找配置文件。
 - **token 存完整色值**（`--primary: oklch(0.205 0 0)`），`@theme inline` 用

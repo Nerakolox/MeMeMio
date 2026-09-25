@@ -19,7 +19,7 @@
    在首页没人接住），也不随主题 token 走。
 2. **[卡片 shadcn 化](2026-09-21-web-card-shadcn.md) 的「不做」里明确留了两笔账给这次**：
    `.discover__grid` / `.search__grid`（网格布局）和 `.search__card-action`（页面级控件，留 BEM）。
-3. **[迁 Tailwind v4](../../joint-tasks/2026-09-21-web-tailwind-v4-radix-luma.md) 停在 `in_progress`**，
+3. **[迁 Tailwind v4](2026-09-21-web-tailwind-v4-radix-luma.md) 停在 `in_progress`**，
    等的就是「业务四页要登录后过一眼」——首页是其中一页。
 
 顺带两处早就记在任务板上的账：首页的 `autoFocus` 是[随机图墙](2026-09-19-home-random-grid.md)

@@ -1,10 +1,17 @@
 # web 迁 Tailwind v4 + radix-luma 组件层
 
-**状态**：`in_progress`
+**状态**：`done`（2026-09-25；关单与归档由总管做）
 **性质**：**web 单端**——不动 `api/`，不动 SPEC，不改任何接口与数据语义。
 
-**剩余阻塞**：`做完的标准` 第 4 条（业务四页不回归）无法由执行者自证——那四页在登录后面、仓库里没有
-开发凭据。代码侧已做完并验到 `/ui` 全绿，等有账号的人在重启后的 dev server 上过一眼业务页再关单。
+**剩余阻塞（已解除）**：`做完的标准` 第 4 条（业务四页不回归）**已实测**，见
+[四页走查](2026-09-25-web-page-walkthrough.md) 的「web 端验收」。
+
+原来的阻塞理由「仓库里没有开发凭据」是错的：替身的 `/auth/me` 恒返 admin，四页不登录也能渲染
+（`verify-home-look.mjs` 早就这么用过）。真正缺的是一套把四页都摆出来的脚本，2026-09-25 补上了。
+
+**四页名单已修正**：老卡里写的 browse / home / tagging / discover 是**迁移当时**的路由，
+现在 tagging 并进了导入页（`features/tagging/TagStatusView` 挂在 `routes/import.tsx`）、
+discover 并进了首页（`features/discover/DiscoverWall`）。走查走的是**现在的四页**：首页 / 浏览 / 导入 / 设置。
 
 ## 为什么要做
 
@@ -98,12 +105,12 @@ function Button({ className, ...props }) { return <Comp {...props} /> }   // 没
 处置：给**会被当 `asChild` 子节点用的**本端组件包 `forwardRef`（本次是 `button.tsx`、`badge.tsx`，
 各加一层并注明原因）。不升 React 19——业务四页在登录后面，升大版本而无法回归验证的代价更大；
 `forwardRef` 在 React 19 下同样有效，将来升级不用回退。规则已写进
-[styling.md](../web/agents/rules/styling.md)。
+[styling.md](../../web/agents/rules/styling.md)。
 
 ## 深色模式：契约不变
 
 preset 生成的是 `.dark` class 变体（`@custom-variant dark (&:is(.dark *))`）。
-**本项目深色走 `prefers-color-scheme`、不做手动开关**（[styling.md](../web/agents/rules/styling.md)），
+**本项目深色走 `prefers-color-scheme`、不做手动开关**（[styling.md](../../web/agents/rules/styling.md)），
 所以**不加** `@custom-variant dark` —— Tailwind v4 的 `dark:` 默认就是
 `@media (prefers-color-scheme: dark)`，恰好就是我们要的；深色 token 也从 `.dark {}` 搬进
 `@media (prefers-color-scheme: dark) { :root { … } }`。组件里所有 `dark:` 前缀不用改。
@@ -114,7 +121,7 @@ preset 生成的是 `.dark` class 变体（`@custom-variant dark (&:is(.dark *))
 2. `components.json` 为 `radix-luma`，25 个组件内容与 `https://ui.shadcn.com/r/styles/radix-luma/<name>.json` 逐行等价。
 3. `/ui` 在浅色与深色下渲染正常：弹层能开合、勾选框/开关/滑块有状态样式（验证 `shadcn/tailwind.css` 真的生效）。
 4. 业务四页（browse / home / tagging / discover）渲染不回归。
-5. `hono` 版本与 `api/` 保持一致（`^4.6.16`）——见 [web 规则](../web/agents/rules/INDEX.md) 里的锁步约束。
+5. `hono` 版本与 `api/` 保持一致（`^4.6.16`）——见 [web 规则](../../web/agents/rules/INDEX.md) 里的锁步约束。
 
 ## web 端要改什么
 
@@ -163,12 +170,14 @@ preset 生成的是 `.dark` class 变体（`@custom-variant dark (&:is(.dark *))
 
 **没验到 / 有保留的**：
 
-- **业务四页（browse / home / tagging / discover）没做像素级回归**——它们在登录后面，仓库里没有
-  开发凭据。可用证据只有登录页：迁移前后渲染一致（仅视口高度差异）。上一轮已把这几页简化成裸图，
-  且 BEM 样式在这次迁移里未被替换（`styles.css` 只去掉了 `:root` 里的 `font-family`，因为
-  未分层的 CSS 会盖过 `@layer base` 的 `html { font-sans }`），故判断无回归，但这是推断不是实测。
+- ~~**业务四页（browse / home / tagging / discover）没做像素级回归**……这是推断不是实测。~~
+  ✅ **2026-09-25 解除**：四页走查用真图把现在的四页（首页 / 浏览 / 导入 / 设置）在
+  1440×900 / 390×844 × 浅色 / 深色四档下都渲染了一遍，32 条断言全过、89 张截图。
+  组件层（卡片、弹层、确认框、页签、抽屉、toast）全部正常，没有样式缺失或布局塌掉。
+  **仍是渲染证据，不是接口联调**（数据来自替身、写操作没落库），但「四页不回归」这条
+  已由推断升级为实测。详见 [四页走查](2026-09-25-web-page-walkthrough.md)。
 
-  > ✅ **2026-09-21 补了一半证据**（[顶部导航换侧边导航](../_archive/joint-tasks/2026-09-21-web-sidebar-nav.md)那次）：
+  > ✅ **2026-09-21 补了一半证据**（[顶部导航换侧边导航](2026-09-21-web-sidebar-nav.md)那次）：
   > 用 Playwright 的 `page.route()` 打桩 `/api/v1/auth/me` 与 `/api/v1/memes**`，
   > 在系统 Chrome 里**真的渲染了** home / browse / import / settings 四页，浅色深色都过了一遍，
   > 没看到布局塌掉或样式缺失。**这是渲染证据，不是接口联调**——数据是假的、写操作没走通，
