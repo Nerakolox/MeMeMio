@@ -32,9 +32,9 @@
 | 1 | 任务板每一格 ≤ 一两句话 | 板子重排：**最长单元格 9191 → 386 字符**（原第 41 行那格），`joint-tasks/README.md` 151 行 / 17 KB。按状态分四档（实施中 / 卡在外部条件或待裁定 / 持续优化 / 未开工），`done` 的不再混在「当前任务」里 |
 | 2 | 逐个核对 `in_progress` 的真实状态，更正写进各自的任务文件 | **6 条改了状态、2 条保留状态但补了核对结论**，逐条见下 |
 | 3 | 入口过时说法改成现状 | `README.md`、`api/README.md`、`web/README.md`、`spec/INDEX.md`、`spec/00-overview.md §0.3` 五处 |
-| 4 | 「先跑评测」的矛盾按 §8.4 补记录 | [SPEC §9.27](../spec/09-decisions.md)，`README.md` 与 `docs/eval.md` 跟着改；`2026-09-13-eval-set.md` 自己那段的「评测先行」前提也标了作废 |
-| 5 | 逐条判断 `proposed` 转 `accepted` 还是保留 | [SPEC §9.28](../spec/09-decisions.md)，含一张逐条表；§9.20–§9.24 与 §6.6 转 `accepted`，§9.5 / §9.8 / §9.12 / §9.17 保留 |
-| 6 | 修掉 22 条失效链接 + 补一条移动后检查的规则 | 全仓 `893` 条相对链接、**失效 0**；新增 `scripts/check-doc-links.mjs`（可进 CI），规则进 [documentation.md](../agents/rules/documentation.md) |
+| 4 | 「先跑评测」的矛盾按 §8.4 补记录 | [SPEC §9.27](../../spec/09-decisions.md)，`README.md` 与 `docs/eval.md` 跟着改；`2026-09-13-eval-set.md` 自己那段的「评测先行」前提也标了作废 |
+| 5 | 逐条判断 `proposed` 转 `accepted` 还是保留 | [SPEC §9.28](../../spec/09-decisions.md)，含一张逐条表；§9.20–§9.24 与 §6.6 转 `accepted`，§9.5 / §9.8 / §9.12 / §9.17 保留 |
+| 6 | 修掉 22 条失效链接 + 补一条移动后检查的规则 | 全仓 `893` 条相对链接、**失效 0**；新增 `scripts/check-doc-links.mjs`（可进 CI），规则进 [documentation.md](../../agents/rules/documentation.md) |
 | 7 | 署名规则进 `git-and-delivery.md`，`AGENTS.md` 指向它 | 新增「## 署名」一节；根 / `api/` / `web/` 三处 `AGENTS.md` 末尾那行改成指针 |
 
 ### 3.1 逐个核对的结论（标准 2）
@@ -47,7 +47,7 @@
 | [三个管理页并入设置页](2026-09-18-settings-merge.md) | `in_progress` | **`done`** | 两处 SPEC 措辞偏差裁定为「改描述、不动约束」，§9.6 / §9.9 已改并留痕 |
 | [检索召回与动图抽帧性能](2026-09-24-search-media-perf.md) | `in_progress` | **`planning`** | **没人开工**（`data/search.ts`、`image/frames.ts` 一行没动）。原来的 `in_progress` 与「真在做但没验收」混在一起看不出来 |
 | [队列可靠性](2026-09-24-queue-reliability.md) | `in_progress` | `in_progress` | 九条实现**都在工作区**（逐条对到了落点，见该文件 §6），但**未提交、三条实测没回填**。新增 §6 写明缺的只有三样：三条实测数据、一次提交、`attempts` 当领取 token 的显式验证 |
-| [会话与访问收口](2026-09-24-auth-access-hardening.md) | `in_progress` | `in_progress` | 新增 §9：api 已合入、web 四条已落，**只差 §8 两条联合验收**；并更正了一处当时的判断——替身那轮不能升级成联合验收，api 合入后的重跑是唯一能发现「替身与真实实现不一致」的机会 |
+| [会话与访问收口](../../joint-tasks/2026-09-24-auth-access-hardening.md) | `in_progress` | `in_progress` | 新增 §9：api 已合入、web 四条已落，**只差 §8 两条联合验收**；并更正了一处当时的判断——替身那轮不能升级成联合验收，api 合入后的重跑是唯一能发现「替身与真实实现不一致」的机会 |
 | [web 交互缺陷批修](2026-09-24-web-interaction-fixes.md) | `in_progress` | **`done`** | 12 条落地、65/65。新增 §5 裁定：iOS 真机那两条**不在这条任务上挂账**，转入任务板的「待测清单」——把已完成的活压在「等真机」上，结果是它和另外五六条一起烂在 `in_progress` |
 
 **另外清掉的四处过时话**：任务板「打标状态界面」那格还写着 §6.6 仍 `proposed`（已转）；「模型配置转出的遗留项」里手机自动聚焦那行标「下次上真机先看一眼」（代码 `a5ee19b` 已修）；首页「复制地址是临时实现」那行（已换成 `lib/clipboard.ts` 真流程）；`web/README.md` 的页面表里 `/settings` 与 `/admin` 的描述。
@@ -62,7 +62,7 @@
 
 | 发现 | 处置 |
 |---|---|
-| **§6.4.1 与 §6.6.2 自相矛盾**：`PATCH` 不改 `tag_status`，所以 §6.6.2 说的「人工用 `PATCH` 补」这条出口走完图还在待处理列表里 | 新开跨端任务 [人工补完标签之后，怎么离开待处理列表](2026-09-24-needs-manual-exit.md)，**带一个待产品负责人裁定的选型**（推荐 A：`PATCH` 成功即 `needs_manual` → `ok`） |
+| **§6.4.1 与 §6.6.2 自相矛盾**：`PATCH` 不改 `tag_status`，所以 §6.6.2 说的「人工用 `PATCH` 补」这条出口走完图还在待处理列表里 | 新开跨端任务 [人工补完标签之后，怎么离开待处理列表](../../joint-tasks/2026-09-24-needs-manual-exit.md)，**带一个待产品负责人裁定的选型**（推荐 A：`PATCH` 成功即 `needs_manual` → `ok`） |
 | **`docs/deployment.md §8.3` 的结论只对了一半**（把「CORS 没配」和「浏览器不支持剪贴板」说成表现完全一样） | 已按实况更正：取图失败会指向 R2 的 CORS，与权限被拒区分得开 |
 | **`web/agents/rules/clipboard-share.md §5` 的示例照抄会得到错误行为**（桌面 Windows Chrome 的 `canShare({files})` 返回 true → 桌面静图走分享而不是「复制」） | 规则已按实现更正，补上 `touchPrimary()` 那一道闸，并写明它不是 UA 判断 |
 | **web 的 `uploadToR2` 兜底把 CORS / TLS / DNS 失败和 HTTP 失败压成同一句「上传失败」** —— 查了一遍，**没有任何任务认领** | 登记进板子的「已知缺口」，原因记在 [R2 任务](2026-09-18-r2-public-url-prefix.md) §6 |
@@ -71,7 +71,7 @@
 
 - **没有动 `api/` 或 `web/` 的实现代码**（总管边界）。本次唯一进入工作区的非文档产物是 `scripts/check-doc-links.mjs`。
 - **没有替执行者跑任何测试**。§3.1 里「实现已在工作区」是对着 diff 逐条对落点的结论，**不是「验过了」**。
-- **没有裁定需要产品负责人定的那三项**：首个 admin 空窗与 SSRF 私网（[会话与访问收口](2026-09-24-auth-access-hardening.md) §4）、`needs_manual` 的出口选型（新任务 §2）。它们不是文档问题，改写文档等于替产品决定。
+- **没有裁定需要产品负责人定的那三项**：首个 admin 空窗与 SSRF 私网（[会话与访问收口](../../joint-tasks/2026-09-24-auth-access-hardening.md) §4）、`needs_manual` 的出口选型（新任务 §2）。它们不是文档问题，改写文档等于替产品决定。
 
 ## 4. 这个任务为什么值一条记录
 

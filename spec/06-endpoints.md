@@ -141,7 +141,7 @@ GET /memes?emotions=无语&tags=猫&isAnimated=true&favorited=true&uploader=me&c
 
 #### `random=true`：随机抽样
 
-> **状态：`accepted`**（2026-09-19 新增并转正）。兼容性新增能力，两端已确认。见[首页随机图墙](../joint-tasks/2026-09-19-home-random-grid.md)。
+> **状态：`accepted`**（2026-09-19 新增并转正）。兼容性新增能力，两端已确认。见[首页随机图墙](../_archive/joint-tasks/2026-09-19-home-random-grid.md)。
 >
 > 它**已经是线上行为**（两端已实现并在真库上跑通），但还没进 `stable`——`stable` 要等联合验收归档时由总管转，见 [§8.1](08-collaboration.md)。
 
@@ -180,7 +180,7 @@ GET /memes?random=true&limit=10
 
 ### §6.4.1 `PATCH /memes/{id}` 的语义
 
-> **状态：`accepted`**（2026-09-19 细化）。路径与权限自始为 `accepted`，本节补的是请求体与错误码——这些不定死，两端会各写一个。见[浏览页图片操作](../joint-tasks/2026-09-19-browse-meme-actions.md)。
+> **状态：`accepted`**（2026-09-19 细化）。路径与权限自始为 `accepted`，本节补的是请求体与错误码——这些不定死，两端会各写一个。见[浏览页图片操作](../_archive/joint-tasks/2026-09-19-browse-meme-actions.md)。
 
 请求体**只接受八个字段**：`description` / `expressions` / `emotions` / `tones` / `purposes` / `scenes` / `tags` / `ratings`。其余字段（**包括 `ocrText`**）出现在请求体里即 `VALIDATION_FAILED`（[§2.2](02-errors.md)）。
 

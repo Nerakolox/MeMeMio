@@ -10,7 +10,7 @@
 
 ## 2. 一个页面，两类分段
 
-2026-09-18 起三个管理页并进了 `/settings`（见 `joint-tasks/2026-09-18-settings-merge.md`）。
+2026-09-18 起三个管理页并进了 `/settings`（见 `_archive/joint-tasks/2026-09-18-settings-merge.md`）。
 
 | 分段 | 谁看得到 | 配什么 |
 |---|---|---|

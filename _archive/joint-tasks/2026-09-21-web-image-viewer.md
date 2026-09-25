@@ -89,7 +89,7 @@ gzip 18.70 kB；JS 592.59 kB，chunk 体积警告是既有的）。
 
 浏览器：本轮**没有 Playwright**，也**故意不现装**——本仓没有常驻 e2e，而临时装包会让 lockfile
 重新解析、漂 `hono` 版本并打断 web↔api 的类型链（那次事故的步骤与正确装法已补进
-[git-and-delivery.md](../agents/rules/git-and-delivery.md) 的「依赖变更」）。改用**零依赖的一次性驱动**：
+[git-and-delivery.md](../../agents/rules/git-and-delivery.md) 的「依赖变更」）。改用**零依赖的一次性驱动**：
 Node 起一个服务同时供 `web/dist` 与 `/api/v1/*` 打桩，再用 Node 22 内置的 `WebSocket`
 通过 CDP 驱动**系统 Chrome**——**不装任何东西，因此不碰 lockfile**。脚本跑完即删。
 
@@ -160,9 +160,9 @@ Node 起一个服务同时供 `web/dist` 与 `/api/v1/*` 打桩，再用 Node 22
 
 ## 沉淀到规则里的两条
 
-- [styling.md](../web/agents/rules/styling.md)：新增「全屏阅览」一节——宿主的**位置是功能的一部分**
+- [styling.md](../../web/agents/rules/styling.md)：新增「全屏阅览」一节——宿主的**位置是功能的一部分**
   （React 树 vs DOM 树的 portal 冒泡）、库自带 CSS **无层**且怎么覆写、
   **插件的 `labels` 是插件自己那份**、单张必须 `render` 掉翻页按钮、
   `cursor-pointer` 要自己写（Tailwind v4 去掉了按钮的默认指针）。「动图」一节按新行为改写。
-- [project-structure.md](../web/agents/rules/project-structure.md)：`components/ImageViewer.tsx`
+- [project-structure.md](../../web/agents/rules/project-structure.md)：`components/ImageViewer.tsx`
   落地，作为「应用外壳」例外的第二条——理由不是复用次数，是**全应用只能有一份**。

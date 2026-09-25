@@ -32,8 +32,8 @@
 
 ## 2. 做完的标准
 
-规则写在 [feedback.md](../web/agents/rules/feedback.md)（新文件，四条判据），
-样式与层级写在 [styling.md](../web/agents/rules/styling.md) 的「全站提示（toast）」。
+规则写在 [feedback.md](../../web/agents/rules/feedback.md)（新文件，四条判据），
+样式与层级写在 [styling.md](../../web/agents/rules/styling.md) 的「全站提示（toast）」。
 
 | # | 判据 |
 |---|---|
@@ -90,9 +90,9 @@
 全部「重试 / 换一批 / 加载更多」（骨架屏已经是反馈）、筛选器与词表 chip、登录注册提交、
 `components/ui/**` 里除新增 `sonner.tsx` 之外的一切。
 
-**文档**：[clipboard-share.md](../web/agents/rules/clipboard-share.md) §4.1 那句逐字引用的文案跟着改、
-[styling.md](../web/agents/rules/styling.md) 销掉 `copyNote.text` 那笔待办并补 toast 一节、
-[feedback.md](../web/agents/rules/feedback.md) 新增 + [INDEX.md](../web/agents/rules/INDEX.md) 一行。
+**文档**：[clipboard-share.md](../../web/agents/rules/clipboard-share.md) §4.1 那句逐字引用的文案跟着改、
+[styling.md](../../web/agents/rules/styling.md) 销掉 `copyNote.text` 那笔待办并补 toast 一节、
+[feedback.md](../../web/agents/rules/feedback.md) 新增 + [INDEX.md](../../web/agents/rules/INDEX.md) 一行。
 
 **引入 toast 带出来的一处回归（本次一并修掉）**
 
@@ -160,5 +160,5 @@ toast 的 `<li>` 是 `<li data-index="N" tabIndex="0">`，而 `<Toaster />` 挂�
 
 **2026-09-24 晚些时候补两条**（来自[全屏阅览里 `Ctrl+C` 复制当前这一张](2026-09-24-web-viewer-copy-shortcut.md)）：
 
-- 上面第一条的**归因要改口**：`aria-hidden` 那一半对 Radix 模态成立，但**全屏阅览器那一份是 YARL 干的**，而且它多挂了一个 `inert`——于是阅览器开着时 toast 是「**看得见但点不到**」（关闭按钮、降级提示里那条链接全是死的）。`inert` 不出现在 `pointer-events` 的计算值里、不报错，`elementFromPoint` 还会整个跳过它：**拿命中测试当可见性判据会得出反的结论**。推导与修法见 [styling.md](../web/agents/rules/styling.md)「已知缺口」，本次没修。
+- 上面第一条的**归因要改口**：`aria-hidden` 那一半对 Radix 模态成立，但**全屏阅览器那一份是 YARL 干的**，而且它多挂了一个 `inert`——于是阅览器开着时 toast 是「**看得见但点不到**」（关闭按钮、降级提示里那条链接全是死的）。`inert` 不出现在 `pointer-events` 的计算值里、不报错，`elementFromPoint` 还会整个跳过它：**拿命中测试当可见性判据会得出反的结论**。推导与修法见 [styling.md](../../web/agents/rules/styling.md)「已知缺口」，本次没修。
 - **层级从 `60` 抬到了 `10000`**（否则 `.yarl__container` 那块不透明黑底会把反馈整个盖住）。上面 §4 那张表里的 `z-index = 60` 是**当时那次运行的实测值**，不是现状。

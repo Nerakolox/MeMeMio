@@ -2,7 +2,7 @@
 
 **状态**：`done`（web 单端；实现、两档浏览器验收与提交都完成，验收见 §4）｜ **性质**：web 单端 ｜ 开于 2026-09-24
 
-契约不变：**一个接口、一行 `spec/` 都没动**。复制 / 分享那三条路径的分流与每一句文案仍由 `lib/clipboard.ts` 一处决定（[SPEC §9.2](../spec/09-decisions.md) / [clipboard-share.md](../web/agents/rules/clipboard-share.md)），这次只是给已经存在的那条路径补一个入口。
+契约不变：**一个接口、一行 `spec/` 都没动**。复制 / 分享那三条路径的分流与每一句文案仍由 `lib/clipboard.ts` 一处决定（[SPEC §9.2](../../spec/09-decisions.md) / [clipboard-share.md](../../web/agents/rules/clipboard-share.md)），这次只是给已经存在的那条路径补一个入口。
 
 ## 1. 为什么要做
 
@@ -77,7 +77,7 @@
 
 ## 5. 已知缺口（写下来，不要当成已解决）
 
-- **阅览器里的 toast「看得见、点不到」。** YARL 进阅览器时给 `body` 的每个子节点（除自己的 portal）挂 `inert` **和** `aria-hidden="true"`，Toaster 挂在 `#root` 里——于是「关闭提示」按钮、降级提示里那条「在新标签页打开原图」的链接在阅览器开着时都是死的。**这次没修**：换层级解决不了（`inert` 与 `z-index` 无关），把它移出 `#root` 只解决一半（YARL 走的正是 body 的每一个子节点），彻底闭合要再补一个只清自己那层的观察器，而 Toaster 是全站唯一的反馈落点，动它值得单开任务。完整推导在 [styling.md](../web/agents/rules/styling.md)「已知缺口」，验收里那条**哨兵断言**钉着现状（`toastInsideInert` 变 `false` 就是有人在修）。对这条路径的实际影响很小：「已复制」那条提示上没有可点的东西。
+- **阅览器里的 toast「看得见、点不到」。** YARL 进阅览器时给 `body` 的每个子节点（除自己的 portal）挂 `inert` **和** `aria-hidden="true"`，Toaster 挂在 `#root` 里——于是「关闭提示」按钮、降级提示里那条「在新标签页打开原图」的链接在阅览器开着时都是死的。**这次没修**：换层级解决不了（`inert` 与 `z-index` 无关），把它移出 `#root` 只解决一半（YARL 走的正是 body 的每一个子节点），彻底闭合要再补一个只清自己那层的观察器，而 Toaster 是全站唯一的反馈落点，动它值得单开任务。完整推导在 [styling.md](../../web/agents/rules/styling.md)「已知缺口」，验收里那条**哨兵断言**钉着现状（`toastInsideInert` 变 `false` 就是有人在修）。对这条路径的实际影响很小：「已复制」那条提示上没有可点的东西。
   ⚠️ 顺带纠正一处记错的账：这条一直写作「Radix 给 `#root` 挂 `aria-hidden`」——全屏阅览器那一份是 **YARL** 干的，而且它多挂了 `inert`。
 - **快捷键不可发现**：界面上没有任何提示，也没有 `aria-keyshortcuts`，用户只能从别处知道这件事。要不要在工具栏加个提示，是产品决定，本次没做。
 - **`aria-modal` 那一半仍在**：阅览器开着时 toast 对读屏是隐藏的（同上，YARL 的 `aria-hidden`）。

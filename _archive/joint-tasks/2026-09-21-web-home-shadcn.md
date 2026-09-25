@@ -15,11 +15,11 @@
    换成了 shadcn（`radix-luma` + Tailwind v4），只有这一页还是 `<input class="search__input">` +
    `<button class="search__submit">` + `styles.css` 里 180 行 `.search__*` / `.discover__*`。
    结果是同一个产品里两套界面来源：这里的控件**不是 44px 触摸目标**
-   （[styling.md](../web/agents/rules/styling.md) 那条「shadcn 控件默认全部低于 44，没有例外」
+   （[styling.md](../../web/agents/rules/styling.md) 那条「shadcn 控件默认全部低于 44，没有例外」
    在首页没人接住），也不随主题 token 走。
 2. **[卡片 shadcn 化](2026-09-21-web-card-shadcn.md) 的「不做」里明确留了两笔账给这次**：
    `.discover__grid` / `.search__grid`（网格布局）和 `.search__card-action`（页面级控件，留 BEM）。
-3. **[迁 Tailwind v4](2026-09-21-web-tailwind-v4-radix-luma.md) 停在 `in_progress`**，
+3. **[迁 Tailwind v4](../../joint-tasks/2026-09-21-web-tailwind-v4-radix-luma.md) 停在 `in_progress`**，
    等的就是「业务四页要登录后过一眼」——首页是其中一页。
 
 顺带两处早就记在任务板上的账：首页的 `autoFocus` 是[随机图墙](2026-09-19-home-random-grid.md)
@@ -129,9 +129,9 @@
 
 ## 沉淀到规则里的两条
 
-- [styling.md](../web/agents/rules/styling.md)：新增两条——**Tailwind v4 容器查询**的写法与两个坑
+- [styling.md](../../web/agents/rules/styling.md)：新增两条——**Tailwind v4 容器查询**的写法与两个坑
   （`@max-[…]` 是 `<` 不是 `≤`；`@container` 类删了不报错、两档查询全部静默失效），
   以及**自动聚焦只在 `(pointer: fine)` 上做**（按输入方式分流，不按屏幕宽度）。
   44px 那条的落点表补上首页四处；`forwardRef` 名单加 `input.tsx`。
-- [project-structure.md](../web/agents/rules/project-structure.md)：`features/search/` 落地，
+- [project-structure.md](../../web/agents/rules/project-structure.md)：`features/search/` 落地，
   `routes/home.tsx` 退回纯布局。

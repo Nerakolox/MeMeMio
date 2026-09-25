@@ -31,7 +31,7 @@ web/
 | `/login`、`/register` | 登录 / 邀请码注册 |
 | `/ui` | 组件参照页，**只在开发期注册**（`import.meta.env.DEV`），不进生产包 |
 
-`/admin` 现在是重定向到 `/settings`——三个管理页已并进设置页（[任务](../joint-tasks/2026-09-18-settings-merge.md)）。
+`/admin` 现在是重定向到 `/settings`——三个管理页已并进设置页（[任务](../_archive/joint-tasks/2026-09-18-settings-merge.md)）。
 
 ## 本地开发
 

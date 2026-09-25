@@ -25,7 +25,7 @@
 | # | 问题 | 位置 | 方向 |
 |---|---|---|---|
 | 1 ✔ | worker 只在 `server.close()` 回调里才停，而 SSE 的 ping 循环和 keep-alive 连接让这个回调迟迟不来。等 docker 超时强杀，在途任务全部成孤儿 | `server.ts:100-110`、`routes/imports.ts:382` | 收到信号后立刻停止领新任务，和 `server.close()` 并行；主动断开 SSE（`closeAllConnections`）；给在途任务一个比 compose `stop_grace_period` 短的收尾时限，到点把它们放回 `pending` |
-| 2 ✔ | `requeueStaleRunningJobs` 只在启动时调一次，阈值是 `STALE_RUNNING_MS = JOB_TIMEOUT_MS * 4`（6 分钟） | `queue/worker.ts:68, 134`、`queue/reindex-worker.ts:49, 95` | 改成周期性扫描。阈值和 `JOB_TIMEOUT_MS` 的关系保持不变：[运行参数](2026-09-23-runtime-config.md) 里「任务超时不暴露」的理由就是这条，别把它拆开 |
+| 2 ✔ | `requeueStaleRunningJobs` 只在启动时调一次，阈值是 `STALE_RUNNING_MS = JOB_TIMEOUT_MS * 4`（6 分钟） | `queue/worker.ts:68, 134`、`queue/reindex-worker.ts:49, 95` | 改成周期性扫描。阈值和 `JOB_TIMEOUT_MS` 的关系保持不变：[运行参数](../../joint-tasks/2026-09-23-runtime-config.md) 里「任务超时不暴露」的理由就是这条，别把它拆开 |
 | 3 ✔ | `runJob(job).finally(...)` 没挂 `.catch`；全仓库也没有 `process.on('unhandledRejection')`。catch 分支里的写库一失败，Node 22 默认直接退出进程 | `queue/worker.ts:192`、`queue/reindex-worker.ts:130` | 挂 `.catch` 记日志；进程级只记录不吞掉，别用它掩盖真 bug |
 | 4 | 超时后原任务还在后台跑，晚到的完成、重试、失败写入都不校验 `status = 'running'`，也没有领取 token | `queue/worker.ts:208-211`、`data/tag-jobs.ts:189-221`、`services/tagging.ts:238`（embed 没接 `signal`） | 写入带上领取时的标识做条件（`attempts` 或 `claimed_at` 都行），影响 0 行即丢弃并记日志 |
 | 5 ✔ | 重建索引按 OFFSET 翻页，同时 worker 在消费：算完的图掉出 stale 集合，后面的 offset 整体跳过同样数量的行。`orderBy(createdAt)` 没有决胜键，同一时刻的行翻页不稳定 | `services/ai-config.ts:278-290`、`data/memes.ts` 的 `listStaleEmbeddingMemeIds` | 改 keyset 翻页（`created_at, id`） |
@@ -38,8 +38,8 @@
 
 ## 4. 与其它任务的关系
 
-- 第 2、4 条碰的是 [运行参数](2026-09-23-runtime-config.md) 已上线的 tick 循环。那个任务的六个陷阱里，②（读配置要在 early-return 之前）和③（不为了立即生效打断在途任务），改的时候必须保住。
-- 测试缺口（退出、回收时机、交错入队）的测试写在本任务里，不等 [测试设施](2026-09-24-test-infra-ci.md)。
+- 第 2、4 条碰的是 [运行参数](../../joint-tasks/2026-09-23-runtime-config.md) 已上线的 tick 循环。那个任务的六个陷阱里，②（读配置要在 early-return 之前）和③（不为了立即生效打断在途任务），改的时候必须保住。
+- 测试缺口（退出、回收时机、交错入队）的测试写在本任务里，不等 [测试设施](../../joint-tasks/2026-09-24-test-infra-ci.md)。
 
 ## 5. api 端验收
 

@@ -2,7 +2,7 @@
 
 **状态：`done`** · 创建 2026-09-19 · 跨端任务（api 新增抽样参数，web 改首页版式）
 
-**涉及的 SPEC：** [§6.3.2](../spec/06-endpoints.md) 的 `random=true`（本节随本任务新增，两端确认后已转 `accepted`）、§5.2.6（`Meme` 对外表示）、§3.4（软删过滤）、§3.3（`tagStatus` 权限）。
+**涉及的 SPEC：** [§6.3.2](../../spec/06-endpoints.md) 的 `random=true`（本节随本任务新增，两端确认后已转 `accepted`）、§5.2.6（`Meme` 对外表示）、§3.4（软删过滤）、§3.3（`tagStatus` 权限）。
 
 ## 为什么
 
@@ -14,13 +14,13 @@
 
 **「随机」必须在服务端、在全库上发生，这是本任务唯一的架构决定。** 客户端也能做出「随机」的样子：拉最新 100 条然后 `Math.random()` 抽 10 个。但它只在新图里随机——库用上三个月之后，用户按一百次刷新也见不到那张三个月前的图，而「把老图重新翻出来」正是这个入口唯一的用途。那种实现看起来是随机的，实际是**伪随机**，而且失效方式是静默的：没有报错，只是首页永远只有最近那批图。
 
-代价是要动契约（`GET /memes` 加一个参数）。这个代价与它的收益比是划算的：参数是**兼容性新增**（[§8.3](../spec/08-collaboration.md)），不传时行为逐字不变，已有测试全绿即是证据。
+代价是要动契约（`GET /memes` 加一个参数）。这个代价与它的收益比是划算的：参数是**兼容性新增**（[§8.3](../../spec/08-collaboration.md)），不传时行为逐字不变，已有测试全绿即是证据。
 
 ## 做完的标准
 
 ### api 端
 
-- [x] `GET /api/v1/memes?random=true&limit=10` 按 [SPEC §6.3.2](../spec/06-endpoints.md) 返回 `items` 与 **`nextCursor: null`**
+- [x] `GET /api/v1/memes?random=true&limit=10` 按 [SPEC §6.3.2](../../spec/06-endpoints.md) 返回 `items` 与 **`nextCursor: null`**
 - [x] **抽样发生在所有筛选之后**：`emotions` / `scenes` / `tags` / `isAnimated` / `favorited` / `uploader` / `tagStatus` 同时传时，被抽出来的每一条都满足全部条件
 - [x] **软删的图抽不出来**（要有专门用例）。这条是本任务最危险的一处：`order by random()` 里漏掉 `deleted_at is null` **不报错、不崩溃**，只是已删的图出现在首页。写这条查询时不要另起一套 WHERE——复用 `listMemes` 已有的 `conditions` 数组
 - [x] `tagStatus` 的权限判定与 `random` 无关，仍走既有那条（非本人非 admin → `FORBIDDEN`，未登录 → `UNAUTHENTICATED`）
@@ -38,19 +38,19 @@
 
 - [x] 首页版式：顶部搜索框（**保持不变**），下方是随机图墙
 - [x] **搜索词为空时显示图墙，有搜索词时显示搜索结果**——搜索是替换，不是并存（两个列表叠在一页上没人知道该看哪个）
-- [x] 图墙 **10 张**（`limit=10`），桌面 **5 列 × 2 行**；窄屏降列数，卡片仍是 ≥44×44px 的触摸目标（[styling.md](../web/agents/rules/styling.md)）
+- [x] 图墙 **10 张**（`limit=10`），桌面 **5 列 × 2 行**；窄屏降列数，卡片仍是 ≥44×44px 的触摸目标（[styling.md](../../web/agents/rules/styling.md)）
 - [x] 「**换一批**」按钮重新抽样；请求进行中不可重复触发
-- [x] 卡片复用 `MemeCard`，行为与搜索结果一致：收藏走乐观更新（失败回滚，[state-navigation.md §8](../web/agents/rules/state-navigation.md)）、复制地址与结果卡片同一条路径
+- [x] 卡片复用 `MemeCard`，行为与搜索结果一致：收藏走乐观更新（失败回滚，[state-navigation.md §8](../../web/agents/rules/state-navigation.md)）、复制地址与结果卡片同一条路径
 - [x] 三态齐全：加载中 10 个骨架、失败给 `requestId` + 重试、**空库**给一句「库里还没有图」并指向 `/import`
 - [x] 图墙组件放 `src/features/discover/`，不堆进 `routes/home.tsx`（`project-structure.md`：路由只做布局与数据编排，且该文件已经 307 行）
-- [x] 只写结构性 CSS：flex / grid / gap / 尺寸 / 断点，**没有颜色、边框、阴影、圆角**（[web/AGENTS.md §5](../web/AGENTS.md)）
+- [x] 只写结构性 CSS：flex / grid / gap / 尺寸 / 断点，**没有颜色、边框、阴影、圆角**（[web/AGENTS.md §5](../../web/AGENTS.md)）
 
 ## 明确不做
 
 | 不做 | 归哪 |
 |---|---|
 | 随机结果翻页 / 无限滚动 | 随机序没有「下一页」（SPEC §6.3.2 定死 `nextCursor: null`）。翻页是 `/browse` 的事 |
-| 把「抽到的这 10 张」放进 URL | 随机结果不是可分享的东西——分享一个随机链接给对方，看到的是另一批图。[state-navigation.md §1](../web/agents/rules/state-navigation.md) 管的是「能放 URL 的」，这是纯 UI state |
+| 把「抽到的这 10 张」放进 URL | 随机结果不是可分享的东西——分享一个随机链接给对方，看到的是另一批图。[state-navigation.md §1](../../web/agents/rules/state-navigation.md) 管的是「能放 URL 的」，这是纯 UI state |
 | 首页做筛选 UI（按标签随机） | 接口支持（筛选在抽样之前），但首页不做筛选器，那是 `/browse` 的职责。混在一起会让首页变成第二个浏览页 |
 | 「不感兴趣 / 别再给我看这张」 | 需要一张屏蔽表和一个新的写路径，另开任务 |
 | 加权随机（按收藏数、新鲜度、上传者加权） | 契约写的是**均匀抽样**。加权要先回答「权重从哪来、谁调」，那是另一个决策，不该顺手塞进这里 |
@@ -58,7 +58,7 @@
 
 ## 两端各自做什么
 
-**先改契约：** [SPEC §6.3.2](../spec/06-endpoints.md) 已按 [§8.1](../spec/08-collaboration.md) 写好，两端确认后已转 `accepted`（2026-09-19）。
+**先改契约：** [SPEC §6.3.2](../../spec/06-endpoints.md) 已按 [§8.1](../../spec/08-collaboration.md) 写好，两端确认后已转 `accepted`（2026-09-19）。
 
 ### api 端
 
@@ -103,7 +103,7 @@
 **两处实现决策，请总管在联合验收时过目：**
 
 1. **WHERE 只有一份。** 随机分支复用的是 `listMemes` 里逐条拼好的 `conditions` 数组，没有为它另写一套过滤——这是本任务最危险的地方（漏 `deleted_at is null` 不报错，只是已删的图出现在首页），代码里有两段注释点明。
-2. **顺手合并了 `listMemes` 里原本重复的两段查询。** 原先「只看收藏」和「通用路径」各写了一遍 select/join/orderBy/limit，加随机就要变成四份。现在 join 的选择只在一处（`favoriteFilter ? innerJoin : leftJoin`），随机与分页两条路径共用它，只有 `orderBy` 与 `limit` 不同。**外部行为不变**，属于本端内部重构（[总管入口 §3](../AGENTS.md) 的路由表）。已有的 `favorites.test.ts` / `soft-delete.test.ts` 等全绿是这条的判断依据。
+2. **顺手合并了 `listMemes` 里原本重复的两段查询。** 原先「只看收藏」和「通用路径」各写了一遍 select/join/orderBy/limit，加随机就要变成四份。现在 join 的选择只在一处（`favoriteFilter ? innerJoin : leftJoin`），随机与分页两条路径共用它，只有 `orderBy` 与 `limit` 不同。**外部行为不变**，属于本端内部重构（[总管入口 §3](../../AGENTS.md) 的路由表）。已有的 `favorites.test.ts` / `soft-delete.test.ts` 等全绿是这条的判断依据。
 
 **性能口径（写进代码注释了）：** `order by random()` 是全表扫描 + 排序。几万行毫秒级够用；**百万行会是秒级**，届时换 `TABLESAMPLE` 或预生成随机序列。现在不做——扫的是几万行不是几百万行，与 `database.md §3` 的 pHash「现在就上专用索引是提前优化」是同一个判断。
 
@@ -153,4 +153,4 @@
 
 **手机端首页会自动聚焦搜索框 → 弹出键盘 → 盖住刚做好的图墙。** 这是 `routes/home.tsx` 上那个 `autoFocus`（本任务之前就有，为了「打开就能打字搜」）。图墙出现之前它没坏处，现在它对**手机**——也就是 `styling.md` 说的「这个产品体验最好的一端」——把新做的整块内容挡住了。
 
-**本任务没动它**，因为改 `autoFocus` 会动到搜索路径的行为，而手机会不会真的弹键盘、弹了盖住多少，**只有真机能回答**，不能用桌面浏览器的表现替代。已登记到[任务板的遗留项](README.md#首页随机图墙转出的遗留项)。
+**本任务没动它**，因为改 `autoFocus` 会动到搜索路径的行为，而手机会不会真的弹键盘、弹了盖住多少，**只有真机能回答**，不能用桌面浏览器的表现替代。已登记到[任务板的遗留项](../../joint-tasks/README.md#首页随机图墙转出的遗留项)。

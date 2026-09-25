@@ -179,5 +179,5 @@
 
 - 改分段的可见性与权限归属——合并的是呈现，权限一个字没改（`settings-ux.md §2`）。
 - 改任何接口、字段或错误码。
-- 管理员分段的统计面板（`settings-ux.md §9`，界面还没做，另见[打标状态界面](2026-09-19-tagging-status.md)）。
+- 管理员分段的统计面板（`settings-ux.md §9`，界面还没做，另见[打标状态界面](../../joint-tasks/2026-09-19-tagging-status.md)）。
 - 给 API Key 加显示明文的眼睛图标——`settings-ux.md §7` 明令不加。

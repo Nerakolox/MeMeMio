@@ -37,7 +37,7 @@
 
 **陷阱**：部署在 Caddy / nginx 后面时，所有请求的 socket IP 都是反代的。按 socket IP 限流，就会变成**全站共用一个计数器**，一个人输错五次，全站锁死。必须从 `X-Forwarded-For` 取客户端 IP，而且只信任反代那一跳。计数放在进程内存里即可，但它和运行参数一样是「每进程」的（§5.6 那条），在注释里写明。
 
-**与 [导入加固](2026-09-24-import-hardening.md) 的关系**：两个任务都在 api 上，文件不重叠（本任务不碰 `services/import.ts`），可以并行。
+**与 [导入加固](../_archive/joint-tasks/2026-09-24-import-hardening.md) 的关系**：两个任务都在 api 上，文件不重叠（本任务不碰 `services/import.ts`），可以并行。
 
 ## 4. 待裁定（本轮不实现）
 

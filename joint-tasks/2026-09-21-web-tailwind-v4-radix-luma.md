@@ -168,7 +168,7 @@ preset 生成的是 `.dark` class 变体（`@custom-variant dark (&:is(.dark *))
   且 BEM 样式在这次迁移里未被替换（`styles.css` 只去掉了 `:root` 里的 `font-family`，因为
   未分层的 CSS 会盖过 `@layer base` 的 `html { font-sans }`），故判断无回归，但这是推断不是实测。
 
-  > ✅ **2026-09-21 补了一半证据**（[顶部导航换侧边导航](2026-09-21-web-sidebar-nav.md)那次）：
+  > ✅ **2026-09-21 补了一半证据**（[顶部导航换侧边导航](../_archive/joint-tasks/2026-09-21-web-sidebar-nav.md)那次）：
   > 用 Playwright 的 `page.route()` 打桩 `/api/v1/auth/me` 与 `/api/v1/memes**`，
   > 在系统 Chrome 里**真的渲染了** home / browse / import / settings 四页，浅色深色都过了一遍，
   > 没看到布局塌掉或样式缺失。**这是渲染证据，不是接口联调**——数据是假的、写操作没走通，
