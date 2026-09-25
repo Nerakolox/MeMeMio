@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
- * 待确认队列的集成测试（SPEC §6.2.3 / joint-tasks/2026-09-15-import.md）。
+ * 待确认队列的集成测试（SPEC §6.2.3 / 任务 2026-09-15-import）。
  *
  * 队列是导入里唯一**跨越批次**的界面：用户可能今天传一批、明天传一批，
  * 攒下一堆「像重复」的图，然后一次处理掉。所以这里测三件事——
@@ -225,7 +225,7 @@ describe('待确认队列（GET /reviews）', () => {
   })
 
   /**
-   * 回归锚点：joint-tasks/2026-09-18-r2-public-url-prefix.md。
+   * 回归锚点：任务 2026-09-18-r2-public-url-prefix。
    *
    * 三个地址曾经全都少了 `R2_KEY_PREFIX`——对象在 `mememio/thumbs/x.webp`，
    * 响应里给的是 `/thumbs/x.webp`。入库成功、接口 200、日志干净，只有浏览器裂图。

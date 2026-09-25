@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 /**
  * `POST /memes/retag` 的端到端集成测试（SPEC §6.4.3，
- * 任务 joint-tasks/2026-09-22-retag-endpoint.md）。
+ * 任务 2026-09-22-retag-endpoint）。
  *
  * 这个接口的风险全在**它看起来成功了但其实没做事**：库里的图全部 `tag_status = ok`
  * 且 `tag_jobs` 全是 `done` 行，而 `enqueueTagJob` 对已完成的图是静默空操作。

@@ -3,7 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
  * `PATCH /memes/{id}` 与 `DELETE /memes/{id}` 的端到端集成测试
- * （SPEC §6.4.1 / §6.4.2，任务 joint-tasks/2026-09-19-browse-meme-actions.md）。
+ * （SPEC §6.4.1 / §6.4.2，任务 2026-09-19-browse-meme-actions）。
  *
  * 这两条端点写在契约里很久了，本文件测的是**契约本身**，不是实现细节。四条最要紧的：
  *

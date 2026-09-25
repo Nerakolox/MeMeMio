@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { installShutdownHandlers, shutdownOnce, SHUTDOWN_DEADLINE_MS } from './shutdown.js'
 
 /**
- * 停机收尾的编排（joint-tasks/2026-09-24-queue-reliability.md §1）。
+ * 停机收尾的编排（任务 2026-09-24-queue-reliability §1）。
  *
  * 这一组用例存在的理由是**一条实测过的坏行为**：收尾原本挂在 `server.close()` 的回调里，
  * 而那个回调只在所有连接断开后才触发——SSE 的 15 秒心跳和 HTTP keep-alive 把它一直挂着，

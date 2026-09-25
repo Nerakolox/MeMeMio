@@ -87,7 +87,7 @@ export function backoffMs(attempts: number): number {
  *
  * ⚠️ **本任务只有部署方默认通道**，没有副通道可降。所以 `refused` 的终局是
  *    `needs_manual` 而不是「走副通道」——副通道的敏感内容降级语义在 SPEC §9.5 还是
- *    `proposed`，本任务明确不实现（joint-tasks/2026-09-16-tag-queue.md「明确不做」）。
+ *    `proposed`，本任务明确不实现（任务 2026-09-16-tag-queue「明确不做」）。
  *    接入点留在 `services/tagging.ts` 的降级链上，不在这里。
  */
 export function decideRetry(failure: TagJobFailure, attempts: number): RetryDecision {

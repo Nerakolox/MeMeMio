@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 
 /**
  * `installProcessErrorHandlers` 的**行为**测试：真的把一个未接住的拒绝扔出去，
- * 看进程死不死（joint-tasks/2026-09-24-queue-reliability.md §3）。
+ * 看进程死不死（任务 2026-09-24-queue-reliability §3）。
  *
  * ⚠️ 必须在**子进程**里跑。想在测试进程里造 unhandledRejection 的话，捕获它的是
  *    vitest 自己（它会把这轮判为失败），于是测到的是「vitest 怎么处理」，

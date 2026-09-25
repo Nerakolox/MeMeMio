@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * 队列可靠性（joint-tasks/2026-09-24-queue-reliability.md）。
+ * 队列可靠性（任务 2026-09-24-queue-reliability）。
  *
  * 这一组钉的全是**不报错、只静默变坏**的那类问题：
  *

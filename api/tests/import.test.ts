@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
- * 导入接口的端到端集成测试（SPEC §6.2 / joint-tasks/2026-09-15-import.md）。
+ * 导入接口的端到端集成测试（SPEC §6.2 / 任务 2026-09-15-import）。
  *
  * 走**真实路由 + 真实管线 + 真 Postgres**，只有 R2 换成内存对象（见 helpers/r2-memory.ts）。
  * 三类路径各测什么写在每个 describe 的第一行——那份说明要和任务文件「api 端验收」

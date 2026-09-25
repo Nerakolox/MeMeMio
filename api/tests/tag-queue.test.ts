@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * 打标队列消费者的集成测试（joint-tasks/2026-09-16-tag-queue.md）。
+ * 打标队列消费者的集成测试（任务 2026-09-16-tag-queue）。
  *
  * 真 Postgres + 真图像管线（sharp / ffmpeg）+ 真路由层代码，**只把两件事换掉**：
  * R2 换内存对象，`fetch` 换成可编排的替身。视觉供应商不能用真的——一次跑测试

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { SerializeMemeInput } from '../serialize/meme.js'
 
 /**
- * 公开 URL 的部署前缀（joint-tasks/2026-09-18-r2-public-url-prefix.md）。
+ * 公开 URL 的部署前缀（任务 2026-09-18-r2-public-url-prefix）。
  *
  * ⚠️ **前缀必须非空，而且必须由这个文件自己定**，不能用 `.env` 里填的那个。
  *    `R2_KEY_PREFIX` 为空时「派生公开 URL 时漏了前缀」这个 bug 完全不可见——

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
- * 打标状态汇总的端到端集成测试（SPEC §6.6.1 / joint-tasks/2026-09-19-tagging-status.md）。
+ * 打标状态汇总的端到端集成测试（SPEC §6.6.1 / 任务 2026-09-19-tagging-status）。
  *
  * 这个接口是「打标流水线最后一米」的反馈面：在那之前用户看不到卡着的图有多少张。
  * 所以本文件测的重点不是数字本身，是**这几个数字能不能被信任**——

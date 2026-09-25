@@ -59,7 +59,7 @@ const HNSW_EF_SEARCH = PATH_LIMIT * 2
  * 就是 `pg_trgm.similarity_threshold`。写成 `similarity(...) >= 0.1` 能算出同样的
  * 布尔值，却**一个索引都用不上**——尤其是它和 `LIKE` 用 `OR` 连在一起时，
  * 整个 where 只能顺序扫描（实测：把 seqscan 关掉也仍然是 Seq Scan，
- * 见 joint-tasks/2026-09-24-search-media-perf.md 的验收）。
+ * 见 任务 2026-09-24-search-media-perf 的验收）。
  */
 const TRGM_SIMILARITY_THRESHOLD = 0.1
 const TRGM_MIN_QUERY_LENGTH = 3
@@ -161,7 +161,7 @@ function trgmScore(query: string) {
  *    原来写的是 `similarity(...) >= 0.1`——算得出同样的布尔值，但**用不上任何索引**，
  *    而且它和 LIKE 一用 OR 连起来，连 LIKE 那两条也没得走了。
  *    （实测：`enable_seqscan = off` 之下旧写法仍是 Seq Scan，新写法是
- *    BitmapOr → 两个 trgm 索引，见 joint-tasks/2026-09-24-search-media-perf.md。）
+ *    BitmapOr → 两个 trgm 索引，见 任务 2026-09-24-search-media-perf。）
  *
  * **短于 3 字的查询直接跳过这一路。** trigram 在 1–2 字上几乎没有区分度，跑了也是噪声；
  * 那种查询本来就该由标签路接住（「猫」「谢谢」都是词表里有的），不是这一路的职责。

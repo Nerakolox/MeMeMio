@@ -17,7 +17,7 @@ import { VOCAB_PATH } from './paths.js'
  * 所以它在下面的结构里和六维并列，在提示词的「不要互相推导」那一段里不出现。
  *
  * ⚠️ 词条现在还是 proposed，代码只能把它当数据读，不能 `if (emotion === '无语')`。
- *    见 joint-tasks/2026-09-13-skeleton.md 的注意事项。
+ *    见 任务 2026-09-13-skeleton 的注意事项。
  */
 
 export type Vocabulary = {

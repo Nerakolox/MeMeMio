@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
- * 收藏端点的端到端集成测试（SPEC §6.4 / joint-tasks/2026-09-16-tag-queue.md）。
+ * 收藏端点的端到端集成测试（SPEC §6.4 / 任务 2026-09-16-tag-queue）。
  *
  * 这两个端点 web 早就在调了（`web/src/lib/api.ts` 的 `toggleFavorite`），api 侧一直缺，
  * 所以「收藏」在界面上是坏的。本文件测的是契约本身，不是实现细节：

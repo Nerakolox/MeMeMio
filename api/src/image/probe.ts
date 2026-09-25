@@ -318,7 +318,7 @@ export type DecodedFrame = { index: number; path: string }
  * 取代 `frames.ts` 原来那个「每帧起一个进程 + `select=eq(n,i)`」的循环：那种写法的
  * 每一帧都要**从文件开头解到第 i 帧**，总解码量随帧数**平方**增长。实测 120 帧
  * 从 8574ms 降到 200ms，且输出**与逐帧抽取逐字节一致**（四个样本的数字在
- * joint-tasks/2026-09-24-search-media-perf.md 的验收里）。
+ * 任务 2026-09-24-search-media-perf 的验收里）。
  *
  * ⚠️ **`-vsync 0` 不能省。** 默认的 `-vsync auto` 会为了凑帧率**丢掉重复帧**，
  *    而长静止段正是表情包动图的常态。帧一丢，文件序号就和原始帧号错位——

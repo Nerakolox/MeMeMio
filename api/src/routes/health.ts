@@ -6,7 +6,7 @@ import { vocabulary } from '../vocab.js'
  *
  * 它同时是骨架的类型链路样本：web 通过 Hono RPC 消费这里的返回类型，
  * **改掉任何一个字段名，web 侧 npm run typecheck 会失败**。
- * 见 joint-tasks/2026-09-13-skeleton.md 的验证点 1。
+ * 见 任务 2026-09-13-skeleton 的验证点 1。
  */
 
 const startedAt = toIsoSeconds(new Date())
