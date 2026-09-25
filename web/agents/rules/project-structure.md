@@ -4,7 +4,7 @@
 
 ```
 src/features/
-├─ search/       搜索框、结果网格、结果卡片
+├─ home/         首页两条 rail、待处理状态条
 ├─ discover/     首页随机图墙（「随便看看」）
 ├─ browse/       筛选器、无限滚动
 ├─ import/       上传、SSE 进度、待确认队列
@@ -14,19 +14,30 @@ src/features/
 └─ auth/         登录 / 注册的表单与未登录外壳
 ```
 
-> `search/` 2026-09-21 落地：`SearchResults.tsx`（五态 + 结果项）、`use-search.ts`（state 机与
-> 键盘路径）；`SearchBar.tsx` 2026-09-26 **搬到了 `components/`**——检索与筛选合流之后浏览页
-> 也要那个框（[state-navigation.md §6](state-navigation.md)），两个页面各写一份必然漂。
-> `search/` 里剩下的仍是「只被首页那条冻结的 `GET /search` 用到」的东西（首页去向另议）。
+> `search/` 2026-09-21 落地（`SearchResults.tsx` 五态 + 结果项、`use-search.ts` 的 state 机与
+> 键盘路径），**2026-09-26 整个目录删除**：首页改版之后首页不渲染结果（SPEC §9.30），
+> 那条列表与那套键盘路径都没有落点了（任务 2026-09-26-首页改版 §5.2）。
+> `SearchBar.tsx` 早在同一天**搬到了 `components/`**——检索与筛选合流之后浏览页也要那个框
+> （[state-navigation.md §6](state-navigation.md)），两个页面各写一份必然漂。
 > **同一个 feature 内部按「一个文件一件事」切，
 > 不按类型切**——那个目录里没有 `components/` / `hooks/`，`use-search.ts` 与两个组件平级。
 > 搬家的动机是 `routes/home.tsx` 涨到 326 行（[code-style.md](code-style.md) 的上限是 150），
 > 而路由文件只该做布局和数据编排。
 
-> `discover/` 是首页下半屏那个随机图墙（2026-09-19 加）。它和 `search/` 同在一页但**不是一回事**：
+> `home/` 是 2026-09-26 首页改版新增的：两条 rail（`MemeRail.tsx`）、待处理状态条
+> （`TagStatusBar.tsx`），以及这两者共用的失败行（`FailureLine.tsx`）。
+> **为什么不并进 `discover/`**：图墙是「不知道要找什么，每次换一批」，rail 是「这一类里
+> 挑一张」（顺序是定的、看完走「查看全部 →」）——两种意图，混在一起正是当初把图墙从
+> `search/` 里分出来的理由。三个组件都是**首页专用**，所以留在 feature 里、不进
+> `components/`（那条「被两个以上 feature 用到」在这里不成立）；而它们共用的取数 hook
+> 反过来**跨 feature**（图墙与 rail 都用），所以它在 `lib/`，见下面那张表。
+
+> `discover/` 是首页下半屏那个随机图墙（2026-09-19 加）。它和 `search/` 曾同在一页但**不是一回事**：
 > 搜索是「知道要找什么」，图墙是「不知道要找什么」，前者要有结果就渲染、后者要每次换一批。
 > 混进 `search/` 会让那个目录同时装两种意图。接口是 `GET /memes?random=true`
 > （[SPEC §6.3.2](../../../spec/06-endpoints.md)）。
+> 2026-09-26 起它多了 `CardSendButton.tsx`——**卡片上那枚发送键只被图墙用**，所以住在这一端
+> 而不是 `components/`；它是对「一个动作只出现一处」（裁定 4）的明写偏离，理由写在那个文件头。
 
 > 「待处理列表」原本挂在 `manage/` 下（2026-09-19 改）。挪进 `tagging/` 是因为它读的是打标状态
 > （[SPEC §6.6](../../../spec/06-endpoints.md)），和「打标进度」是同一份数据、同一个页面；
@@ -64,6 +75,9 @@ src/features/
 | `vocab.ts` | 读 `shared/vocab/vocab.json`，提供筛选选项 |
 | `format.ts` | 时间、文件大小等纯格式化 |
 | `use-mobile.ts` | `useIsMobile()`，shadcn 的 `sidebar.tsx` 用它决定走桌面栏还是手机抽屉 |
+| `use-prefetch-share.ts` | `usePrefetchShare()`，触屏那一档在渲染时把原图取好，见 [clipboard-share.md](clipboard-share.md) |
+| `use-meme-batch.ts` | 「取 N 张」：首页图墙与两条 rail 共用的取数 + 三态，**不分页**（分页只在 `use-browse-list.ts`） |
+| `tag-status.ts` | `tag_status` / `failures[].reason` 的中文映射，**唯一一份**（SPEC §5.2.3、§6.6.1） |
 | `touch.ts` | `TOUCH = 'min-h-11'`，触摸目标 44px 的**唯一落点**，见 [styling.md](styling.md) |
 
 > `use-mobile.ts` 是 `npx shadcn add sidebar` 拉下来的，**落点是 `components.json` 的

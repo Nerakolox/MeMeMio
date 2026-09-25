@@ -125,8 +125,9 @@
 | 位置 | 写法 |
 |---|---|
 | 搜索框、提交按钮（`components/SearchBar.tsx`，首页与浏览页共用） | 两支形状相同（单行）：`Input` 上带 `TOUCH`，提交按钮 `TOUCH + min-w-18`（72px，接旧 `min-width`）。第四稿初版给浏览页做过多行（`TOUCH` 压 `min-h-16` 那个坑就在那儿），当天被否、分支已删，别再恢复 |
-| 错误态的「重试」（`features/search/SearchResults.tsx`、`features/browse/BrowseResults.tsx`） | `cn(TOUCH, …)`，各另带 `mt-2` |
+| 错误态的「重试」（`features/browse/BrowseResults.tsx`） | `cn(TOUCH, …)`，另带 `mt-2` |
 | 「换一批」、图墙错误态的「重试」、空库态的「去导入几张」（`features/discover/DiscoverWall.tsx`） | `Button` 上带 `TOUCH`；`variant="link"` 那枚也一样 |
+| 首页 rail 的「查看全部 →」、状态条的「去处理 →」、「重试」（`features/home/`） | `Button variant="link" size="sm"` 带 `TOUCH` + `px-0`（`variant="link"` 自带左右内边距，行内那几处要贴着自己那行字） |
 
 > ⚠️ `size="sm"` **在手指那一档不豁免**：重试与「换一批」都是 `size="sm"`（32px），
 > 靠 `TOUCH` 的 `min-height` 顶回 44（2026-09-22 之后鼠标那一档就是它自己的 32，
@@ -447,9 +448,13 @@ CSS 那边要用 `w-(--viewer-aside-w)` 给两块浮层量自己的宽高，两�
 
 | 文案 | 承载物 |
 |---|---|
-| 输入后未提交的 `按回车搜索`（`routes/home.tsx`） | 回车键帽 + 细边的 `rounded-full` 胶囊，`w-fit`、`text-xs` |
 | 降级提示 / `搜索理解为：…`（`components/Notice.tsx` 的 `NOTICE`） | `rounded-2xl border bg-card px-3 py-2` 面板，**`w-full` + `mb-4`**，各带一枚图标 |
 | 空结果 | 居中的空态块（图标 + 一句话），不是一行浮在空白里的字 |
+| 首页状态条的「需人工 n 张 / 正在打标 n 张 / 去处理 →」（`features/home/TagStatusBar.tsx`） | 与 `NOTICE` 同形的那个面板，另带 `role="status"`。**它只在那几种情况出现**，没有降级/改写那两条的常驻性质 |
+
+> 第一行的 `按回车搜索` 胶囊**随首页改版删了**（2026-09-26）：首页不渲染结果之后，
+> 「输入了但还没提交」不再是一个需要解释的状态——回车就是走人（SPEC §9.30）。
+> 承载物这条规则本身不受影响，剩下的两处照旧。
 
 三条不能随手改的：
 
@@ -463,13 +468,14 @@ CSS 那边要用 `w-(--viewer-aside-w)` 给两块浮层量自己的宽高，两�
 - **面板撑满宽度、带 `mb-4`**（2026-09-26 由产品负责人定）。此前是 `w-fit`，理由是
   「30 个字的说明撑满一条横幅会留一大片空白」——**那条理由被否了**：这几块是与下面
   一整块结果配套的状态说明，宽度跟着结果走才读得出它在说哪一块，缩成一小条反而像内容。
-  别按旧理由改回 `w-fit`。**下边距两处不一样**（量过）：浏览页是块级流，折叠后 16px；
-  首页的容器是 `flex flex-col gap-3`，不折叠，12 + 16 = 28px。同一个组件挂在两处，
-  数不同是容器的差别，不是漏改。
+  别按旧理由改回 `w-fit`。**下边距曾经两处不一样**（量过）：浏览页是块级流，折叠后 16px；
+  首页的容器是 `flex flex-col gap-3`，不折叠，12 + 16 = 28px。首页那个挂载点
+  2026-09-26 随改版消失（SPEC §9.30），**今天只剩 16 那一处**；留下这条是因为
+  「挂进不折叠的容器会变成加出来的数」与挂载点无关，再挂一处要重量。
 
 > 同类的那一处**已经做完了**（2026-09-24）：复制反馈那句 `copyNote.text` 在首页与浏览页
-> 各是一行裸文字（`SearchResults.tsx` / `BrowseResults.tsx`）。它现在是右上角 toast
-> （`lib/toast.tsx`），两页那两条裸文字连同承载它们的 `copyNote` / `Note` state 一起删掉了。
+> 各是一行裸文字（首页那份在 `SearchResults.tsx`，2026-09-26 随改版删除）。它现在是右上角
+> toast（`lib/toast.tsx`），那两条裸文字连同承载它们的 `copyNote` / `Note` state 一起删掉了。
 > 判据见 [feedback.md](feedback.md)。
 
 ## 全站提示（toast）
@@ -537,8 +543,9 @@ Radix 的模态给 `body` 挂 `pointer-events: none`，而 toast 是 `body` 的�
 「按 ↓ 从输入框进结果区」把焦点交给了一条 toast**，键盘用户发现自己哪一格都选不中；
 `scrollIntoView` 那行同理（滚到 `position: fixed` 的 toast 上，看不出来）。这一条不报错。
 
-规矩：**凡是按 `[data-index]` 找回结果项的地方，都从一个锚点出发查**——产品代码传
-`e.currentTarget`（整页那个 `<section>`），验收脚本用 `[aria-label="搜索结果"]` 打头。
+⚠️ 那个文件（连同首页那套整页键盘路径）2026-09-26 已随首页改版删除（SPEC §9.30），
+**所以今天产品代码里没有在按 `[data-index]` 找回结果项的地方**——但 Sonner 的
+`<li data-index>` 还在，规矩照旧：**凡是从 `document` 出发按 `[data-index]` 查，先限定范围**。
 `browse` 那边的 `[data-actions-for]` 不是这套属性，不受影响。
 
 暴露它的是一条**看起来不相关**的断言：`verify-web-interaction-fixes.mjs` 的「1264 档

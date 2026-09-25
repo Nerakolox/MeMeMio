@@ -60,6 +60,30 @@ function RequireAuth() {
   return <Outlet />
 }
 
+/**
+ * 首页那条路由：**带 `?q=` 进来的一律交棒给 `/browse`**（2026-09-26 首页改版）。
+ *
+ * 首页此前自己也搜——`/?q=…` 走冻结的 `GET /search`，结果渲染在同一个页面上。
+ * 现在首页是入口页、不渲染结果（SPEC §9.30），带查询词进来的人想要的显然还是「搜」，
+ * 所以把他送到那条真的能筛、能翻的列表上，而不是给他一张空首页。
+ *
+ * 谁还会带 `?q=` 进 `/`：**别人分享的老链接、书签、以及改版前的浏览器历史**。
+ * 这也正是 `state-navigation.md §1` 那条（「一次搜索是可分享的状态」）的现实含义——
+ * 那些链接已经散在外面了，删掉这条路等于把它们变成 404。
+ *
+ * 写法沿用 `/admin/*` 那三条：**`<Navigate replace />`，而且必须挂在布局路由里面**
+ * （挂外面会先卸掉整条外壳再挂回来，闪一下）。
+ *
+ * 空词（`/?q=` 或 `/`）**不重定向**：把人送到一个空搜索的 `/browse` 上，
+ * 他看到的是「没有符合条件的图片」，而明明什么都没输入。渲染首页，那个空参数就留着不发。
+ */
+function HomeRoute() {
+  const location = useLocation()
+  const q = new URLSearchParams(location.search).get('q')?.trim() ?? ''
+  if (q === '') return <HomePage />
+  return <Navigate to={`/browse?${new URLSearchParams({ q })}`} replace />
+}
+
 /** 导入跑着的时候顶栏留个入口，切走再切回来能找到它（import-ux.md §9）。 */
 function ImportProgressLink() {
   const { phase, items, done } = useImport()
@@ -211,7 +235,7 @@ export function App() {
 
           <Route element={<AppLayout />}>
             <Route element={<RequireAuth />}>
-              <Route path="/" element={<HomePage />} />
+              <Route path="/" element={<HomeRoute />} />
               <Route path="/browse" element={<BrowsePage />} />
               <Route path="/import" element={<ImportPage />} />
               <Route path="/settings" element={<SettingsPage />} />

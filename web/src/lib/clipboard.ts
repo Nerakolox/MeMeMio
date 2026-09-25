@@ -1,6 +1,7 @@
 /**
  * 复制 / 下载 / 分享的分流。**本端最重要的一条路径**
- * （web/agents/rules/clipboard-share.md），首页搜索结果、浏览页的操作菜单都走这里。
+ * （web/agents/rules/clipboard-share.md），浏览页的操作菜单、全屏阅览器那枚按钮、
+ * 首页图墙卡片的发送键都走这里。
  *
  * ## 三条路径
  *
@@ -23,6 +24,8 @@
  * 而且不知道为什么（clipboard-share.md §3）。
  */
 
+import { Copy, Download, Share2, type LucideIcon } from 'lucide-react'
+
 /** 一次「发送」实际走哪条路。由 `detectSendPath` 在渲染时定下来，点击时不再改。 */
 export type SendPath = 'clipboard' | 'share' | 'download'
 
@@ -34,10 +37,28 @@ export const SEND_LABELS: Record<SendPath, string> = {
 }
 
 /**
+ * 图标。**跟着分流一起变**，与 `SEND_LABELS` 是同一件事的两面：图标说的是「会发生什么」，
+ * 文案说的是「这个动作叫什么」。只写文案不换图标的话，动图上会留一个「复制」的图标配「下载」的字
+ * ——而按图标认按钮的人是多数。
+ *
+ * 2026-09-26 从 `components/LightboxViewer.tsx` 挪到这里：首页图墙的卡片也要一枚发送按钮，
+ * 而 **`LightboxViewer` 是懒加载的**（`ImageViewer.tsx` 里 `lazy(() => import(...))`，
+ * 因为它拖着整个 YARL）。从那儿 import 一个常量会把整套阅览器拉进首页首屏的包里，
+ * 而首屏正是这个任务要关心的那一屏。
+ *
+ * 挪过来之后它和 `SEND_LABELS` 挨着，两处不会再各自加一档。
+ */
+export const SEND_ICONS: Record<SendPath, LucideIcon> = {
+  clipboard: Copy,
+  download: Download,
+  share: Share2,
+}
+
+/**
  * 发送一张图需要知道的全部信息。
  *
- * 故意只用这几个字段（而不是整个 `Meme`），这样首页的 `SearchResult`、浏览页的 `Meme`
- * 都能直接传进来，而这个文件不必依赖接口类型。
+ * 故意只用这几个字段（而不是整个 `Meme`），这样各处拿到的 `Meme` 都能直接传进来，
+ * 而这个文件不必依赖接口类型。
  */
 export type SendTarget = {
   id: string
@@ -439,8 +460,14 @@ export async function sendMeme(target: SendTarget): Promise<SendOutcome> {
  * 那时并没有失败到无事可做，缺的只是一次用户自己的手势（见 `saveFile`）。
  *
  * ⚠️ **这个函数只管文案，不管怎么显示。** 呈现走 `lib/toast.tsx` 的 `notifySend`
- * （右上角提示），调用点在 `use-search.ts` / `use-browse-actions.ts`——
- * 那两个页面此前各渲染一行自己的裸文字，两页会漂，2026-09-24 一并收进 toast。
+ * （右上角提示），**三个调用点各自把这两步接起来**：`use-browse-actions.ts`、
+ * `LightboxViewer.tsx` 的 `sendImage`、`features/discover/CardSendButton.tsx`。
+ * 那些页面此前各渲染一行自己的裸文字，两页会漂，2026-09-24 一并收进 toast。
+ *
+ * 三处各接一遍是**有意的**，不是漏抽：这个文件除了图标之外不 import 任何东西
+ * （呈现是外来的），把 `notifySend` 拉进来会让「分流 / 文案 / 呈现」三层在这里合流，
+ * 而它们的边界正是这份文件存在的理由。三处接的都是同一句话
+ * （`sendNote(await sendMeme(t))` → `notifySend`），要改的是那两行而不是这里。
  */
 export function sendNote(outcome: SendOutcome): SendNote | null {
   switch (outcome.kind) {

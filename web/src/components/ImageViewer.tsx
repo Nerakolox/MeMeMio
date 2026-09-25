@@ -48,17 +48,17 @@ export function MemeGallery({ items, children }: { items: readonly Meme[]; child
  *
  * ## 为什么它不能挂在 `MemeImage` 里
  *
- * 首页的键盘路径是挂在根 `<section>` 上的**一个 React `onKeyDown`**
- * （`features/search/use-search.ts`）：`Esc` 取消选中、`↑↓` 移动、`Enter` 打开全屏阅览。
- * 而 **React 的 portal 事件沿 React 树冒泡，不沿 DOM 树**——阅览器就算 portal 到
- * `document.body`，只要它的 React 父链经过那一页，键盘事件照样冒到那个 handler 上：
- * `Esc` 关不干净（背后的选中态被清掉）、`↑↓` 一边看图一边移动搜索结果。两件都不报错。
+ * **React 的 portal 事件沿 React 树冒泡，不沿 DOM 树**：阅览器就算 portal 到
+ * `document.body`，只要它的 React 父链经过某一页，那一页上的 `onKeyDown` 照样收得到
+ * 阅览器里的按键。
  *
- * ⚠️ 2026-09-26（裁定 4）：**`Enter` 已不在上面这张泄漏清单里**，别看漏。它此前泄漏的
- * 后果是「在阅览器里按一下复制 / 下载了一张图」，现在它做的是「打开阅览器」——而判据是
- * 焦点真的落在结果项自己身上（`focusedOptionIndex`），阅览器里的焦点不满足，于是
- * 什么都不会发生。**这条是判据带来的，不是给 `Enter` 单独打的补丁**：哪天判据换成
- * 「谁没挡冒泡」，它会立刻重新变成泄漏项。
+ * ⚠️ 这条最初是拿**首页那个整页 `onKeyDown`**（`features/search/use-search.ts` 的
+ * `↑↓` / `Enter` / `Esc`）量出来的——那些事件会同时做两件事：在阅览器里按 `Esc`,
+ * 背后的选中态也被清掉；按 `↑↓`，一边看图一边移动结果项。**那个 handler 连同
+ * `features/search/` 整个目录已在 2026-09-26 随首页改版删除**（首页不渲染结果之后
+ * 它没有落点，`state-navigation.md §4`），所以今天没有一个具体的页面在踩这个坑。
+ * **但约束本身不因此作废**：它是「宿主只有一份」这条规则的另一半理由，而任何一页
+ * 哪天再挂一个页面级键盘监听就会当场复现。
  *
  * 挂在 `AppLayout` 里、摆在 `Outlet` 那条链的**祖先**上，`<Lightbox>` 的 React 祖先链
  * 就只有外壳，与任何页面无关。（不选「在阅览器上补 `stopPropagation`」：synthetic 的
@@ -146,9 +146,10 @@ const LightboxViewer = lazy(() =>
  *
  * 之所以要有这么一层，是因为 `useImageViewer()` 那份列表是从 `GalleryContext` 读的，
  * 而那是给**卡片**用的：`MemeImage` 就长在 `<MemeGallery>` 之内，天然读得到。
- * 页面级的键盘路径不在那棵树里——`use-search.ts` 是在 `<MemeGallery>` **之外**被调用的，
- * 在那里读 context 拿到的是默认值 `[]`，于是 `open(meme, [])` 会静默退回**单张**阅览
- * （`open` 里那条 `at = -1` 的兜底）：翻页按钮与缩略图轨道全没有，**而且不报错**。
+ * 页面级的东西不在那棵树里（此前首页那个整页键盘路径就是：`use-search.ts` 在
+ * `<MemeGallery>` **之外**被调用，在那里读 context 拿到的是默认值 `[]`，于是
+ * `open(meme, [])` 静默退回**单张**阅览——翻页按钮与缩略图轨道全没有，**而且不报错**；
+ * 那个文件 2026-09-26 已随首页改版删除，但这个坑对任何页面级的调用点同样成立）。
  * 所以这一档把列表显式传进来，调用方本来就有（`state.items`）。
  *
  * ⚠️ 传进来的必须真是「用户刚才在看的那个列表」——给别的集合是另一种功能，

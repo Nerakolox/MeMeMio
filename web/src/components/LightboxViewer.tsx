@@ -1,5 +1,4 @@
 import { useContext, useEffect, useMemo, useRef } from 'react'
-import { Copy, Download, Share2, type LucideIcon } from 'lucide-react'
 import Lightbox from 'yet-another-react-lightbox'
 import type {
   RenderSlideFooterProps,
@@ -13,11 +12,11 @@ import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 import 'yet-another-react-lightbox/styles.css'
 import type { Meme } from '../lib/api'
 import {
+  SEND_ICONS,
   SEND_LABELS,
   detectSendPath,
   sendMeme,
   sendNote,
-  type SendPath,
   type SendTarget,
 } from '../lib/clipboard'
 import { notifySend } from '../lib/toast'
@@ -433,27 +432,17 @@ function ViewerControls() {
 }
 
 /**
- * 图上那枚按钮的图标。**跟着分流一起变**，与 `SEND_LABELS` 是同一件事的两面：
- * 图标说的是「会发生什么」，文案说的是「这个动作叫什么」。只写文案不换图标的话，
- * 动图上会留一个「复制」的图标配「下载」的字。
- *
- * 模块内私有：只有 `SendButton` 用（同 `RESULT_GRID` 那条规则，跨 feature 才要导出）。
- */
-const SEND_ICONS: Record<SendPath, LucideIcon> = {
-  clipboard: Copy,
-  download: Download,
-  share: Share2,
-}
-
-/**
  * 全屏阅览里那枚**看得见的**发送按钮（2026-09-26 加，裁定 4）。
  *
  * ## 它为什么存在
  *
  * 此前阅览器里唯一的发送入口是 `Ctrl+C`，而界面上一个字都没提这个快捷键——
  * **看不见的入口等于没有入口**。同一批裁定又把卡片图片下方那枚全宽按钮撤了
- * （`SearchResults.tsx`），理由是一个动作只出现一处；于是这枚按钮同时是
- * **搜索流里鼠标用户的实际出口**，不是顺手补的装饰，位置和文案都不该轻动。
+ * （那个文件是 `SearchResults.tsx`，2026-09-26 随首页改版删除），理由是一个动作只出现一处；
+ * 于是这枚按钮同时是**列表里鼠标用户的实际出口**，不是顺手补的装饰，位置和文案都不该轻动。
+ *
+ * 它**不是唯一的发送入口**了：首页图墙卡片上那枚 `CardSendButton` 走的是同一条分流，
+ * 是对裁定 4 的明写偏离（图墙没有编辑也没有删除，任务文件 §5.1）。
  *
  * ## 分流与 `Ctrl+C`、与卡片「⋯」完全同一份
  *

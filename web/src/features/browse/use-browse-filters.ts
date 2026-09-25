@@ -123,13 +123,14 @@ export function useBrowseFilters() {
    * 输入框里未提交的值——**纯 UI state**（state-navigation.md §3 的第一类）。
    *
    * 它不进 URL，因为「用户正在打、还没按回车」不是可分享的状态；已提交的 `query`
-   * 才进 URL。这也是首页那份 `useSearch` 的写法，两边刻意保持一致。
+   * 才进 URL。这与首页那个搜索框是同一套写法（那边更彻底：草稿是它唯一的 state，
+   * 提交之后就变成这一页的 `q` 了，SPEC §9.30）。
    */
   const [draft, setDraft] = useState(query)
 
   /**
    * 上一次**已提交**的词。挡「连点两次搜索」「回车后失焦又提交一次」——
-   * 没有它，每次提交都会 `push` 一条一模一样的历史记录。同 `useSearch`。
+   * 没有它，每次提交都会 `push` 一条一模一样的历史记录。
    */
   const committedRef = useRef(query)
 

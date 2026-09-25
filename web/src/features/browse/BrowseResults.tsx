@@ -56,8 +56,8 @@ const SKELETON_COUNT = 12
  * 骨架网格。`minmax(160px,1fr)` / `gap-3` 与 masonic 的 `columnWidth={160}` /
  * `columnGutter={12}` 是同一笔账：骨架与首屏结果尺寸不一致的话，骨架消失那一刻整页重排。
  *
- * 不 import `features/search` 那一份：两个网格跟着各自的取数参数走，跨 feature 引一个字符串
- * 换不来什么，却让改浏览页的人得先看另一个 feature 的文件。
+ * 自己写死这一份，不从别处 import：骨架格数要跟着**这一页的列宽**走，而全仓只有这一处
+ * 是 160px 列的瀑布流（首页图墙那张网格是 5 列等分，分档方式都不同）。
  */
 const SKELETON_GRID =
   'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(160px,1fr))]'

@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
@@ -6,10 +5,12 @@ import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
-import { ApiError, fetchMemes, toStateError, toggleFavorite, type Meme } from '../../lib/api'
+import { toggleFavorite, type Meme } from '../../lib/api'
 import { notifyFailure } from '../../lib/toast'
 import { TOUCH } from '../../lib/touch'
+import { useMemeBatch } from '../../lib/use-meme-batch'
 import { cn } from '../../lib/utils'
+import { CardSendButton } from './CardSendButton'
 
 /**
  * 一屏 10 张。桌面 5 列 × 2 行，窄屏只降列数、**不降张数**——
@@ -33,11 +34,6 @@ const WALL_SIZE = 10
 const WALL_GRID =
   'grid grid-cols-5 gap-3 @max-[900px]:grid-cols-3 @max-[640px]:grid-cols-2'
 
-type WallState =
-  | { kind: 'loading' }
-  | { kind: 'ok'; items: Meme[] }
-  | { kind: 'error'; error: ApiError }
-
 /**
  * 首页的「随便看看」：全库随机抽 10 张。
  *
@@ -45,56 +41,29 @@ type WallState =
  * 随机的样子——拉最新 100 条再 `Math.random()` 抽 10 个——但那种「随机」只在
  * 新图里发生：库用上三个月之后，用户按一百次换一批也见不到三个月前那张图，
  * **而它一直能被搜到，只是没有任何入口指向它**。把老图翻出来正是这里唯一的用途。
+ *
+ * 取数与三态在 `lib/use-meme-batch.ts`：这一屏和首页那两条 rail 是同一个形状
+ * （一次请求、不带游标、可重取），三份各写一遍就会漂。这一屏多出来的只有
+ * `random: true` 这个参数。
+ *
+ * 这一批图**不进 URL**，是有意的：随机结果不是可分享的东西——把链接发给别人，
+ * 对方看到的是另一批图。state-navigation.md §1 要求进 URL 的是「能放 URL 的」，
+ * 随机的一屏不在那一类里，它是纯 UI state。
  */
 export function DiscoverWall() {
-  const [state, setState] = useState<WallState>({ kind: 'loading' })
-  // 每 +1 换一批。
-  //
-  // 这一批图**不进 URL**，是有意的：随机结果不是可分享的东西——把链接发给别人，
-  // 对方看到的是另一批图。state-navigation.md §1 要求进 URL 的是「能放 URL 的」，
-  // 随机的一屏不在那一类里，它是纯 UI state。
-  const [round, setRound] = useState(0)
+  const { state, reload, patchItems } = useMemeBatch({ random: true, limit: WALL_SIZE })
 
-  useEffect(() => {
-    let alive = true
-    setState({ kind: 'loading' })
-    fetchMemes({ random: true, limit: WALL_SIZE })
-      .then((page) => {
-        if (!alive) return
-        setState({ kind: 'ok', items: page.items })
-      })
-      .catch((err: unknown) => {
-        if (!alive) return
-        setState({ kind: 'error', error: toStateError(err) })
-      })
-    return () => {
-      // 快速连点「换一批」时，先发的请求可能后到——不拦住就把新的一批盖回旧的一批
-      alive = false
-    }
-  }, [round])
-
-  /** 收藏走乐观更新，失败回滚（state-navigation.md §8，与搜索页、浏览页一致）。 */
+  /** 收藏走乐观更新，失败回滚（state-navigation.md §8，与浏览页一致）。 */
   async function handleFavorite(meme: Meme) {
     const next = !meme.favorited
-    setState((prev) =>
-      prev.kind === 'ok'
-        ? {
-            ...prev,
-            items: prev.items.map((m) => (m.id === meme.id ? { ...m, favorited: next } : m)),
-          }
-        : prev,
-    )
+    const set = (value: boolean) =>
+      patchItems((items) => items.map((m) => (m.id === meme.id ? { ...m, favorited: value } : m)))
+
+    set(next)
     try {
       await toggleFavorite(meme.id, next)
     } catch {
-      setState((prev) =>
-        prev.kind === 'ok'
-          ? {
-              ...prev,
-              items: prev.items.map((m) => (m.id === meme.id ? { ...m, favorited: !next } : m)),
-            }
-          : prev,
-      )
+      set(!next)
       // 回滚了必须说一句：心形自己翻回去看起来像「点了没生效」，用户会再点一次。
       // 成功不提示——心形填上了就是反馈（`feedback.md` 判据 1）。
       notifyFailure('收藏失败，请重试')
@@ -102,11 +71,15 @@ export function DiscoverWall() {
   }
 
   const busy = state.kind === 'loading'
-  const refresh = () => setRound((n) => n + 1)
+  const refresh = reload
 
   return (
     // `@container` 不只是装饰：删了它下面那两档容器查询全部静默失效（图墙永远 5 列）
-    <section className="@container mt-6 flex flex-col gap-3" aria-label="随便看看">
+    //
+    // 那个 `mt-6` 2026-09-26 删了：它当时是在补「提示胶囊 + 图墙」那种兄弟关系，
+    // 而现在首页的块间距由外层容器的 `gap-6` 一处说了算（`routes/home.tsx`）。
+    // 留着它会让搜索框到图墙变成 12+24 而其余各处是 24——两个旋钮管同一件事。
+    <section className="@container flex flex-col gap-3" aria-label="随便看看">
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-medium">随便看看</span>
         {/*
@@ -162,16 +135,17 @@ export function DiscoverWall() {
         // 全屏里 ←/→ 翻的就是这一屏随机出来的那批
         <MemeGallery items={state.items}>
           <div className={WALL_GRID}>
-            {/* 这一屏只有收藏一个动作，**没有复制 / 下载 / 分享**，是有意的：
-                发送路径的入口至今只做到搜索结果与浏览页（见
-                任务 2026-09-19-browse-meme-actions 的「明确不做」——
-                图墙卡片上那片位置留给后续的「复制 / 发送」）。
-                真流程在 src/lib/clipboard.ts，接的时候直接用它，别在这里另写一份。
-
-                要接的时候**不用改卡片**：`MemeCard` 的 `actions` 那个槽就是给它的，
-                浏览页往同一个槽里放了「⋯」（components/MemeCard.tsx）。 */}
+            {/* 卡片上是**两枚互不相干**的动作：右上角直接发送、右下角收藏。
+                发送不挂在「⋯」菜单里（这一屏没有编辑也没有删除，只为它挂一个单项菜单
+                是净负担），这是对裁定 4 的明写偏离，理由见 `CardSendButton.tsx`。
+                分流全在那枚组件里走 `lib/clipboard.ts`，这一层不管。 */}
             {state.items.map((meme) => (
-              <MemeCard key={meme.id} meme={meme} onFavorite={handleFavorite} />
+              <MemeCard
+                key={meme.id}
+                meme={meme}
+                onFavorite={handleFavorite}
+                actions={<CardSendButton meme={meme} />}
+              />
             ))}
           </div>
         </MemeGallery>

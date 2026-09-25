@@ -370,38 +370,11 @@ export const MATCHED_BY_LABELS: Record<string, string> = {
  * `matchedBy` 的原始取值 → 可显示的标签数组。
  *
  * 未知取值**原样显示**（服务端可能新增通路），所以查表带兜底、不做穷举联合配合。
- * 放在这里而不是各个页面里：卡片角标有两处消费点（搜索结果、合并后的列表），
+ * 放在这里而不是各个页面里：卡片角标只有一处消费点（合并后的列表），
  * 各写一份就会在「新通路要不要显示」这种事上漂开。
  */
 export function matchedBadges(matchedBy: string[]): string[] {
   return matchedBy.map((m) => MATCHED_BY_LABELS[m] ?? m)
-}
-
-/** 单条搜索结果：Meme 加一个召回来源标注（SPEC §6.3.1）。类型从 api 派生，不手写。 */
-export type SearchResult = InferResponseType<typeof api.api.v1.search.$get>['items'][number]
-
-export type SearchResponse = InferResponseType<typeof api.api.v1.search.$get>
-
-/**
- * `GET /search`：**冻结的兼容入口**，≡ `GET /memes?q=` 的一个子集（SPEC §6.3.3）。
- *
- * 只认 `q` 与 `limit`，其余参数（含七个词表维度和 `cursor`）一律 `VALIDATION_FAILED`；
- * 响应形状与 `GET /memes?q=` 相同，但 `nextCursor` 恒为 `null`——**它不分页**，服务端返回
- * 什么就展示什么。**新能力一律只加在 `GET /memes` 上**，这里不再演进（2026-09-26 裁定 1）。
- *
- * ⚠️ **缺省 `limit` 是 50，不是列表的 40，这是冻结的一部分**：首页这条路径不传 `limit`，
- * 默认值由服务端说了算，把它对齐到 §1.3 的 40 等于悄悄改掉首页看到的条数（§6.3.3）。
- *
- * 和 fetchMemes 一样用 fetch 而不是 RPC 客户端方法：RPC 客户端把非 2xx 直接当异常抛，
- * 拿不到 SPEC §2.1 的错误信封，而 code 和 requestId 是必须展示给用户的。
- */
-export async function fetchSearch(q: string, limit?: number): Promise<SearchResponse> {
-  const qs = new URLSearchParams({ q })
-  if (limit !== undefined) qs.set('limit', String(limit))
-
-  const res = await fetch(`/api/v1/search?${qs.toString()}`)
-  if (!res.ok) throw await toApiError(res)
-  return res.json() as Promise<SearchResponse>
 }
 
 /**
@@ -423,7 +396,7 @@ export async function toggleFavorite(memeId: string, favorited: boolean): Promis
  * 并发编辑是最后写入者赢，不做冲突检测、不做 ETag——所以前端**不能维护影子副本**
  * （state-navigation.md §2）。
  *
- * 用 fetch 而不是 RPC 客户端方法，和 fetchMemes / fetchSearch 同一个理由：
+ * 用 fetch 而不是 RPC 客户端方法，和 fetchMemes 同一个理由：
  * RPC 客户端把非 2xx 直接当异常抛，拿不到 SPEC §2.1 的错误信封，
  * 而 `VALIDATION_FAILED`（词表外标签）恰恰是要把 message 展示给用户的。
  */
