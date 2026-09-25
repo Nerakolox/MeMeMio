@@ -2,16 +2,19 @@ import { log } from '../logger.js'
 import { embedText, resolveEmbedConfig } from '../ai/embedder.js'
 import { rewriteQuery } from '../ai/hyde.js'
 import { withInstructPrefix } from '../lib/embed-instruct.js'
-import { fuseRankings, type RankedPath } from '../lib/rrf.js'
+import { fuseRankings, type FusedHit, type RankedPath } from '../lib/rrf.js'
 import { matchVocabTerms } from '../lib/vocab-match.js'
 import type { Db } from '../data/db.js'
-import type { MemeRow } from '../data/memes.js'
+import { MAX_LIST_LIMIT, type MemeFilter, type MemeRow } from '../data/memes.js'
 import { hasReindexBacklog } from '../data/reindex-jobs.js'
+import type { SnapshotInputs } from '../data/search-snapshots.js'
 import {
   findMemesForSearch,
   ocrPathCandidates,
+  PATH_LIMIT,
   tagPathCandidates,
   vectorPathCandidates,
+  type SearchPathOptions,
 } from '../data/search.js'
 
 /**
@@ -23,11 +26,21 @@ import {
  *   2. **任一路失败不牵连其余。** `allSettled` 而不是 `all`——一路挂了不该让整次搜索 500。
  *      降级一律记日志：静默降级和吞掉错误在日志里长得一模一样（code-style.md）。
  *   3. **搜索不写库、不打标。** 全程只有 HyDE 那一次纯文本 LLM 调用（retrieval.md §7）。
+ *      例外只有一处：`GET /memes?q=` 会把这次检索的候选名单落成快照
+ *      （`services/search-snapshot.ts`），那是分页的实现，不是检索本身。
+ *
+ * **翻页不重跑这个文件。** 快照冻住了改写与查询向量，后续页只按更大的深度重扫三路
+ * （`runSearch` 的 `frozen` 参数），既不调 LLM 也不重新编码。
  */
 
-/** SPEC §6.3.1：limit 默认 50，最大 100。搜索**不分页**。 */
+/**
+ * `GET /search` 缺省 `limit`。**它冻结在 50，不是 `GET /memes` 的 40。**
+ *
+ * SPEC §6.3.3：首页那条路径走的是 `/search` 而且**不传 `limit`**，默认值由服务端说了算；
+ * 把它对齐到 §1.3 的 40 等于悄悄改掉首页看到的结果条数，而首页本轮不动（裁定 3）。
+ * 「同一个实现」说的是代码路径，不是参数默认值。首页改版、这个入口删掉之后一起消失。
+ */
 export const DEFAULT_SEARCH_LIMIT = 50
-export const MAX_SEARCH_LIMIT = 100
 
 /** 通路标识。`lib/rrf.ts` 只传字符串不认识语义，取值在这里定死，与 SPEC 示例一致。 */
 const PATH_VECTOR = 'vector'
@@ -62,38 +75,90 @@ export type SearchOutcome = {
 }
 
 /**
- * 三路召回 + RRF 融合 + 取数。
+ * 冻结的检索输入。**快照翻页靠它重扫三路**（裁定 2）。
+ *
+ * 不冻住的话每页都要重算一次改写与查询向量：改写逐次不同 → 召回池变化 → 翻页重复或漏，
+ * 而且滚一屏就是一次 LLM 调用。这是快照存在的两个理由之一，另一个是排序稳定。
+ *
+ * 形状**取自 `SnapshotInputs`**（`data/search-snapshots.ts`）而不是在这里另写一遍：
+ * 那两个字段就是要落库的那两个，各写一份的话，将来加一个「也要冻住」的东西时
+ * 只改一边，另一边静默地每页重算。
+ */
+export type FrozenInputs = Pick<SnapshotInputs, 'rewritten' | 'vector'>
+
+/** 一次检索的全部产物。快照层拿它落库，其余调用方只取 `fused` 的前 N 条。 */
+export type SearchRun = {
+  /** 三路各自的有序候选名单。 */
+  paths: RankedPath[]
+  /** RRF 融合后的有序命中，**未截断**——池子本来就比给出去的多（任务 §2）。 */
+  fused: FusedHit[]
+  degraded: boolean
+  rewritten: string | null
+  /** 重扫三路要用的输入，原样交回给 `runSearch` 的 `frozen`。 */
+  query: string
+  filter: MemeFilter
+  actorId: string | null
+  frozen: FrozenInputs
+}
+
+export type RunSearchParams = {
+  /** 去空白之后的查询词。空串不走这里——那是浏览分支（`GET /memes` 的分派）。 */
+  query: string
+  /** 七个维度 / `isAnimated` / `favorited` / `uploader` / `tagStatus`。 */
+  filter?: MemeFilter
+  actorId: string | null
+  requestId: string
+  db: Db
+  /** 每路召回深度。默认 `PATH_LIMIT`；快照翻倍预取传新深度。 */
+  depth?: number
+  /**
+   * 快照的时点：只召回这个时刻之前入库的图（SPEC §6.3.1「中途上传的新图也不会出现在
+   * 这次检索的后续页里」）。首屏传当下，翻页传快照的 `createdAt`。
+   */
+  asOf?: Date
+  /** 传了就用它重扫（快照翻页）；不传则现算改写与查询向量（首屏）。 */
+  frozen?: FrozenInputs
+}
+
+/**
+ * 三路召回 + RRF 融合。**不取完整行**——取数由调用方按要展示的那一段去做
+ * （首屏取前 `limit` 条，翻页只取这一页的那 40 条）。
  *
  * 向量路是唯一需要外部依赖的一路，所以它单独包一层：embedding 没配或调用失败时
  * 这一路空手而归，其余两路照常出结果，只是 `degraded: true`。
  */
-export async function searchMemes(
-  query: string,
-  limit: number,
-  actorId: string | null,
-  requestId: string,
-  db: Db,
-): Promise<SearchOutcome> {
-  const effectiveLimit = Math.min(Math.max(limit, 1), MAX_SEARCH_LIMIT)
+export async function runSearch(params: RunSearchParams): Promise<SearchRun> {
+  const depth = params.depth ?? PATH_LIMIT
+  const { include, exclude } = matchVocabTerms(params.query)
+  const filter: MemeFilter = { ...params.filter, exclude }
 
   // 三路同时出发。OCR 路和标签路吃**原查询**：
   //   - 标签路只做词表精确匹配，改写对它没有意义；
   //   - OCR 路要的是「用户还记得的那句原文」，改写反而会把它抹掉。
-  // 只有向量路用改写结果——语义检索才是 HyDE 真正帮上忙的地方（retrieval.md §3）。
+  // 只有向量路用改写结果——语义检索才是 HyDE 真正帮得上忙的地方（retrieval.md §3）。
   //
   // `exclude` 是用户明说不要的词条（「猫 不要 真人」）。它**三路都要带**：
   // 排除是过滤不是负分（SPEC §6.3.1），而且必须发生在各路取 top-N **之前**——
   // 融合完再滤的话，被剔掉的名额不会有别的图补上，用户看到的是一个莫名其妙变短的列表。
-  const { include, exclude } = matchVocabTerms(query)
-  const vector = startVectorPath(query, exclude, actorId, requestId, db)
+  const options: SearchPathOptions = {
+    filter: params.filter,
+    actorId: params.actorId,
+    exclude,
+    depth,
+    asOf: params.asOf,
+  }
+  const vector =
+    params.frozen === undefined
+      ? startVectorPath(params.query, options, params.requestId, params.db)
+      : frozenVectorPath(params.frozen, options, params.db)
 
   const [vectorResult, ocrResult, tagResult, backlogResult] = await Promise.allSettled([
     vector.candidates,
-    ocrPathCandidates(query, exclude, db),
-    tagPathCandidates(include, exclude, db),
+    ocrPathCandidates(params.query, options, params.db),
+    tagPathCandidates(include, options, params.db),
     // 和三路一起出发，不串在后面：它是存在性查询（`limit 1` 命中 claim 索引，
     // 见 `hasReindexBacklog` 的注释），但再便宜的查询串行也是加一个往返
-    hasReindexBacklog(db),
+    hasReindexBacklog(params.db),
   ])
 
   const paths: RankedPath[] = []
@@ -101,13 +166,19 @@ export async function searchMemes(
   if (ocrResult.status === 'fulfilled') {
     paths.push({ name: PATH_OCR, ids: ocrResult.value })
   } else {
-    log.warn({ requestId, err: ocrResult.reason }, 'search: ocr path failed, continuing without it')
+    log.warn(
+      { requestId: params.requestId, err: ocrResult.reason },
+      'search: ocr path failed, continuing without it',
+    )
   }
 
   if (tagResult.status === 'fulfilled') {
     paths.push({ name: PATH_TAGS, ids: tagResult.value })
   } else {
-    log.warn({ requestId, err: tagResult.reason }, 'search: tag path failed, continuing without it')
+    log.warn(
+      { requestId: params.requestId, err: tagResult.reason },
+      'search: tag path failed, continuing without it',
+    )
   }
 
   // 向量路返回 null 是**正常降级**（没配 embedding），不是故障：接口照常 200，只是标记 degraded
@@ -116,10 +187,8 @@ export async function searchMemes(
     paths.push({ name: PATH_VECTOR, ids: vectorResult.value })
   } else {
     degraded = true
-    log.info(
-      { requestId, reason: vectorResult.status === 'rejected' ? 'failed' : 'not_available' },
-      'search degraded: vector path did not run',
-    )
+    const reason = vectorResult.status === 'rejected' ? 'failed' : 'not_available'
+    log.info({ requestId: params.requestId, reason }, 'search degraded: vector path did not run')
   }
 
   // 队列里还有没走完的重算任务：向量路**照常参与，但只在当前模型的向量里参与**
@@ -132,40 +201,108 @@ export async function searchMemes(
   //
   // 查询本身失败时按「没降级」处理——为了一个提示字段让整次搜索 500 是不划算的
   if (backlogResult.status === 'rejected') {
-    log.warn({ requestId, err: backlogResult.reason }, 'search: reindex 进度查询失败，按未降级处理')
+    log.warn(
+      { requestId: params.requestId, err: backlogResult.reason },
+      'search: reindex 进度查询失败，按未降级处理',
+    )
   } else if (backlogResult.value) {
     degraded = true
-    log.info({ requestId }, 'search degraded: 队列里还有没走完的重算任务，向量路只覆盖当前模型')
+    log.info(
+      { requestId: params.requestId },
+      'search degraded: 队列里还有没走完的重算任务，向量路只覆盖当前模型',
+    )
   }
 
-  const fused = fuseRankings(paths, effectiveLimit)
+  // 改写与查询向量要等向量路跑完才是最终状态。它自己的超时（2s）封顶，不会拖住响应
+  const frozen: FrozenInputs = {
+    rewritten: await vector.rewritten,
+    vector: await vector.frozen,
+  }
+
+  // 融合**不按 limit 截断**：池子（≤ 3 × depth）本来就比任何一页多，
+  // 截断在这里会让快照少存一段、翻到那里时凭空到底。
+  const fused = fuseRankings(
+    paths,
+    paths.reduce((total, path) => total + path.ids.length, 0),
+  )
+
+  return { paths, fused, degraded, rewritten: frozen.rewritten, query: params.query, filter, actorId: params.actorId, frozen }
+}
+
+/**
+ * 一次检索取前 `limit` 条（`GET /search` 那条路，以及测试）。
+ *
+ * `GET /memes?q=` 不走它——那条要落快照、要翻页，走 `services/search-snapshot.ts`。
+ * 两者共用上面的 `runSearch` 与下面的 `findMemesForSearch`，**召回与融合只有一份实现**。
+ */
+export async function searchMemes(
+  query: string,
+  limit: number,
+  actorId: string | null,
+  requestId: string,
+  db: Db,
+  filter: MemeFilter = {},
+): Promise<SearchOutcome> {
+  const effectiveLimit = Math.min(Math.max(limit, 1), MAX_LIST_LIMIT)
+
+  const run = await runSearch({ query, filter, actorId, requestId, db })
+  const items = await fetchHits(run.fused.slice(0, effectiveLimit), actorId, db)
+
+  return { items, degraded: run.degraded, rewritten: run.rewritten }
+}
+
+/**
+ * 按融合顺序取完整行。
+ *
+ * 融合到取数之间那张图可能被删了。跳过而不是返回一条已删除的（SPEC §3.4）——
+ * `findMemesForSearch` 带着软删过滤，取不到的就在这里消失。
+ *
+ * 参数只要 `{ id, matchedBy }`，**不收整个 `FusedHit`**：快照翻页那条路手上没有融合分
+ * （名单是冻住的），它的 `matchedBy` 现算（`matchedByOf`）。写成整个 `FusedHit` 会逼着
+ * 它编一个假的分数出来——那种「为了过类型而填的字段」下一个人不敢删。
+ */
+export async function fetchHits(
+  hits: { id: string; matchedBy: string[] }[],
+  actorId: string | null,
+  db: Db,
+): Promise<SearchHit[]> {
+  if (hits.length === 0) return []
+
   const rows = await findMemesForSearch(
-    fused.map((hit) => hit.id),
+    hits.map((hit) => hit.id),
     actorId,
     db,
   )
-
   const byId = new Map(rows.map((row) => [row.id, row]))
+
   const items: SearchHit[] = []
-  for (const hit of fused) {
+  for (const hit of hits) {
     const row = byId.get(hit.id)
-    // 融合到取数之间那张图被删了。跳过而不是返回一条已删除的（SPEC §3.4）
     if (row === undefined) continue
     items.push({ ...row, matchedBy: hit.matchedBy })
   }
-
-  // 改写要等向量路跑完才是最终状态。它自己的超时（2s）封顶，不会拖住响应
-  const rewritten = await vector.rewritten
-
-  return { items, degraded, rewritten }
+  return items
 }
 
-/** 向量路的两个产物。分开暴露是为了让「召回」和「改写」各自失败、互不牵连。 */
+/**
+ * 一个 id 被哪几路召回过。**翻页时按快照的候选名单现算**，不额外存一份。
+ *
+ * 名单是只追加的（`services/search-snapshot.ts`），所以同一条命中在它被发出去的那一页
+ * 算出来的 `matchedBy` 是确定的；而「后面的页算出来多了一路」不会造成前后矛盾——
+ * 一条命中只会被发出去一次。
+ */
+export function matchedByOf(id: string, paths: RankedPath[]): string[] {
+  return paths.filter((path) => path.ids.includes(id)).map((path) => path.name)
+}
+
+/** 向量路的三个产物。分开暴露是为了让「召回」「改写」「冻结的向量」各自失败、互不牵连。 */
 type VectorPath = {
   /** 召回的 id 列表；`null` 表示这一路没跑（未配置或 embedding 失败）。 */
   candidates: Promise<string[] | null>
   /** 改写文本；失败或这一路没跑时为 null。 */
   rewritten: Promise<string | null>
+  /** 冻结的查询向量，快照翻页重扫时要用。没跑时为 null。 */
+  frozen: Promise<FrozenInputs['vector']>
 }
 
 /**
@@ -185,15 +322,14 @@ type VectorPath = {
  */
 function startVectorPath(
   query: string,
-  exclude: string[],
-  actorId: string | null,
+  options: SearchPathOptions,
   requestId: string,
   db: Db,
 ): VectorPath {
   const configured = resolveEmbedConfig()
 
   const rewritten = configured
-    .then((config) => (config === null ? null : rewriteQuery(query, actorId, requestId)))
+    .then((config) => (config === null ? null : rewriteQuery(query, options.actorId ?? null, requestId)))
     .catch((err: unknown) => {
       // rewriteQuery 自己已经把所有失败路径收成 null 了。这层是防它将来改坏——
       // 一个漏出来的 rejection 会让整个请求 500，只为了一个展示用的字段，不值得
@@ -201,7 +337,8 @@ function startVectorPath(
       return null
     })
 
-  const candidates = (async (): Promise<string[] | null> => {
+  /** 查询向量。快照把它冻住之后，翻页不再调这些外部依赖。 */
+  const frozen = (async (): Promise<FrozenInputs['vector']> => {
     const config = await configured
     if (config === null) return null
 
@@ -215,10 +352,42 @@ function startVectorPath(
       return null
     }
 
-    return vectorPathCandidates(embedded.vector, config.model, exclude, db)
-  })()
+    return { values: embedded.vector, model: config.model }
+  })().catch((err: unknown) => {
+    // 上面的失败路径都收成了 null。这层是防 `resolveEmbedConfig` 将来抛出来——
+    // 让它冒出去的话整个请求 500，而这次检索其实还有另外两路可以走
+    log.warn({ requestId, err }, 'search: vector path threw, treating as not available')
+    return null
+  })
 
-  return { candidates, rewritten }
+  const candidates = frozen.then((vector) =>
+    vector === null
+      ? null
+      : vectorPathCandidates(vector.values, vector.model, options, db),
+  )
+
+  return { candidates, rewritten, frozen }
+}
+
+/**
+ * 用**冻住的那一份**重扫向量路（快照翻页）。不调 HyDE、不调 embedding。
+ *
+ * `rewritten` 直接回抛传入的值：调用方（快照层）存着它，不需要再算一遍，
+ * 也不能再算一遍——再算一次就是「滚一屏一次 LLM 调用」，而且结果会不同。
+ */
+function frozenVectorPath(
+  frozen: FrozenInputs,
+  options: SearchPathOptions,
+  db: Db,
+): VectorPath {
+  return {
+    candidates:
+      frozen.vector === null
+        ? Promise.resolve(null)
+        : vectorPathCandidates(frozen.vector.values, frozen.vector.model, options, db),
+    rewritten: Promise.resolve(frozen.rewritten),
+    frozen: Promise.resolve(frozen.vector),
+  }
 }
 
 /**

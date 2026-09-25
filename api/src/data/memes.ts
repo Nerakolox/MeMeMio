@@ -702,23 +702,149 @@ export async function removeFavorite(
   return rows.length > 0
 }
 
-// ── 浏览接口（SPEC §6.3.2） ─────────────────────────────────────────
+// ── 列表条件：浏览与检索共用（SPEC §6.3.1 / §6.3.2） ─────────────────
+//
+// ⚠️ **这一段是列表侧唯一的条件构造。** 浏览（下面的 `listMemes`）与检索三路
+//    （`data/search.ts`）都必须走它。
+//
+//    两处各写一份的话，迟早有一处少一个条件——`uploader` 没跟过去、`isAnimated`
+//    忘了传，**都不会报错**，只是结果里混着不该出现的图。这就是 SPEC §6.3.1 那条
+//    「先过滤后召回」的落点：筛选必须在三路取 top-N **之前**生效，放到融合之后再滤
+//    则是另一种表现（「我明明筛了，结果却少了一大截」，被剔掉的名额不会有图补上）。
 
-export type ListMemesParams = {
-  /**
-   * 七个维度的筛选值（SPEC §4.3 / §6.3.2）。每维可多值，**所有值之间都是 AND**。
-   *
-   * 写成 `Partial<Record<VocabField, ...>>` 而不是七个手写字段：加一维时漏掉一处的
-   * 表现是那个筛选参数被静默忽略——接口返回 200，结果里混着不该出现的图。
-   */
-} & Partial<Record<VocabField, string[]>> & {
+export type MemeFilter = Partial<Record<VocabField, string[]>> & {
   isAnimated?: boolean
-  /** true 时只返回 actorId 收藏的记录。 */
+  /** true 时只匹配 `actorId` 收藏的记录。 */
   favorited?: boolean
   /** 'me' 或具体 user id。 */
   uploader?: string
   /** pending | ok | refused | needs_manual。仅本人或 admin 可传，否则抛 FORBIDDEN。SPEC §3.3 */
   tagStatus?: string
+  /**
+   * 用户明说不要的词条（「猫 不要 真人」）。**过滤，不是负分**（SPEC §6.3.1）。
+   * 只有检索会传它，但它是「七个维度上的条件」，所以和其余几条放在一起构造。
+   */
+  exclude?: string[]
+}
+
+/**
+ * 筛选条件（**不含软删**）。返回值里每一条都是 AND。
+ *
+ * 单独暴露「不含软删」的版本，是为了让向量路能回答「这次到底有没有带筛」——
+ * 它据此决定后置过滤不够时要不要改走精确扫描（`data/search.ts` 的
+ * `vectorPathCandidates`）。读路径用下面那个 `memeQueryConditions`，**不要直接用它**。
+ *
+ * `favorited` 写成 EXISTS 半连接而不是 INNER JOIN，是为了让五类条件**都变成 SQL 条件**：
+ * 检索三路只要 id，为它单独接一个 join 会让「共用同一份条件」退化成「共用其中一部分」。
+ * `listMemes` 那一侧仍然 left join 一次 `user_favorites`——响应里的 `favorited` 字段要它，
+ * 而那次 join 只读不筛。
+ */
+export function memeFilterConditions(filter: MemeFilter, actorId: string | null): SQL[] {
+  const conditions: SQL[] = []
+
+  // 多值 AND 过滤——每个值必须在对应数组里出现。七维一视同仁，靠 GIN 索引走 @>。
+  // 遍历 `VOCAB_FIELDS` 而不是手写七段：加一维时漏掉一处的表现是那个筛选参数被静默忽略。
+  for (const field of VOCAB_FIELDS) {
+    for (const value of filter[field] ?? []) {
+      conditions.push(sql`${memes[field]} @> ARRAY[${value}]::text[]`)
+    }
+  }
+
+  if (filter.isAnimated !== undefined) {
+    conditions.push(eq(memes.isAnimated, filter.isAnimated))
+  }
+
+  if (filter.uploader) {
+    if (filter.uploader === 'me' && actorId) {
+      conditions.push(eq(memes.uploaderId, actorId))
+    } else if (filter.uploader !== 'me') {
+      conditions.push(eq(memes.uploaderId, filter.uploader))
+    }
+  }
+
+  if (filter.tagStatus) {
+    conditions.push(eq(memes.tagStatus, filter.tagStatus))
+  }
+
+  // 「只看收藏」= 要求那条关系存在。`actorId` 为 null 时无从构造（不知道查谁的收藏），
+  // 与改造前那条 join 分支的行为一致：不筛。
+  if (filter.favorited === true && actorId !== null) {
+    conditions.push(
+      sql`exists (select 1 from ${userFavorites}
+        where ${userFavorites.memeId} = ${memes.id} and ${userFavorites.userId} = ${actorId})`,
+    )
+  }
+
+  const excluded = excludeLabels(filter.exclude ?? [])
+  if (excluded !== undefined) conditions.push(excluded)
+
+  return conditions
+}
+
+/**
+ * 读 `memes` 的**开场条件**：软删过滤 + 筛选条件。读路径一律用它。
+ *
+ * 软删那一条在这里而不是在各个调用点，理由和 `assertCanMutate` 一样——
+ * **不靠调用方记得**。漏掉它的表现是「删掉的图又出现了」，不报错、不崩溃，比漏权限
+ * 检查更隐蔽（agents/rules/database.md §1.1、SPEC §3.4）。
+ */
+export function memeQueryConditions(filter: MemeFilter, actorId: string | null): SQL[] {
+  return [isNull(memes.deletedAt), ...memeFilterConditions(filter, actorId)]
+}
+
+/**
+ * 七个数组字段里任意一个包含该词条。**扁平匹配**——词表在 JSON 里分组，在库里是扁平
+ * 数组，接口里也不保留分组（shared/vocab/README.md 的警告）。
+ *
+ * 为什么是 OR 而不是「查哪一维就只匹配哪一维」：用户搜「微笑」时不会声明那是
+ * `expressions`，查询分词（`lib/vocab-match.ts`）也不知道。维度约束落在**打标和
+ * 筛选 UI** 上，检索这边一个词命中任意一维都算数。
+ */
+export function anyLabelMatches(term: string): SQL {
+  return sql.join(
+    VOCAB_FIELDS.map((field) => sql`${memes[field]} @> ARRAY[${term}]::text[]`),
+    sql` or `,
+  )
+}
+
+/**
+ * 把「用户明确不要的标签」变成过滤条件。**过滤，不是负分**（SPEC §6.3.1）。
+ *
+ * `&&` 是数组相交：任一维度里出现了任一个被排除的词，这条就出局。它必须和其余筛选
+ * 一起、发生在取 top-N **之前**——融合后再滤的话，被剔掉的名额不会有别的图补上来，
+ * 用户会看到一个莫名其妙变短的列表。
+ *
+ * `coalesce(..., '{}')` 不是多余的：某个维度的数组可以是 NULL，而 `NULL && x` 是 NULL，
+ * `not NULL` 还是 NULL——那条记录会**整个从结果里消失**，且不报错。
+ */
+export function excludeLabels(terms: string[]): SQL | undefined {
+  if (terms.length === 0) return undefined
+  const literal = sql`ARRAY[${sql.join(terms.map((t) => sql`${t}`), sql`, `)}]::text[]`
+  return sql`not (${sql.join(
+    VOCAB_FIELDS.map((field) => sql`coalesce(${memes[field]}, '{}'::text[]) && ${literal}`),
+    sql` or `,
+  )})`
+}
+
+// ── 浏览接口（SPEC §6.3.2） ─────────────────────────────────────────
+
+/**
+ * 列表接口的缺省页大小与上限（SPEC §1.3）——**浏览与检索两个分支共用这一份**。
+ *
+ * 两处各写一个 40 / 100 的表现，是把「页大小」变成两个会各自漂移的数：改了一处，
+ * 另一处只是**静静地少给几条**，不报错。`GET /search` 是唯一的例外，它的缺省冻结在
+ * 50（`services/search.ts` 的 `DEFAULT_SEARCH_LIMIT`，理由见 SPEC §6.3.3）。
+ */
+export const DEFAULT_LIST_LIMIT = 40
+export const MAX_LIST_LIMIT = 100
+
+/**
+ * 浏览参数 = **筛选条件**（`MemeFilter`，与检索共用同一份构造）+ 分页。
+ *
+ * `MemeFilter` 里那七个维度写成 `Partial<Record<VocabField, ...>>` 而不是七个手写字段：
+ * 加一维时漏掉一处的表现是那个筛选参数被静默忽略——接口返回 200，结果里混着不该出现的图。
+ */
+export type ListMemesParams = MemeFilter & {
   cursor?: string
   limit?: number
   /**
@@ -731,28 +857,36 @@ export type ListMemesParams = {
 }
 
 /**
- * 游标解码结果。游标是 base64(created_at ISO + '|' + id)，不透明，客户端不解析。SPEC §1.3
+ * 浏览游标：base64(`created_at ISO` + '|' + id)，不透明，客户端不解析。SPEC §1.3
  *
  * 用 created_at + id 双字段确保同秒上传的多张图也有稳定游标。
  *
- * ⚠️ **这里必须校验 id 的 uuid 形状，返回 `null` 而不是放进 where。** 游标是客户端
- *    拿来就用的不透明串，改一个字符就能造出「解出来是合法 base64、但 id 是 `abc`」
- *    的输入；`lt(memes.id, 'abc')` 会撞 Postgres 的 `invalid input syntax for type uuid`
- *    ——500，不是「游标无效」。判据和这里已有的那些一样：**解不出来就当没传游标**，
- *    从第一页开始（约定见 §1.3），不新增一个错误码，也不把服务端错误吐给客户端。
+ * ⚠️ **解析失败报 `VALIDATION_FAILED`，不再「当没传」。**
+ *
+ *    2026-09-26 之前这里的约定是「解不出来就当没传游标，从第一页开始」。那条约定在
+ *    无限滚动里是错的：客户端拿着一个坏游标去要下一页，服务端把**第一页**给它，
+ *    前端把第一页**追加**到已经渲染的列表后面——屏幕上出现重复，**没有任何报错**。
+ *    现在两种情况（解不出来 / 快照过期）返回同一个码，客户端的动作也同一个：
+ *    丢弃游标、回第一页、说一句。理由见 SPEC §1.3、§9.29。
+ *
+ * ⚠️ **这里仍然要校验 id 的 uuid 形状，而且更要紧了。** 游标是客户端拿来就用的不透明串，
+ *    改一个字符就能造出「解出来是合法 base64、但 id 是 `abc`」的输入；不校验的话
+ *    `lt(memes.id, 'abc')` 会撞 Postgres 的 `invalid input syntax for type uuid`，
+ *    那是 500，把「游标无效」说成「服务器内部错误」。
  */
-function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
-  try {
-    const raw = Buffer.from(cursor, 'base64url').toString('utf8')
-    const sep = raw.indexOf('|')
-    if (sep < 0) return null
-    const createdAt = new Date(raw.slice(0, sep))
-    const id = raw.slice(sep + 1)
-    if (isNaN(createdAt.getTime()) || !isUuid(id)) return null
-    return { createdAt, id }
-  } catch {
-    return null
-  }
+export function decodeCursor(cursor: string): { createdAt: Date; id: string } {
+  const raw = Buffer.from(cursor, 'base64url').toString('utf8')
+  const sep = raw.indexOf('|')
+  if (sep < 0) invalidCursor()
+  const createdAt = new Date(raw.slice(0, sep))
+  const id = raw.slice(sep + 1)
+  if (isNaN(createdAt.getTime()) || !isUuid(id)) invalidCursor()
+  return { createdAt, id }
+}
+
+/** 游标坏了。**和「快照过期」共用一个错误码**，客户端对两者的动作也是同一个。 */
+function invalidCursor(): never {
+  throw new AppError('VALIDATION_FAILED', '游标无效，请从第一页重新开始')
 }
 
 export function encodeCursor(createdAt: Date, id: string): string {
@@ -765,39 +899,17 @@ export function encodeCursor(createdAt: Date, id: string): string {
  * tagStatus 参数的权限检查在调用方（handler）完成——数据层只负责查询，
  * 不重复做授权判断，但调用方必须先验，否则普通用户能查到他人的待处理图。
  *
- * 软删过滤硬编码在这里，调用方不能绕过。SPEC §3.4
+ * 筛选条件与软删过滤都由 `memeQueryConditions` 提供（浏览与检索共用那一份），
+ * 这里只负责分页。SPEC §3.4 / §6.3.2
  */
 export async function listMemes(
   params: ListMemesParams,
   actorId: string | null,
   db: Db = defaultDb,
 ): Promise<{ items: MemeView[]; nextCursor: string | null }> {
-  const limit = Math.min(params.limit ?? 40, 100)
+  const limit = Math.min(params.limit ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT)
 
-  const conditions: SQL[] = [isNull(memes.deletedAt)]
-
-  // 多值 AND 过滤——每个值必须在对应数组里出现。七维一视同仁，靠 GIN 索引走 @>。
-  for (const field of VOCAB_FIELDS) {
-    for (const value of params[field] ?? []) {
-      conditions.push(sql`${memes[field]} @> ARRAY[${value}]::text[]`)
-    }
-  }
-
-  if (params.isAnimated !== undefined) {
-    conditions.push(eq(memes.isAnimated, params.isAnimated))
-  }
-
-  if (params.uploader) {
-    if (params.uploader === 'me' && actorId) {
-      conditions.push(eq(memes.uploaderId, actorId))
-    } else if (params.uploader !== 'me') {
-      conditions.push(eq(memes.uploaderId, params.uploader))
-    }
-  }
-
-  if (params.tagStatus) {
-    conditions.push(eq(memes.tagStatus, params.tagStatus))
-  }
+  const conditions: SQL[] = memeQueryConditions(params, actorId)
 
   // 游标分页：按 created_at desc, id desc；游标取「上一页最后一条」之后
   //
@@ -805,46 +917,37 @@ export async function listMemes(
   // `random` + `cursor` 的组合挡成了 VALIDATION_FAILED，这里是第二道。
   if (params.cursor && params.random !== true) {
     const decoded = decodeCursor(params.cursor)
-    if (decoded) {
-      // (created_at < cursor_ts) OR (created_at = cursor_ts AND id < cursor_id)
-      conditions.push(
-        or(
-          lt(memes.createdAt, decoded.createdAt),
-          and(eq(memes.createdAt, decoded.createdAt), lt(memes.id, decoded.id)),
-        ) as SQL,
-      )
-    }
+    // (created_at < cursor_ts) OR (created_at = cursor_ts AND id < cursor_id)
+    conditions.push(
+      or(
+        lt(memes.createdAt, decoded.createdAt),
+        and(eq(memes.createdAt, decoded.createdAt), lt(memes.id, decoded.id)),
+      ) as SQL,
+    )
   }
-
-  // 收藏过滤走 INNER JOIN `user_favorites`（「只看收藏」就是要求那条关系存在）。
-  //
-  // ⚠️ **join 的选择只在这一处**，下面随机与分页两条路径共用它。分成两份的话，
-  //    必然有一份会先改——而 `favorited` 筛错的代价是一张不该出现的图出现在列表里，
-  //    不报错。这个 bug 形态和漏 `deleted_at` 是同一类。
-  const favoriteFilter = params.favorited === true && actorId !== null
-  /** 收藏关系的 join 条件。`actorId` 为 null 时根本不该构造它——见下面的三元。 */
-  const favoriteJoin = (userId: string) =>
-    and(eq(userFavorites.memeId, memes.id), eq(userFavorites.userId, userId))
 
   const selected = {
     meme: memes,
     uploaderName: users.name,
     favoritedAt: userFavorites.createdAt,
   }
-  const base = db
+
+  /*
+   * 收藏关系 join 是**只读的**：响应里的 `favorited` 字段要它。
+   * 「只看收藏」那个筛不在这里——它在 `memeFilterConditions` 里是一条 EXISTS 条件，
+   * 浏览和检索三路共用同一条。这一处 join 只决定每条 item 的 `favorited` 是真是假。
+   *
+   * ⚠️ `actorId` 为 null 时用 `sql\`false\`` 而不是省掉 join：join 的列在下面的
+   *    `selected` 里被选出来，省掉它整个 select 就不成形状了。
+   */
+  const favoriteJoin = (userId: string) =>
+    and(eq(userFavorites.memeId, memes.id), eq(userFavorites.userId, userId))
+
+  const joined = db
     .select(selected)
     .from(memes)
     .innerJoin(users, eq(memes.uploaderId, users.id))
-
-  // `favoriteFilter && actorId !== null` 里的第二个判断是为了让 TS 收窄 `actorId`；
-  // 语义上是冗余的（`favoriteFilter` 已蕴含它），类型系统看不见这层蕴含。
-  const joined =
-    favoriteFilter && actorId !== null
-      ? base.innerJoin(userFavorites, favoriteJoin(actorId))
-      : base.leftJoin(
-          userFavorites,
-          actorId !== null ? favoriteJoin(actorId) : sql`false`,
-        )
+    .leftJoin(userFavorites, actorId !== null ? favoriteJoin(actorId) : sql`false`)
 
   const toItems = (
     rows: { meme: MemeRow; uploaderName: string; favoritedAt: Date | null }[],
@@ -852,8 +955,7 @@ export async function listMemes(
     rows.map((r) => ({
       ...r.meme,
       uploaderName: r.uploaderName,
-      // INNER JOIN 那条路径上关系必然存在，不必再看 favoritedAt
-      favorited: favoriteFilter ? true : r.favoritedAt !== null,
+      favorited: r.favoritedAt !== null,
     }))
 
   // ── 随机抽样（SPEC §6.3.2） ──────────────────────────────────────

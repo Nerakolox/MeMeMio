@@ -463,17 +463,17 @@ describe('DELETE /memes/:id（SPEC §6.4.2）', () => {
     })
 
     // 删之前三路都召回得到 —— 否则下面那三条断言是白过的
-    expect(await ocrPathCandidates('猫在键盘上睡觉', [], db)).toContain(meme.id)
-    expect(await tagPathCandidates(['猫'], [], db)).toContain(meme.id)
-    expect(await vectorPathCandidates(unitVector(0), EMBED_MODEL, [], db)).toContain(meme.id)
+    expect(await ocrPathCandidates('猫在键盘上睡觉', {}, db)).toContain(meme.id)
+    expect(await tagPathCandidates(['猫'], {}, db)).toContain(meme.id)
+    expect(await vectorPathCandidates(unitVector(0), EMBED_MODEL, {}, db)).toContain(meme.id)
 
     const res = await remove(meme.id, alice)
     expect(res.status).toBe(204)
 
     // 三路是分别写的 SQL，最容易只改一路（database.md §1.1）
-    expect(await ocrPathCandidates('猫在键盘上睡觉', [], db)).not.toContain(meme.id)
-    expect(await tagPathCandidates(['猫'], [], db)).not.toContain(meme.id)
-    expect(await vectorPathCandidates(unitVector(0), EMBED_MODEL, [], db)).not.toContain(meme.id)
+    expect(await ocrPathCandidates('猫在键盘上睡觉', {}, db)).not.toContain(meme.id)
+    expect(await tagPathCandidates(['猫'], {}, db)).not.toContain(meme.id)
+    expect(await vectorPathCandidates(unitVector(0), EMBED_MODEL, {}, db)).not.toContain(meme.id)
 
     // 详情接口同样查不到
     expect((await get(meme.id, alice)).status).toBe(404)

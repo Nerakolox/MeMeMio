@@ -64,6 +64,13 @@
       "when": 1790100835800,
       "tag": "0008_create_runtime_config",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790363098140,
+      "tag": "0009_create_search_snapshots",
+      "breakpoints": true
     }
   ]
 }

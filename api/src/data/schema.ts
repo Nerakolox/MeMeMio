@@ -6,6 +6,7 @@ import {
   customType,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -472,4 +473,49 @@ export const importItems = pgTable(
     // 主键前缀是 batch_id，帮不上这个查询。
     index('import_items_result_idx').on(table.result),
   ],
+)
+
+// ── 检索快照（SPEC §6.3.1 分页的实现约束） ─────────────────────────
+//
+// SPEC §6.3.1 只规定「游标指向一次检索快照里的位置」，**没有规定快照存在哪里**——
+// 「快照能活多久、每次向后翻要重扫多少候选，都是 api 的实现约束」。这一行就是那个实现。
+//
+// 它不是 `memes` 的一部分（有独立的访问方法 `data/search-snapshots.ts`），也不出现在
+// 任何响应里：客户端只拿到一个不透明游标。**它是一份一次性缓存**，30 分钟没人用它就
+// 被清理任务删掉（`queue/cleanup.ts`），删了之后那个游标报 `VALIDATION_FAILED`——
+// 与「游标坏了」同一个码、同一个客户端动作（SPEC §1.3）。
+//
+// 两列 jsonb 的形状定义在 `data/search-snapshots.ts`（它才是这一行内容的主人），
+// 读取时**逐字段运行时校验**，不做 `as` 强转（code-style.md：`as` 是把类型检查关掉）。
+export const searchSnapshots = pgTable(
+  'search_snapshots',
+  {
+    id: uuid('id').primaryKey(),
+    /**
+     * 快照属于谁。**翻页时要校验**：游标是不透明串，转手给别人之后那个人会拿着
+     * 别人的 `favorited` / `uploader=me` 过滤条件去查——那不是越权读别人的图，
+     * 但确实是在用别人的筛选条件，属于「客户端看不出错的错误结果」。
+     */
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** 冻结的检索输入：查询词、筛选条件、时点、改写文本与查询向量。 */
+    inputs: jsonb('inputs').notNull(),
+    /** 只追加的候选名单 + 已发出的页 + 当前预取深度。 */
+    state: jsonb('state').notNull(),
+    /**
+     * 创建时刻。**插入时显式写入**（不是 `defaultNow()`）：它同时是这次检索的**时点**
+     * ——首屏那次扫描与后来每一次重扫都以它为「只看这个时刻之前入库的图」的上界
+     * （SPEC §6.3.1：中途上传的新图不出现在后续页里）。取数据库的 `now()` 会和首屏
+     * 用的那个 JS 时刻差几毫秒，那几毫秒里上传的图就能从后面的页漏进来。
+     */
+    createdAt: timestamptz('created_at').notNull(),
+    /**
+     * 过期时刻，**每次用到这张快照就往后推**（下滑 TTL）。见 `services/search-snapshot.ts`：
+     * 从创建算起的固定 TTL 会让「滚了半小时的人」在滚到一半时被判过期。
+     */
+    expiresAt: timestamptz('expires_at').notNull(),
+  },
+  // 清理任务唯一的查询条件就是它。不建 userId 索引：按 id 取（主键）已经够了
+  (table) => [index('search_snapshots_expires_at_idx').on(table.expiresAt)],
 )

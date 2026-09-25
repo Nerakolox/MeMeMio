@@ -31,6 +31,7 @@ process.env['DATABASE_URL'] = testDatabaseUrl(requireDatabaseUrl())
 const { createTestDb, truncateAll } = await import('./helpers/test-db.js')
 const { createUser, makeMeme, unitVector } = await import('./helpers/factories.js')
 const { searchMemes } = await import('../src/services/search.js')
+const { searchFirstPage, searchNextPage } = await import('../src/services/search-snapshot.js')
 
 const { sql, db } = createTestDb()
 
@@ -261,5 +262,59 @@ describe('向量路跑起来时', () => {
     const outcome = await searchMemes('不想上班', 2, null, 'test-request-id', db)
 
     expect(outcome.items).toHaveLength(2)
+  })
+})
+
+/**
+ * `GET /memes?q=` 的翻页（`services/search-snapshot.ts`）。
+ *
+ * 这个文件是唯一能测它的地方：**只有这里能数外部调用次数**。改写与查询向量是快照存在
+ * 的两个理由之一（另一个是排序稳定），而「翻页少调了一次 AI」这件事在别的文件里
+ * 只能靠 `degraded` / `rewritten` 前后一致间接推断。
+ */
+describe('检索快照翻页', () => {
+  it('翻页不重跑 HyDE、不重新编码 —— 冻住的那一份改写与向量被复用', async () => {
+    const alice = await createUser(db)
+    for (let i = 0; i < 3; i += 1) {
+      await makeMeme(db, {
+        uploaderId: alice.id,
+        tags: ['猫'],
+        embedding: unitVector(i + 1),
+        embedModel: EMBED_MODEL,
+      })
+    }
+
+    const first = await searchFirstPage({
+      query: '猫',
+      filter: {},
+      actorId: alice.id,
+      requestId: 'test-request-id',
+      limit: 2,
+      db,
+    })
+
+    expect(first.items).toHaveLength(2)
+    expect(first.nextCursor).not.toBeNull()
+    expect(first.degraded).toBe(false)
+    expect(received.chat).toHaveLength(1)
+    expect(received.embeddings).toHaveLength(1)
+
+    // 这一页池子里只剩 1 条，会**翻倍重扫三路**——向量路也真的重扫了
+    const second = await searchNextPage({
+      cursor: first.nextCursor ?? '',
+      actorId: alice.id,
+      requestId: 'test-request-id',
+      limit: 2,
+      db,
+    })
+
+    // 重扫**不多一次外部调用**：不走 HyDE、不重新编码，用的是首屏冻住的向量。
+    // 不冻的话滚一屏就是一次 LLM 调用，而且改写逐次不同 → 召回池变化 → 页间重复或漏
+    expect(received.chat).toHaveLength(1)
+    expect(received.embeddings).toHaveLength(1)
+    // 降级判定同样冻住：一次检索只有一个答案，翻着翻着提示语变了会让人以为出了事
+    expect(second.rewritten).toBe(first.rewritten)
+    expect(second.degraded).toBe(first.degraded)
+    expect(second.items.map((i) => i.id)).not.toContain(first.items[0]?.id)
   })
 })

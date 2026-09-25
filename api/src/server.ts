@@ -8,6 +8,7 @@ import { checkMigrations } from './data/migration-state.js'
 import { env } from './env.js'
 import { log } from './logger.js'
 import { assertRuntimeFilesPresent, WEB_DIST_DIR } from './paths.js'
+import { startCleanupJob, stopCleanupJob } from './queue/cleanup.js'
 import { startReindexWorker, stopReindexWorker } from './queue/reindex-worker.js'
 import { startTagWorker, stopTagWorker } from './queue/worker.js'
 import { installProcessErrorHandlers, installShutdownHandlers } from './shutdown.js'
@@ -89,6 +90,10 @@ async function main(): Promise<void> {
   // 管理员在界面上配好之后不用重启进程，重建就会自己开始动
   startReindexWorker()
 
+  // 定时清理（queue.md §6）。目前只有一条：删过期的检索快照。它不消费队列，
+  // 所以不是 worker，但同样无条件起——它不依赖任何外部通道
+  startCleanupJob()
+
   // 续跑被上次退出打断的导入批次（SPEC §1.4 / 本任务 §9）。**不 await**：
   // 一批可能跑几分钟，启动不该等它，接口可用性也不该挂在它身上。
   // `resumeInterruptedBatches` 自己吞掉每一批的异常，这条 promise 不会 reject
@@ -100,7 +105,7 @@ async function main(): Promise<void> {
 
   installShutdownHandlers({
     closeServer: () => closeHttpServer(server),
-    stopWorkers: () => [stopTagWorker(), stopReindexWorker()],
+    stopWorkers: () => [stopTagWorker(), stopReindexWorker(), stopCleanupJob()],
     exit: (code) => process.exit(code),
   })
 }

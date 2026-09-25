@@ -12,11 +12,14 @@ import {
   TAG_STATUSES,
   type Actor,
   type MemeContentPatch,
+  type MemeFilter,
 } from '../data/memes.js'
+import { db } from '../data/db.js'
 import type { VocabField } from '../lib/vision-output.js'
 import { VOCAB_FIELDS, vocabAdapter } from '../vocab.js'
 import { getTagStatusSummary } from '../services/tag-status.js'
 import { retagMemes, type RetagInput } from '../services/retag.js'
+import { searchFirstPage, searchNextPage } from '../services/search-snapshot.js'
 import { serializeMeme } from '../serialize/meme.js'
 
 // 序列化器搬到了 `serialize/meme.ts`：搜索接口要输出同一批字段，
@@ -248,25 +251,46 @@ function parseRetagBody(raw: unknown, actor: Actor): RetagInput {
   return { kind: 'filter', uploaderId, tagStatus: rawTagStatus ?? null }
 }
 
+/**
+ * 列表响应里的一条：`Meme` 加一个 `matchedBy`。
+ *
+ * 两个分支（有 `q` / 无 `q`）返回的是同一个形状（SPEC §6.3「响应形状恒定」），所以这个
+ * 类型要**显式写出来**而不是让两个 `map` 各推一个：无 `q` 时恒为 `[]` 的那种写法会被
+ * TS 推成 `never[]`，而它正好是 Hono RPC 推给前端的那个类型。
+ */
+type ListItem = ReturnType<typeof serializeMeme> & { matchedBy: string[] }
+
 export const memesRoutes = new Hono<{ Variables: Vars }>()
   .use('*', requireAuth)
 
   /**
-   * GET /api/v1/memes
+   * GET /api/v1/memes —— **唯一的列表端点**（SPEC §6.3）。
    *
-   * 参数见 SPEC §6.3.2。tagStatus 仅本人或 admin 可用（§3.3），否则抛 FORBIDDEN。
-   * 软删记录由数据层统一过滤（§3.4）。
+   * 按请求里有没有 `q` 分派：
    *
-   * `random=true` 时改为在**筛选之后**做全库随机抽样，`nextCursor` 恒为 `null`；
-   * 抽样怎么实现是数据层的事，本层只负责参数解析与互斥校验。
+   * | | 无 `q` | 有 `q` |
+   * |---|---|---|
+   * | 召回 | 按条件筛（§6.3.2） | **在筛后的候选集里**三路召回 + RRF 融合（§6.3.1） |
+   * | 排序 | `created_at desc, id desc` | 融合分 `desc`（`id` 兜底） |
+   * | 游标 | `(created_at, id)` 全序上的位置 | 一次检索快照里的位置（`services/search-snapshot.ts`） |
+   *
+   * **响应形状恒定**：两种请求都给 `items` / `nextCursor` / `degraded` / `rewritten`，
+   * 每条 item 都带 `matchedBy`（无 `q` 时恒为 `[]`）。不按模式变字段——Hono RPC 推出来的
+   * 类型是两端唯一的同步手段，两种形状会让前端每个消费点都要分支。
+   *
+   * 参数校验（七个维度、`isAnimated`、`favorited`、`uploader`、`tagStatus`）**两种模式共用**，
+   * 而且位置是「三路召回之前」（§6.3.1「先过滤后召回」）。
    */
   .get('/', async (c) => {
     const actor = c.get('currentUser')
 
     // 七个维度各自可重复，所有值之间都是 AND（SPEC §6.3.2）。
     // 这里**不校验词表**：浏览筛选传了词表外的词，结果就是搜不到，不是请求错误。
-    const labels = {} as Record<VocabField, string[] | undefined>
-    for (const field of VOCAB_FIELDS) labels[field] = c.req.queries(field)
+    const labels: MemeFilter = {}
+    for (const field of VOCAB_FIELDS) {
+      const values = c.req.queries(field)
+      if (values !== undefined) labels[field] = values
+    }
 
     const isAnimatedRaw = c.req.query('isAnimated')
     let isAnimated: boolean | undefined
@@ -305,13 +329,6 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
     // 非 `true` 一律当 false，与 isAnimated / favorited 同一个口径。
     const random = c.req.query('random') === 'true'
 
-    // `random` 与 `cursor` 互斥（SPEC §6.3.2）。**不静默忽略其中一个**：
-    // 忽略 cursor 会悄悄回到第一页，忽略 random 会把一次随机抽样当成可翻页的列表
-    // 的第一页——两种都让客户端看不出自己传错了。
-    if (random && cursor !== undefined) {
-      throw new AppError('VALIDATION_FAILED', 'random 与 cursor 不能同时使用')
-    }
-
     const limitRaw = c.req.query('limit')
     let limit: number | undefined
     if (limitRaw !== undefined) {
@@ -321,12 +338,57 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
       }
     }
 
-    const { items, nextCursor } = await listMemes(
-      { ...labels, isAnimated, favorited, uploader, tagStatus, cursor, limit, random },
-      actor.id,
-    )
+    const filter: MemeFilter = { ...labels, isAnimated, favorited, uploader, tagStatus }
 
-    return c.json({ items: items.map(serializeMeme), nextCursor })
+    /*
+     * ⚠️ **`q` 去空白后为空走「无 `q`」分支，不报错。** 用户清空搜索框是常规操作，
+     *    不是非法请求（SPEC §6.3.1）。`GET /search` 那边相反——缺 `q` 就报错，
+     *    因为它的语义是「一次检索」，没有查询词就没有请求的对象（§6.3.3）。
+     *    **两条相反是故意的**，别顺手对齐。
+     */
+    const q = (c.req.query('q') ?? '').trim()
+
+    if (q !== '') {
+      // `q` 与 `random` 互斥（SPEC §6.3.1）。理由同 `random` + `cursor`：
+      // 忽略哪一个都是客户端看不出错的错误结果
+      if (random) throw new AppError('VALIDATION_FAILED', 'q 与 random 不能同时使用')
+
+      const requestId = c.get('requestId')
+      const page =
+        cursor === undefined
+          ? await searchFirstPage({ query: q, filter, actorId: actor.id, requestId, limit, db })
+          : await searchNextPage({ cursor, actorId: actor.id, requestId, limit, db })
+
+      const items: ListItem[] = page.items.map((item) => ({
+        ...serializeMeme(item),
+        matchedBy: item.matchedBy,
+      }))
+
+      return c.json({
+        items,
+        nextCursor: page.nextCursor,
+        degraded: page.degraded,
+        rewritten: page.rewritten,
+      })
+    }
+
+    // `random` 与 `cursor` 互斥（SPEC §6.3.2）。**不静默忽略其中一个**：
+    // 忽略 cursor 会悄悄回到第一页，忽略 random 会把一次随机抽样当成可翻页的列表
+    // 的第一页——两种都让客户端看不出自己传错了。
+    if (random && cursor !== undefined) {
+      throw new AppError('VALIDATION_FAILED', 'random 与 cursor 不能同时使用')
+    }
+
+    const { items, nextCursor } = await listMemes({ ...filter, cursor, limit, random }, actor.id)
+    const serialized: ListItem[] = items.map((item) => ({ ...serializeMeme(item), matchedBy: [] }))
+
+    return c.json({
+      // 无 `q` 时的三个检索字段是**常量**，不是缺省：形状恒定才有一个类型（SPEC §6.3）
+      items: serialized,
+      nextCursor,
+      degraded: false,
+      rewritten: null,
+    })
   })
 
   /**

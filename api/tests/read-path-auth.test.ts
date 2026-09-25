@@ -184,19 +184,25 @@ describe('路径参数与游标里的 uuid 形状', () => {
     expect(await errorCode(res)).toBe('VALIDATION_FAILED')
   })
 
-  it('游标里的 id 不是 uuid 时按「没有游标」处理，从第一页开始', async () => {
+  it('坏游标是 400 VALIDATION_FAILED，不是「从第一页开始」', async () => {
     const alice = await signIn()
     const meme = await makeMeme(db, { uploaderId: alice.id })
 
     // 游标是客户端拿来就用的不透明串，改一个字符就能造出这种输入。
-    // 约定是**解不出来就当没传**（SPEC §1.3），所以这里是 200 + 第一页，
-    // 既不是 500，也不是 400——客户端无法通过它区分「游标过期」与「游标损坏」，
-    // 而两者对用户都是「重新开始翻」。
+    //
+    // **这里曾经断言 200 + 第一页**（「解不出来就当没传」）。那条约定单独看很宽容，
+    // 放进无限滚动就是另一种东西：客户端拿到的是**第一页**，它会把它**追加**到已经
+    // 渲染出来的列表后面——屏幕上凭空多出一份重复，而没有任何一层报错。
+    // 所以现在是**明确的 400**（SPEC §1.3）：丢弃游标、回第一页这个动作由客户端做，
+    // 服务端只负责说清楚「这个游标不能用」。
     const cursor = Buffer.from(`2026-01-01T00:00:00.000Z|abc`).toString('base64url')
     const res = await as(alice, `/api/v1/memes?cursor=${cursor}`)
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(400)
+    expect(await errorCode(res)).toBe('VALIDATION_FAILED')
 
-    const body = (await res.json()) as { items: { id: string }[] }
+    // 同一份数据不带游标是拿得到的 —— 400 挡的是游标，不是这一页
+    const first = await as(alice, '/api/v1/memes')
+    const body = (await first.json()) as { items: { id: string }[] }
     expect(body.items.map((m) => m.id)).toContain(meme.id)
   })
 })

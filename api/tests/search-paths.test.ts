@@ -97,7 +97,7 @@ describe('OCR / trgm 路', () => {
 
     await softDeleteMeme(deleted.id, alice, db)
 
-    const ids = await ocrPathCandidates('猫在键盘上睡觉', [], db)
+    const ids = await ocrPathCandidates('猫在键盘上睡觉', {}, db)
 
     expect(ids).toContain(hit.id)
     expect(ids).not.toContain(deleted.id)
@@ -117,7 +117,7 @@ describe('OCR / trgm 路', () => {
       searchText: '无语',
     })
 
-    expect(await ocrPathCandidates('无语', [], db)).not.toContain(labelOnly.id)
+    expect(await ocrPathCandidates('无语', {}, db)).not.toContain(labelOnly.id)
   })
 
   it('original_filename 单独参与匹配（不进 search_text）', async () => {
@@ -129,7 +129,7 @@ describe('OCR / trgm 路', () => {
       originalFilename: 'shocked-cat-reaction.png',
     })
 
-    expect(await ocrPathCandidates('shocked-cat-reaction', [], db)).toContain(hit.id)
+    expect(await ocrPathCandidates('shocked-cat-reaction', {}, db)).toContain(hit.id)
   })
 
   it('软删的记录在文件名匹配上也不出现', async () => {
@@ -141,14 +141,14 @@ describe('OCR / trgm 路', () => {
     })
     await softDeleteMeme(deleted.id, alice, db)
 
-    expect(await ocrPathCandidates('deleted-by-filename', [], db)).not.toContain(deleted.id)
+    expect(await ocrPathCandidates('deleted-by-filename', {}, db)).not.toContain(deleted.id)
   })
 
   it('过短的查询直接不召回', async () => {
     const alice = await createUser(db)
     await makeMeme(db, { uploaderId: alice.id, ocrText: '猫' })
 
-    expect(await ocrPathCandidates('猫', [], db)).toEqual([])
+    expect(await ocrPathCandidates('猫', {}, db)).toEqual([])
   })
 
   it('LIKE 元字符按字面量处理', async () => {
@@ -157,7 +157,7 @@ describe('OCR / trgm 路', () => {
     await makeMeme(db, { uploaderId: alice.id, ocrText: '完全没有关系的一句话' })
 
     // 未转义时 `%` 会变成通配符，把库里所有记录都捞回来
-    const ids = await ocrPathCandidates('100%', [], db)
+    const ids = await ocrPathCandidates('100%', {}, db)
     expect(ids).toEqual([hit.id])
   })
 
@@ -175,7 +175,7 @@ describe('OCR / trgm 路', () => {
     })
 
     // 用户搜「猫在键盘上睡觉 -真人」：排除作用在三路上，不是只在标签路
-    const ids = await ocrPathCandidates('猫在键盘上睡觉', ['真人'], db)
+    const ids = await ocrPathCandidates('猫在键盘上睡觉', { exclude: ['真人'] }, db)
 
     expect(ids).toContain(kept.id)
     expect(ids).not.toContain(realPerson.id)
@@ -187,7 +187,7 @@ describe('OCR / trgm 路', () => {
     // 少了 `%` 那一支，这一路就退化成文件名/子串匹配，而用例全都照样绿。
     const typo = await makeMeme(db, { uploaderId: alice.id, ocrText: '今天真的不想上班' })
 
-    const ids = await ocrPathCandidates('今天真的不想上班啊', [], db)
+    const ids = await ocrPathCandidates('今天真的不想上班啊', {}, db)
 
     expect(ids).toContain(typo.id)
   })
@@ -204,7 +204,7 @@ describe('OCR / trgm 路', () => {
       // 走一遍真路：里面会 `set_config('pg_trgm.similarity_threshold', '0.1', true)`
       const alice = await createUser(db)
       await makeMeme(db, { uploaderId: alice.id, ocrText: '一只猫在键盘上睡觉' })
-      await ocrPathCandidates('一只猫在键盘上睡觉', [], single)
+      await ocrPathCandidates('一只猫在键盘上睡觉', {}, single)
 
       // 同一条连接、事务外：阈值必须已经回到默认的 0.3。
       // 这一对在 0.1 下为 true、在 0.3 下为 false（见 percentOn 注释），
@@ -227,7 +227,7 @@ describe('OCR / trgm 路', () => {
     const hit = await makeMeme(db, { uploaderId: alice.id, ocrText: '今天真的不想上班' })
     await makeMeme(db, { uploaderId: alice.id, ocrText: '完全无关的另一句话' })
 
-    expect(await ocrPathCandidates('今天不想', [], db)).toContain(hit.id)
+    expect(await ocrPathCandidates('今天不想', {}, db)).toContain(hit.id)
   })
 })
 
@@ -243,15 +243,15 @@ describe('标签路', () => {
     const byRating = await makeMeme(db, { uploaderId: alice.id, ratings: ['成人向'] })
 
     // 一维一次：多词之间是 OR，混在一起查看不出哪一维没被匹配
-    expect(await tagPathCandidates(['假笑'], [], db)).toContain(byExpression.id)
-    expect(await tagPathCandidates(['无语'], [], db)).toContain(byEmotion.id)
-    expect(await tagPathCandidates(['敷衍'], [], db)).toContain(byTone.id)
-    expect(await tagPathCandidates(['拒绝'], [], db)).toContain(byPurpose.id)
-    expect(await tagPathCandidates(['加班'], [], db)).toContain(byScene.id)
-    expect(await tagPathCandidates(['猫'], [], db)).toContain(byTag.id)
+    expect(await tagPathCandidates(['假笑'], {}, db)).toContain(byExpression.id)
+    expect(await tagPathCandidates(['无语'], {}, db)).toContain(byEmotion.id)
+    expect(await tagPathCandidates(['敷衍'], {}, db)).toContain(byTone.id)
+    expect(await tagPathCandidates(['拒绝'], {}, db)).toContain(byPurpose.id)
+    expect(await tagPathCandidates(['加班'], {}, db)).toContain(byScene.id)
+    expect(await tagPathCandidates(['猫'], {}, db)).toContain(byTag.id)
     // ratings 走的是同一套 VOCAB_FIELDS 遍历，但**它不在前六个的语义轴上**，
     // 加维度时如果哪里按维度手写了数组，这一条会红（SPEC §4.3）
-    expect(await tagPathCandidates(['成人向'], [], db)).toContain(byRating.id)
+    expect(await tagPathCandidates(['成人向'], {}, db)).toContain(byRating.id)
   })
 
   it('只匹配标签，不看 search_text —— 命中词表才进来', async () => {
@@ -260,7 +260,7 @@ describe('标签路', () => {
 
     // 「无语」在正文里出现过，但标签不是「无语」，这一路就不该召回它（SPEC §6.3.1：
     // 文字匹配是 trgm 路的职责，两路各管各的，否则 RRF 融合出来的 matchedBy 全是噪声）
-    expect(await tagPathCandidates(['无语'], [], db)).toEqual([])
+    expect(await tagPathCandidates(['无语'], {}, db)).toEqual([])
   })
 
   it('⚠️ 多个词之间是 OR，不是 AND', async () => {
@@ -270,7 +270,7 @@ describe('标签路', () => {
 
     // 2026-09-22 从 AND 改成 OR：六个维度之后，「猫 无语 敷衍 加班」这种查询用 AND
     // 要求一张图同时带齐四个标签，库里多半一张都没有，整条路塌成空集（data/search.ts）
-    const ids = await tagPathCandidates(['无语', '猫'], [], db)
+    const ids = await tagPathCandidates(['无语', '猫'], {}, db)
 
     expect(ids).toContain(both.id)
     expect(ids).toContain(onlyOne.id)
@@ -288,7 +288,7 @@ describe('标签路', () => {
       tags: ['猫'],
     })
 
-    const ids = await tagPathCandidates(['无语', '敷衍', '猫'], [], db)
+    const ids = await tagPathCandidates(['无语', '敷衍', '猫'], {}, db)
 
     expect(ids.indexOf(three.id)).toBeLessThan(ids.indexOf(one.id))
   })
@@ -298,14 +298,14 @@ describe('标签路', () => {
     const deleted = await makeMeme(db, { uploaderId: alice.id, emotions: ['无语'] })
     await softDeleteMeme(deleted.id, alice, db)
 
-    expect(await tagPathCandidates(['无语'], [], db)).not.toContain(deleted.id)
+    expect(await tagPathCandidates(['无语'], {}, db)).not.toContain(deleted.id)
   })
 
   it('没有命中词表时返回空，不查库', async () => {
     const alice = await createUser(db)
     await makeMeme(db, { uploaderId: alice.id, emotions: ['无语'] })
 
-    expect(await tagPathCandidates([], [], db)).toEqual([])
+    expect(await tagPathCandidates([], {}, db)).toEqual([])
   })
 
   it('exclude 优先于 include：既命中又被排除的不出现', async () => {
@@ -313,7 +313,7 @@ describe('标签路', () => {
     const excluded = await makeMeme(db, { uploaderId: alice.id, emotions: ['无语'], tags: ['真人'] })
     const kept = await makeMeme(db, { uploaderId: alice.id, emotions: ['无语'], tags: ['动漫'] })
 
-    const ids = await tagPathCandidates(['无语'], ['真人'], db)
+    const ids = await tagPathCandidates(['无语'], { exclude: ['真人'] }, db)
 
     expect(ids).toContain(kept.id)
     expect(ids).not.toContain(excluded.id)
@@ -342,7 +342,7 @@ describe('向量路', () => {
 
     await softDeleteMeme(deletedNear.id, alice, db)
 
-    const ids = await vectorPathCandidates(unitVector(1), MODEL, [], db)
+    const ids = await vectorPathCandidates(unitVector(1), MODEL, {}, db)
 
     expect(ids).toContain(near.id)
     expect(ids).toContain(far.id)
@@ -365,7 +365,7 @@ describe('向量路', () => {
       embedModel: 'some-older-model',
     })
 
-    const ids = await vectorPathCandidates(unitVector(1), MODEL, [], db)
+    const ids = await vectorPathCandidates(unitVector(1), MODEL, {}, db)
 
     expect(ids).toContain(current.id)
     expect(ids).not.toContain(stale.id)
@@ -375,14 +375,14 @@ describe('向量路', () => {
     const alice = await createUser(db)
     await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1), embedModel: MODEL })
 
-    expect(await vectorPathCandidates(unitVector(1), null, [], db)).toEqual([])
+    expect(await vectorPathCandidates(unitVector(1), null, {}, db)).toEqual([])
   })
 
   it('空向量返回空，不发查询', async () => {
     const alice = await createUser(db)
     await makeMeme(db, { uploaderId: alice.id, embedding: unitVector(1), embedModel: MODEL })
 
-    expect(await vectorPathCandidates([], MODEL, [], db)).toEqual([])
+    expect(await vectorPathCandidates([], MODEL, {}, db)).toEqual([])
   })
 
   it('exclude 的标签在向量路上同样生效', async () => {
@@ -400,7 +400,7 @@ describe('向量路', () => {
       tags: ['动漫'],
     })
 
-    const ids = await vectorPathCandidates(unitVector(1), MODEL, ['真人'], db)
+    const ids = await vectorPathCandidates(unitVector(1), MODEL, { exclude: ['真人'] }, db)
 
     expect(ids).toContain(kept.id)
     expect(ids).not.toContain(excluded.id)
@@ -420,7 +420,7 @@ describe('向量路', () => {
       // 测试库只有 60 行，规划器不会自己选 HNSW——默认计划是顺序扫描，
       // 那样改不改 ef_search 都是 50 条，这条用例就什么都没守住。关掉它逼着走索引。
       await tx.execute(drizzleSql`set local enable_seqscan = off`)
-      return vectorPathCandidates(unitVector(0), MODEL, [], tx)
+      return vectorPathCandidates(unitVector(0), MODEL, {}, tx)
     })
 
     expect(ids).toHaveLength(PATH_LIMIT)
@@ -447,7 +447,7 @@ describe('向量路', () => {
     try {
       const { ids, efSearch } = await fresh.transaction(async (tx) => {
         await tx.execute(drizzleSql`set local enable_seqscan = off`)
-        const out = await vectorPathCandidates(unitVector(0), MODEL, [], tx)
+        const out = await vectorPathCandidates(unitVector(0), MODEL, {}, tx)
         // 读回来当证据：`set_config(..., is_local = true)` 在**子事务**里设的值会留到
         // 外层事务结束，所以这里读得到。它才是「占位符有没有被提升成真参数」的直接证据。
         const ef = await tx.execute(

@@ -238,6 +238,6 @@ describe('向量路可用时', () => {
     })
 
     const { vectorPathCandidates } = await import('../src/data/search.js')
-    expect(await vectorPathCandidates(unitVector(7), model, [], db)).toContain(meme.id)
+    expect(await vectorPathCandidates(unitVector(7), model, {}, db)).toContain(meme.id)
   })
 })

@@ -27,8 +27,9 @@ export function createTestDb() {
 export async function truncateAll(sql: ReturnType<typeof createTestDb>['sql']): Promise<void> {
   await sql`
     truncate table
-      tag_jobs, reindex_jobs, import_items, import_batches, sessions, user_favorites,
-      user_ai_configs, config_tests, embed_config, runtime_config, invite_codes, memes, users
+      tag_jobs, reindex_jobs, import_items, import_batches, search_snapshots, sessions,
+      user_favorites, user_ai_configs, config_tests, embed_config, runtime_config,
+      invite_codes, memes, users
     cascade
   `
 }

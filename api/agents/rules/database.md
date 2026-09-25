@@ -25,6 +25,11 @@ findMemeByIdIncludeDeleted(id)    // 管理员「已删除」视图专用
 
 搜索的三路（`pg_trgm`、标签、向量）是**分别写的三段 SQL**，三段都要带。这是最容易只改一处的地方。
 
+2026-09-26 起，**筛选条件本身只有一份**：`data/memes.ts` 的 `memeFilterConditions` / `memeQueryConditions`，
+浏览与检索三路共用（抽出来之前浏览与检索各写一遍，漏一个条件的表现是「我明明筛了」而不是报错）。
+共用的是**条件的构造**，不是 `WHERE`：每一路仍然要把它真的接进自己的 `.where()`——三路各写一遍
+`.where()` 是这个文件里唯一留着的那处重复，改的时候三处都要看。
+
 ### 1.2 写：强制 `assertCanMutate`
 
 ```ts
@@ -42,6 +47,16 @@ assertCanMutate(meme, actor, action)   // action: 'edit' | 'delete' | 'retag'
 `edit` 全员开放是[有意的不对称](../../../spec/09-decisions.md)，不是漏写。**不要"顺手补一个归属检查"**——那会把共享库最核心的一条产品决策改掉。
 
 **风险在写路径，不在读路径。** 共享库里全库可读是设计本身，没有可泄露的边界；但删除接口漏一个归属检查，等于任何人都能删掉别人的贡献。不要把隔离式多租户的直觉搬过来。
+
+### 1.3 本节只管 `memes`
+
+`search_snapshots`（[retrieval.md §6](retrieval.md)）**不是 `memes` 的一部分**，它有自己的
+`data/search-snapshots.ts`，就像 `tag_jobs` 有自己的访问方法。所以「所有 `memes` 的 SQL 走
+`data/memes.ts`」这条**不要读成「`data/` 下只能有一个文件」**；反过来，也不要把别的表的
+SQL 塞进 `memes.ts` 图省事。
+
+它豁免的只是 §1 这一组**仅对 `memes` 成立**的保证（软删过滤、`assertCanMutate`）。
+`users` 外键上的 `on delete cascade`、过期行的清理都写在它自己的文件里。
 
 ## 2. 向量
 
