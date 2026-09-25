@@ -149,7 +149,7 @@ export function detectSendPath(isAnimated: boolean): SendPath {
 
 /**
  * 取原图失败。**单独一个类型**，是为了让上面那层能把它和「浏览器拒绝写入」分开报——
- * 两者的处理办法毫无关系（一个是 R2 的 CORS，一个是剪贴板权限）。
+ * 两者的处理办法毫无关系（一个是取图这条链，一个是剪贴板权限）。
  */
 class FetchOriginalError extends Error {
   constructor(message: string) {
@@ -159,18 +159,42 @@ class FetchOriginalError extends Error {
 }
 
 /**
- * 取原图。两种失败分开说：HTTP 状态码是地址/权限问题，网络层拒绝在**这个产品里**
- * 最常见的是原图域名没放行本站（R2 的 CORS，deployment.md §8.3）——
- * 而 `fetch` 对此只给一句英文的 "Failed to fetch"，原样展示等于没说。
+ * 取原图。两种失败分开说：HTTP 状态码是地址/权限问题，网络层拒绝（`fetch` 只给一句
+ * 英文的 "Failed to fetch"，原样展示等于没说）**不要猜成 R2 的 CORS**——猜错会把人送进
+ * 部署配置里翻，而这次的实测原因恰恰在浏览器缓存里，见下面那段。
+ *
+ * ## `cache: 'reload'` 是正确性开关，不是性能开关
+ *
+ * 2026-09-25 实测的坑，症状是**「图看得见、右键能复制，按钮每次都报取不到原图」**：
+ *
+ * 1. 页面里有几处把**同一张原图**当 `<img>` 渲染（全屏阅览器 `toSlide`、编辑面板、
+ *    动图的 hover 播放），这些请求**不带 `Origin`**；
+ * 2. 而 r2.dev **只在请求带 `Origin` 时才回** `Access-Control-Allow-Origin`，**并且只在
+ *    那种时候才回 `Vary: Origin`**（实测：带 Origin 两个头都有，不带两个都没有）；
+ * 3. 于是浏览器把一份**没有 CORS 头、又没有 `Vary`** 的响应存进 HTTP 缓存。没有 `Vary`
+ *    意味着它匹配这之后**任何**请求，包括我们这次 cors 模式的 `fetch`；
+ * 4. `fetch` 因此从缓存里拿到那份没有 ACAO 的响应，CORS 检查失败 → `TypeError: Failed to
+ *    fetch` → 界面报「取不到原图」。**bucket 的 CORS 是好的**，图也照显示（`<img>` 不过
+ *    CORS）——所以这个失败看起来完全不像缓存问题，而像部署配错了。
+ *
+ * 症状因此是**一旦这张原图被显示过一次，长期如此**（缓存条目会被 304 续命）。
+ * `cache: 'reload'` 让这次请求不走缓存、直接取一份带 CORS 头的响应，实测修好
+ * （同一张图：`default` 抛 `Failed to fetch`，`reload` 拿到 200 与全量字节）。
+ *
+ * 不用 `no-cache`：那是拿缓存里那份**本身就缺 ACAO** 的条目去问 304，合并后谁赢说不清。
+ * 代价是每次取图真的下一次（不再吃缓存）——错的字节没法用，这个代价必须付。
+ * 验收脚本 `scripts/verify-copy-original-cache.mjs`（**去掉 `cache: 'reload'` 它会变红**；
+ * 它和同类脚本一样不进版本库，见根 `.gitignore`——**别把「它有办法验」读成「它会一直有人跑」**），
+ * 复现过程与三种 cache 模式的对照见任务《2026-09-25-复制失败根因》。
  */
 function fetchOriginal(url: string): Promise<Blob> {
-  return fetch(url).then(
+  return fetch(url, { cache: 'reload' }).then(
     (res) => {
       if (!res.ok) throw new FetchOriginalError(`原图返回 HTTP ${res.status}`)
       return res.blob()
     },
     () => {
-      throw new FetchOriginalError('取不到原图（可能是 R2 的 CORS 没放行 GET）')
+      throw new FetchOriginalError('取不到原图（请求被拦下或网络不通）')
     },
   )
 }
@@ -208,8 +232,8 @@ async function toPngBlob(blob: Blob): Promise<Blob> {
  * 再把 `write` 同步调出去。整个函数体在第一个 await 之前执行完。
  *
  * 代价是**两种失败在这里长得一样**：取图失败会经那条 Promise 冒到 `write` 的 rejection 上，
- * 和「写剪贴板被拒」无从区分。不分开的话，CORS 漏配会报成「浏览器拒绝了剪贴板权限」，
- * 读的人去翻权限设置，而真正要改的是部署配置。所以取图那条链自己记一笔。
+ * 和「写剪贴板被拒」无从区分。不分开的话，取图那条链的失败会报成「浏览器拒绝了剪贴板权限」，
+ * 读的人去翻权限设置，而真正要改的在别处。所以取图那条链自己记一笔。
  */
 async function copyImageToClipboard(url: string): Promise<CopyAttempt> {
   let fetchFailure: unknown = null
@@ -310,8 +334,9 @@ type SaveResult = { via: 'saved' } | { via: 'fetch-failed'; url: string }
  * 保存到本地。取图失败时**给回一个能点的原图地址**，而不是报一句失败就结束——
  * 用户的目标是把图发出去，手段失败了就给另一个手段（clipboard-share.md §6）。
  *
- * 取图失败多半是 CORS 没配好（deployment.md §8.3）。跨域地址上 `a[download]` 会被浏览器
- * 忽略，「直接点链接下载」那条路本来就走不通，所以只能让用户自己打开原图手动存。
+ * 取图失败的原因不止一种（拦下、断网、对象不在），所以这里不猜是哪一种，也不在文案里
+ * 指名。跨域地址上 `a[download]` 会被浏览器忽略，「直接点链接下载」那条路本来就走不通，
+ * 所以只能让用户自己打开原图手动存。
  *
  * ⚠️ **这里不 `window.open`。** 走到这一步时已经 await 过一次取图，用户手势多半没了，
  * 弹窗会被浏览器拦掉——什么都打不开，而文案还写着「已在新标签页打开」。
@@ -336,6 +361,14 @@ async function saveFile(target: SendTarget): Promise<SaveResult> {
   return { via: 'saved' }
 }
 
+/**
+ * 下载。`because` 是「这次下载为什么被发起」——降级时那句话已经说清了原因，这里只补结果。
+ *
+ * ⚠️ **下载失败时不要再把原因说一遍。** 这里的失败与 `because` 里的失败**是同一件事**
+ * （两个 fallback 走的是同一个 `fetchOriginal`），两条路都失败时原来的写法会把这句原因
+ * 打印两遍，用户看到的是「取不到原图（…），取不到原图（…），请点下面的链接手动保存」。
+ * 所以失败分支只说「下载也没成」+ 给出路，原因由 `because` 那半句负责。
+ */
 async function downloadFlow(target: SendTarget, because: string | null): Promise<SendOutcome> {
   const result = await saveFile(target)
   if (result.via === 'saved') {
@@ -343,9 +376,7 @@ async function downloadFlow(target: SendTarget, because: string | null): Promise
   }
   return {
     kind: 'downloaded',
-    note: `${
-      because === null ? '' : `${because}，`
-    }取不到原图（可能是 R2 的 CORS 没放行 GET），请点下面的链接手动保存`,
+    note: `${because === null ? '下载失败' : `${because}，下载也没成`}，请点下面的链接手动保存`,
     fallbackUrl: result.url,
   }
 }
