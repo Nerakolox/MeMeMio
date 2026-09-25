@@ -1,8 +1,12 @@
 /**
- * 浏览页：按条件筛着翻（`GET /memes`，游标分页 + 无限滚动）。
+ * 浏览页：**检索与筛选合一的那条列表**（`GET /memes`，游标分页 + 无限滚动）。
+ *
+ * 2026-09-26（裁定 1）：`?q=` 与七个词表维度落在同一串参数上，先过滤后召回，
+ * 所以这一页既是「筛着翻」也是「搜着翻」——**不再有第二个列表页**。
+ * 首页那条路是另一回事：它走冻结的 `GET /search`，不进这里（SPEC §6.3.3）。
  *
  * 这一层只做**布局与编排**，三件事分别住在 `features/browse/`：
- *   · `use-browse-filters` —— URL ↔ 接口参数，筛选的唯一真源
+ *   · `use-browse-filters` —— URL ↔ 接口参数，**筛选与查询词的唯一真源**
  *   · `use-browse-list`    —— 列表、分页、本地变更
  *   · `use-browse-actions` —— 发送 / 收藏 / 删除 / 编辑侧边栏（操作反馈在右上角 toast）
  *
@@ -58,6 +62,7 @@
  */
 
 import * as React from 'react'
+import { SearchBar } from '../components/SearchBar'
 import { Button } from '../components/ui/button'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../components/ui/resizable'
 import { ScrollArea } from '../components/ui/scroll-area'
@@ -147,6 +152,28 @@ export function BrowsePage() {
                而 2 列才是这一档原来的样子。 */
             className="h-full md:pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain"
           >
+            {/*
+              搜索框（2026-09-26 合流加）。**没有它 `/browse?q=` 只能靠手打地址进**，
+              而合流的意义正是「检索与筛选是同一条列表」（state-navigation.md §6）。
+
+              ⚠️ **`autoFocus={false}`**：这一页是「翻着看」的，进来多半是点筛选或直接滚，
+              抢走焦点会让手机上先弹一层键盘盖住半屏；这里的查询词通常也是从 URL
+              进来的（别人分享的链接），不是现打的。理由与闸门写在 `components/SearchBar`。
+
+              位置：结果列的最上面（在窄屏工具条之上）。**它会跟着内容一起滚**——
+              与它下面那行工具条一样，因为这里不能塞固定头：md 以上容器高度钉死在
+              `100svh − 顶栏`（见文件头那段推导），往滚动区外面加一行就得改那个算式。
+              代价记在这儿：滚到下面时搜索框看不见了，要改得先动那套高度。
+            */}
+            <div className="mb-4">
+              <SearchBar
+                value={filters.draft}
+                onChange={filters.setDraft}
+                onSubmit={filters.commitQuery}
+                autoFocus={false}
+              />
+            </div>
+
             {/* 窄屏工具条：抽屉入口 + 快捷「清除」。桌面这行不存在（筛选列常驻在左边） */}
             <div className="mb-4 flex items-center gap-2 md:hidden">
               <BrowseFilterSheet filters={filters} user={user} />
@@ -160,6 +187,7 @@ export function BrowsePage() {
             <BrowseResults
               list={list}
               user={user}
+              searching={filters.query !== ''}
               scrollEl={scroller}
               onSend={(t) => void actions.send(t)}
               onEdit={(meme) => actions.openEditor(meme.id)}

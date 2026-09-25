@@ -68,6 +68,9 @@ const _searchShape: SearchResponse = {
       matchedBy: ['vector', 'ocr'],
     },
   ],
+  // ⚠️ **恒为 `null`，不是「碰巧是 null」**：`/search` 不分页，它 ≡ `GET /memes?q=`
+  // 的冻结子集，新能力只加在 `/memes` 上（SPEC §6.3.3）。写成别的值这里就编译不过。
+  nextCursor: null,
   degraded: false,
   rewritten: null,
 }

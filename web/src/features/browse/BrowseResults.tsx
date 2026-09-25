@@ -1,10 +1,12 @@
 /**
- * 浏览页的结果列：骨架 / 空 / 错误三态 + 瀑布流 + 无限滚动的观察点。
+ * 浏览页的结果列：**搜索框** + 骨架 / 空 / 错误三态 + 瀑布流 + 无限滚动的观察点。
  *
- * 状态顺序与迁移前逐条相同（骨架在首屏、sentinel 在瀑布流之后）——只有两处变过：
+ * 状态顺序与迁移前逐条相同（骨架在首屏、sentinel 在瀑布流之后）——变过三处：
  * 错误态从「一段手写文字 + 裸 button」换成了 `Alert`；原本排在图上面的那条页级
  * 反馈（复制 / 删除的结果）2026-09-24 搬去了右上角 toast（`lib/toast.tsx`），
- * 这一列于是不再有「反馈」这一态。
+ * 这一列于是不再有「反馈」这一态；**2026-09-26（裁定 1 合流）**多了一块东西——
+ * 检索的三条状态说明（降级 / 改写 / 空结果，`components/Notice`）从搜索结果区
+ * 搬了过来，搜索框也从首页搬了过来（不然 `/browse?q=` 只能靠手打地址进）。
  *
  * ## 瀑布流为什么不用现成的 `<Masonry>`（2026-09-22，改外壳式布局时发现的真问题）
  *
@@ -36,10 +38,11 @@ import { TriangleAlert } from 'lucide-react'
 import * as React from 'react'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
+import { DegradedNotice, EmptyNotice, RewrittenNotice } from '../../components/Notice'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
-import type { Meme, User } from '../../lib/api'
+import { matchedBadges, type Meme, type User } from '../../lib/api'
 import type { SendTarget } from '../../lib/clipboard'
 import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
@@ -62,6 +65,7 @@ const SKELETON_GRID =
 export function BrowseResults({
   list,
   user,
+  searching,
   scrollEl,
   onSend,
   onEdit,
@@ -69,6 +73,13 @@ export function BrowseResults({
 }: {
   list: BrowseList
   user: User | null
+  /**
+   * 这一次列表带不带查询词（`use-browse-filters` 的 `query !== ''`）。
+   *
+   * 只用来决定**空结果那句话怎么说**：带 `q` 是「检索没召回到」，不带是「筛没了」。
+   * 不在这里判「要不要走检索分支」——那由 `params` 决定，服务端说了算（SPEC §6.3）。
+   */
+  searching: boolean
   /**
    * 瀑布流所在的滚动容器（桌面是 ScrollArea 的 viewport）。**不给就是「整页在滚」**，
    * 手机端如此——那时 masonic 按窗口算，与迁移前一致。
@@ -78,7 +89,7 @@ export function BrowseResults({
   onEdit: (meme: Meme) => void
   onRemove: (meme: Meme) => Promise<void>
 }) {
-  const { items, loading, initialDone, error, epoch, sentinelRef } = list
+  const { items, loading, initialDone, error, degraded, rewritten, epoch, sentinelRef } = list
 
   return (
     <>
@@ -95,9 +106,15 @@ export function BrowseResults({
         </div>
       )}
 
-      {initialDone && items.length === 0 && !loading && !error && (
-        <p className="text-sm text-muted-foreground">没有符合条件的图片</p>
-      )}
+      {/*
+        检索的两条状态说明（SPEC §6.3.1）。**降级不是错误**：结果照常出，这里只说一句，
+        不遮挡、不阻断（http.md §5）。无 `q` 时 `degraded` 恒 false、`rewritten` 恒 null，
+        所以浏览态下这两块不会出现——不需要再判一次有没有 `q`。
+      */}
+      {degraded && <DegradedNotice />}
+      {rewritten && <RewrittenNotice rewritten={rewritten} />}
+
+      {initialDone && items.length === 0 && !loading && !error && <EmptyNotice searching={searching} />}
 
       {error && (
         <Alert variant="destructive">
@@ -381,6 +398,14 @@ function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
       // 裁掉之后用户认不出这是哪张（styling.md「图片网格」）。
       shape="natural"
       meme={meme}
+      /*
+        召回来源角标（SPEC §6.3.1）。**浏览态下 `matchedBy` 是 `[]`，角标自然不出现**
+        ——所以这里不用判「这次搜没搜」，与服务端「响应形状恒定」是同一条省事的路。
+
+        ⚠️ 它只是提示，**不参与排序**：服务端 RRF 融合后的顺序就是最终顺序，
+        `BrowseWall` 按 `items` 原序渲染，不按角标重排（web/AGENTS.md §2）。
+      */
+      recallBadges={matchedBadges(meme.matchedBy)}
       actions={
         /*
           「⋯」是浏览页唯一的删除 / 编辑 / 发送入口。它是绝对定位的浮层，不占布局，

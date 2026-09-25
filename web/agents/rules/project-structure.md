@@ -14,8 +14,11 @@ src/features/
 └─ auth/         登录 / 注册的表单与未登录外壳
 ```
 
-> `search/` 2026-09-21 落地：`SearchBar.tsx`（`role="search"` 的 form）、`SearchResults.tsx`（五态 +
-> 结果项）、`use-search.ts`（state 机与键盘路径）。**同一个 feature 内部按「一个文件一件事」切，
+> `search/` 2026-09-21 落地：`SearchResults.tsx`（五态 + 结果项）、`use-search.ts`（state 机与
+> 键盘路径）；`SearchBar.tsx` 2026-09-26 **搬到了 `components/`**——检索与筛选合流之后浏览页
+> 也要那个框（[state-navigation.md §6](state-navigation.md)），两个页面各写一份必然漂。
+> `search/` 里剩下的仍是「只被首页那条冻结的 `GET /search` 用到」的东西（首页去向另议）。
+> **同一个 feature 内部按「一个文件一件事」切，
 > 不按类型切**——那个目录里没有 `components/` / `hooks/`，`use-search.ts` 与两个组件平级。
 > 搬家的动机是 `routes/home.tsx` 涨到 326 行（[code-style.md](code-style.md) 的上限是 150），
 > 而路由文件只该做布局和数据编排。

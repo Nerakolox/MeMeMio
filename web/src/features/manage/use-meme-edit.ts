@@ -119,9 +119,20 @@ export function useMemeEdit(meme: Meme, onSaved: (updated: Meme) => void) {
     setSaved(false)
     try {
       const updated = await patchMeme(meme.id, patch)
-      onSaved(updated)
+      /*
+       * ⚠️ **`matchedBy` 要保留列表里这一条原有的值**（SPEC §6.3.1）：它是**这一次检索的
+       * 性质，不是这张图的属性**，所以单资源响应（`PATCH` 的返回）不带它——§5.2.6 的对外
+       * 表示里就没有这个字段。编辑不会改变这张图是被哪几路召回的，服务端也不会为一次编辑
+       * 重跑检索，**旧值就是对的**。
+       *
+       * 不许改成让 api 回 `matchedBy: []`：那是把一个检索元字段塞进资源形状，症状是
+       * 「编辑过的图凭空少了一个角标」，而且下一次查不出来。无 `q` 的浏览列表里这一条本来
+       * 就是 `[]`（§6.3「额外字段」那一行），所以这次合并对它等于什么都没做。
+       */
+      const merged: Meme = { ...updated, matchedBy: meme.matchedBy }
+      onSaved(merged)
       // 服务端返回的就是新的真相，草稿跟着它走——**不维护影子副本**（state-navigation.md §2）
-      setDraft(draftFrom(updated))
+      setDraft(draftFrom(merged))
       setSaved(true)
     } catch (err) {
       // 按 code 分支，不解析 message（http.md §3）。词表外标签是 VALIDATION_FAILED，

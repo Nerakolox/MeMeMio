@@ -51,10 +51,11 @@ export type ImageShape = 'square' | 'natural'
  * 用真按钮而不是挂 `role` 的 div：图本来就该键盘可达。
  *
  * ⚠️ **这里曾经挂着 `onKeyDown` 里的一句 `stopPropagation()`**（为了挡住首页根
- * `<section>` 上那个「Enter 发送」的 handler）。那是个补丁：同一条冒泡链上还有收藏按钮、
- * 发送按钮，挡不干净。现在闸门在**发起方**——只有焦点真的落在结果项自己身上才响应
+ * `<section>` 上那个「Enter 发送」的 handler）。那是个补丁：同一条冒泡链上还有收藏按钮，
+ * 挡不干净。现在闸门在**发起方**——只有焦点真的落在结果项自己身上才响应
  * （`features/search/use-search.ts` 的 `focusedOptionIndex`），所以这里一句都不用写。
- * 再想加回来之前先读那一段：加了就会把「Enter 开全屏阅览」重新掐掉。
+ * 再想加回来之前先读那一段：加了就会把「Enter 开全屏阅览」重新掐掉——**2026-09-26
+ * （裁定 4）之后 `Enter` 做的就是这一件事**，而焦点落在帧上时走的是本组件这条原生路。
  *
  * ⚠️ **`frameClass()` 里的 `block` 不能省**：`<button>` 的 UA 默认是 `inline-block`，
  * 它会变成一个行内级子元素、撑出行盒，而这个帧自带 `overflow-hidden`（基线因此取下外边距

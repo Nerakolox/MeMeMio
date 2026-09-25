@@ -117,14 +117,15 @@
   没有例外页——新写一个可点控件时不要以为还有别处也这么写死着。
 - 连手机也想再小，改 `lib/touch.ts` 那一行的 `min-h-8` 一个数，别去各调用点散着改。
 
-首页（2026-09-21 迁移）的四处落点，和设置页一样是**各调用点的 `TOUCH`**，
-`styles.css` 里那四条 `.search__submit` / `.search__card-action` / `.discover__*` 的
-`min-height: 44px` 随迁移一起删了：
+首页（2026-09-21 迁移）那几处落点，和设置页一样是**各调用点的 `TOUCH`**，
+`styles.css` 里 `.search__submit` / `.discover__*` 那几条 `min-height: 44px` 随迁移一起删了
+（`.search__card-action` 那条对应的是卡片下那枚全宽发送按钮，它已在 2026-09-26 按裁定 4 撤掉
+——发送入口收到「⋯」菜单与阅览器那枚按钮里，见 [http.md](http.md)）：
 
 | 位置 | 写法 |
 |---|---|
-| 搜索框、提交按钮（`features/search/SearchBar.tsx`） | `Input` / `Button` 上各带 `TOUCH`；提交按钮另带 `min-w-18`（72px，接旧 `min-width`） |
-| 卡片下的发送按钮、错误态的「重试」（`features/search/SearchResults.tsx`） | `cn(TOUCH, …)`，重试那枚另带 `mt-2` |
+| 搜索框、提交按钮（`components/SearchBar.tsx`，首页与浏览页共用） | `Input` / `Button` 上各带 `TOUCH`；提交按钮另带 `min-w-18`（72px，接旧 `min-width`） |
+| 错误态的「重试」（`features/search/SearchResults.tsx`、`features/browse/BrowseResults.tsx`） | `cn(TOUCH, …)`，各另带 `mt-2` |
 | 「换一批」、图墙错误态的「重试」、空库态的「去导入几张」（`features/discover/DiscoverWall.tsx`） | `Button` 上带 `TOUCH`；`variant="link"` 那枚也一样 |
 
 > ⚠️ `size="sm"` **在手指那一档不豁免**：重试与「换一批」都是 `size="sm"`（32px），
@@ -316,8 +317,13 @@ useEffect(() => {
 
 **不能挂在卡片里。** React 的 portal 事件沿 **React 树**冒泡、不沿 DOM 树，所以阅览器就算
 portal 到 `document.body`，只要它的 React 父链经过首页，键盘事件照样冒到首页根 `<section>` 的
-`onKeyDown` 上：`Esc` 关不干净（背后的选中态被清掉）、`↑↓` 一边看图一边移动搜索结果、
-`Enter` 在阅览器里**发起一次复制 / 下载**。三件都不报错。
+`onKeyDown` 上：`Esc` 关不干净（背后的选中态被清掉）、`↑↓` 一边看图一边移动搜索结果。
+两件都不报错。
+
+> ⚠️ 2026-09-26（裁定 4）：`Enter` **此前是这一段里的第三个例子**（「在阅览器里发起一次
+> 复制 / 下载」），它作废了——`Enter` 现在做的是打开阅览器，而那道闸门（`focusedOptionIndex`）
+> 只认焦点真的落在结果项自己身上，阅览器里的焦点不满足。**上面那条结构性隔离照旧不能松**：
+> `Esc` 与 `↑↓` 两条泄漏与 `Enter` 无关，判据这一层保护不了它们。
 
 挂在 `AppLayout` 里、摆在那条 `Outlet` 链的**祖先**上，`<Lightbox>` 的 React 祖先链就只有外壳。
 

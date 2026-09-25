@@ -149,8 +149,10 @@ function AppLayout() {
         {/*
           全屏阅览挂在**这一层**，不是挂在卡片里。位置是有讲究的：它包住 `SidebarInset`，
           于是 `<Lightbox>` 的 React 祖先链只有外壳，**不经过任何页面**——否则首页那个挂在
-          根 `<section>` 上的键盘 handler 会连阅览器里的 Esc / ↑↓ / Enter 一起接走
+          根 `<section>` 上的键盘 handler 会连阅览器里的 Esc / ↑↓ 一起接走
           （`components/ImageViewer.tsx` 头部有完整推导，那是本次最容易静默出错的一处）。
+          `Enter` 2026-09-26（裁定 4）起不再是泄漏项，原因写在同一处，别照着这一行的键列表
+          去核对。
         */}
         <ImageViewerProvider>
           <AppSidebar />

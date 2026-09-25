@@ -184,6 +184,16 @@ function isSessionPath(rawUrl: string): boolean {
 type MemesClient = typeof api.api.v1.memes
 
 /**
+ * `GET /memes` 的响应（SPEC §6.3）。**从 api 派生，不手写。**
+ *
+ * ⚠️ **形状恒定，不按模式变字段**（§6.3 那张表）：带不带 `q` 都返回
+ * `items` / `nextCursor` / `degraded` / `rewritten`，每条 item 都带 `matchedBy`。
+ * 无 `q` 时后三个是**常量**（`false` / `null` / `[]`）而不是「字段不存在」，
+ * 所以消费点不必按有没有 `q` 分支——拿到的永远是同一组字段。
+ */
+export type MemesResponse = InferResponseType<typeof api.api.v1.memes.$get>
+
+/**
  * SPEC §5.2.6 对外表示。storageKey、contentHash、phash、embedding 不在响应里。
  *
  * **从 api 派生，不手写。** 手写一份意味着接口加了字段这边不会有编译错误，
@@ -191,8 +201,12 @@ type MemesClient = typeof api.api.v1.memes
  *
  * 注意一个反直觉的字段，手写很容易写错：
  *   - `sizeBytes` 是**字符串**（bigint 走 JSON 会丢精度，服务端 toString 了）
+ *
+ * ⚠️ 它**含 `matchedBy`**（列表端点两个分支都带，§6.3）：那是**这一次检索的性质、
+ * 不是这张图的属性**，所以 `GET /memes/{id}` 与写操作的响应（`MemeDetail`）没有它。
+ * 把写操作的结果并回列表时**保留原有值**，别补 `[]`——见 `use-meme-edit.ts`。
  */
-export type Meme = InferResponseType<typeof api.api.v1.memes.$get>['items'][number]
+export type Meme = MemesResponse['items'][number]
 
 /**
  * 单条的对外表示（`GET /memes/{id}`）。与列表项**同形**——服务端是同一个 `serializeMeme`——
@@ -225,6 +239,14 @@ export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
 export type MemePatch = { description?: string | null } & Partial<Record<VocabField, string[]>>
 
 export type FetchMemesParams = Partial<Record<VocabField, string[]>> & {
+  /**
+   * 查询词（SPEC §6.3.1）。**它就是「这次是检索还是浏览」那个开关**：
+   * 去掉首尾空白后为空（或根本不传）走浏览分支，否则走三路融合检索。
+   *
+   * 传空串不报错、按浏览处理（§6.3.1）——用户清空搜索框是常规操作。
+   * ⚠️ 与 `random` **互斥**，两个都传服务端返回 `VALIDATION_FAILED`（§6.3.2）。
+   */
+  q?: string
   isAnimated?: boolean
   favorited?: boolean
   uploader?: string
@@ -242,13 +264,14 @@ export type FetchMemesParams = Partial<Record<VocabField, string[]>> & {
   random?: boolean
 }
 
-export async function fetchMemes(
-  params: FetchMemesParams = {},
-): Promise<{ items: Meme[]; nextCursor: string | null }> {
+export async function fetchMemes(params: FetchMemesParams = {}): Promise<MemesResponse> {
   const qs = new URLSearchParams()
   // 每个维度各自是**可重复键**（`?emotions=无语&emotions=疲惫`），所有值之间是 AND。
   // 遍历 `VOCAB_FIELDS` 而不是手写七行：漏掉一行不会报错，只是那一维的筛选静默失效。
   for (const field of VOCAB_FIELDS) params[field]?.forEach((v) => qs.append(field, v))
+  // 空白查询词**不传**，不是传空串：服务端两种都当浏览处理（§6.3.1），
+  // 但传空串会让 `filtersKey`（`use-browse-filters`）在一个没有实际内容的参数上变来变去。
+  if (params.q?.trim()) qs.set('q', params.q.trim())
   if (params.isAnimated !== undefined) qs.set('isAnimated', String(params.isAnimated))
   if (params.favorited) qs.set('favorited', 'true')
   if (params.uploader) qs.set('uploader', params.uploader)
@@ -259,7 +282,7 @@ export async function fetchMemes(
 
   const res = await fetch(`/api/v1/memes?${qs.toString()}`)
   if (!res.ok) throw await toApiError(res)
-  return res.json() as Promise<{ items: Meme[]; nextCursor: string | null }>
+  return res.json() as Promise<MemesResponse>
 }
 
 /**
@@ -343,13 +366,31 @@ export const MATCHED_BY_LABELS: Record<string, string> = {
   tags: '标签',
 }
 
+/**
+ * `matchedBy` 的原始取值 → 可显示的标签数组。
+ *
+ * 未知取值**原样显示**（服务端可能新增通路），所以查表带兜底、不做穷举联合配合。
+ * 放在这里而不是各个页面里：卡片角标有两处消费点（搜索结果、合并后的列表），
+ * 各写一份就会在「新通路要不要显示」这种事上漂开。
+ */
+export function matchedBadges(matchedBy: string[]): string[] {
+  return matchedBy.map((m) => MATCHED_BY_LABELS[m] ?? m)
+}
+
 /** 单条搜索结果：Meme 加一个召回来源标注（SPEC §6.3.1）。类型从 api 派生，不手写。 */
 export type SearchResult = InferResponseType<typeof api.api.v1.search.$get>['items'][number]
 
 export type SearchResponse = InferResponseType<typeof api.api.v1.search.$get>
 
 /**
- * `GET /search`。三路融合，**不分页**——服务端返回什么就展示什么，默认 50 最大 100（SPEC §6.3.1）。
+ * `GET /search`：**冻结的兼容入口**，≡ `GET /memes?q=` 的一个子集（SPEC §6.3.3）。
+ *
+ * 只认 `q` 与 `limit`，其余参数（含七个词表维度和 `cursor`）一律 `VALIDATION_FAILED`；
+ * 响应形状与 `GET /memes?q=` 相同，但 `nextCursor` 恒为 `null`——**它不分页**，服务端返回
+ * 什么就展示什么。**新能力一律只加在 `GET /memes` 上**，这里不再演进（2026-09-26 裁定 1）。
+ *
+ * ⚠️ **缺省 `limit` 是 50，不是列表的 40，这是冻结的一部分**：首页这条路径不传 `limit`，
+ * 默认值由服务端说了算，把它对齐到 §1.3 的 40 等于悄悄改掉首页看到的条数（§6.3.3）。
  *
  * 和 fetchMemes 一样用 fetch 而不是 RPC 客户端方法：RPC 客户端把非 2xx 直接当异常抛，
  * 拿不到 SPEC §2.1 的错误信封，而 code 和 requestId 是必须展示给用户的。

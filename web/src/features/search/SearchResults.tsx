@@ -1,13 +1,12 @@
-import { SearchX, Sparkles, TriangleAlert } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
 import { Skeleton } from '../../components/ui/skeleton'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
-import { MATCHED_BY_LABELS, type Meme, type SearchResult } from '../../lib/api'
-import { SEND_LABELS, detectSendPath } from '../../lib/clipboard'
+import { DegradedNotice, EmptyNotice, RewrittenNotice } from '../../components/Notice'
+import { matchedBadges, type Meme, type SearchResult } from '../../lib/api'
 import { TOUCH } from '../../lib/touch'
-import { usePrefetchShare } from '../../lib/use-prefetch-share'
 import { cn } from '../../lib/utils'
 import type { SearchState } from './use-search'
 
@@ -25,30 +24,6 @@ const RESULT_GRID =
 
 /** 一屏骨架的格数。**与结果无关，只是占位**——够铺满一屏即可。 */
 const SKELETON_COUNT = 12
-
-/**
- * 状态说明的**承载面板**（2026-09-24 加）。
- *
- * 这三条文案（降级、改写、空结果）此前是裸 `<p>`，直接铺在页面底色上——文字没有承载物，
- * 看起来像页面漏渲染了一块。现在统一给一个浅底细边的面板。
- *
- * **不用 `Alert`**：它自带 `role="alert"`，而这几条都是状态说明、不是警报，抢着打断读屏是错的
- * （`http.md` §5「降级不是错误」）。所以这里手写容器，只保留与原实现一致的 `role="status"`。
- *
- * **底色用 `bg-card` + `border`，不用 `bg-muted`**：`text-muted-foreground` 落在
- * `--muted` 上（浅色 `oklch(0.97)`）对比度约 4.3，低于 4.5；落在 `bg-card` 上就是页面底色
- * （浅色为白，深色为 `oklch(0.205)`），两条都是 4.7 以上。**换底色要重量对比度。**
- *
- * `w-fit` 而不是撑满：首页内容列到 1152px，一句 30 字的说明撑满一条横幅会留下一大片空白。
- *
- * 模块内私有（同 `RESULT_GRID`）：这个文件是唯一使用者。
- */
-const NOTICE = 'flex w-fit items-start gap-2 rounded-2xl border bg-card px-3 py-2 text-sm'
-
-/** `matchedBy` 里的通路标识翻成中文标签，未知取值原样显示（服务端可能新增通路）。 */
-function matchedBadges(matchedBy: string[]): string[] {
-  return matchedBy.map((m) => MATCHED_BY_LABELS[m] ?? m)
-}
 
 /** 卡片 / 按钮的可读名。与 `MemeImage` 的 `alt` 同一份来源。 */
 function readableName(meme: Meme): string {
@@ -71,13 +46,11 @@ function readableName(meme: Meme): string {
 export function SearchResults({
   state,
   selectedIndex,
-  onActivate,
   onFavorite,
   onRetry,
 }: {
   state: SearchState
   selectedIndex: number
-  onActivate: (meme: SearchResult) => void
   onFavorite: (meme: Meme) => void
   onRetry: () => void
 }) {
@@ -118,30 +91,17 @@ export function SearchResults({
 
   return (
     <>
-      {/* 降级不是错误：照常展示结果，只在顶部说明一句，不遮挡、不阻断（http.md §5）。
-          `role="status"` 不是 `alert`，理由见 `NOTICE` 的注释 */}
-      {state.degraded && (
-        <div role="status" className={NOTICE}>
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          向量通路当前不可用，本次只用了 OCR 和标签匹配，结果可能不全。
-        </div>
-      )}
+      {/* 这三块 2026-09-26 提到了 `components/Notice`：合并后的列表页也要挂同一份，
+          留两份就是同一件事两处呈现。理由（为什么不用 Alert、为什么 w-fit）在那边 */}
+      {state.degraded && <DegradedNotice />}
 
       {/* 展示改写结果是为了让用户理解「为什么搜出这些」，可以为 null（SPEC §6.3.1） */}
-      {state.rewritten && (
-        <div className={cn(NOTICE, 'text-muted-foreground')}>
-          <Sparkles className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          搜索理解为：{state.rewritten}
-        </div>
-      )}
+      {state.rewritten && <RewrittenNotice rewritten={state.rewritten} />}
 
-      {/* 空结果：这一屏只有这句话，所以它是这块地方的**唯一内容**——给一个居中的空态块，
-          不是一行浮在空白里的字（图墙在这种状态下不渲染，见 home.tsx） */}
+      {/* 空结果：这一屏只有这句话，所以它是这块地方的**唯一内容**（图墙在这种状态下不渲染，见 home.tsx）。
+          首页这条路的空结果只可能来自检索，所以 `searching` 恒为 true */}
       {items.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 rounded-2xl border bg-card px-6 py-8 text-center">
-          <SearchX className="size-6 text-muted-foreground" aria-hidden="true" />
-          <p className="text-sm text-muted-foreground">没有找到相关的图，换个说法试试</p>
-        </div>
+        <EmptyNotice searching />
       ) : (
         // 这一批就是「用户看的那一批」：全屏里 ←/→ 翻的就是这次搜索的结果
         <MemeGallery items={items}>
@@ -153,7 +113,6 @@ export function SearchResults({
                 meme={meme}
                 index={index}
                 selected={index === selectedIndex}
-                onActivate={onActivate}
                 onFavorite={onFavorite}
               />
             ))}
@@ -171,11 +130,19 @@ export function SearchResults({
  *
  * ## 2026-09-24：`listbox` / `option` 换成 `group`
  *
- * 这一格里有三个可交互元素（图片帧、收藏、发送）。`role="option"` 要求列表项自己
+ * 这一格里有可交互元素（图片帧、收藏）。`role="option"` 要求列表项自己
  * 承担选中语义，把按钮塞进去是**违反 ARIA 的**，读屏在两种模式之间来回切。
  * 而键盘路径也不靠列表项语义——焦点是**真的**移到结果项上（`use-search.ts` 的
  * `focusResult`），Enter 的判据就是「焦点在不在这一格」（`focusedOptionIndex`）。
  * 所以这里只留一个带可读名的 `group`，选中态交给那个真实焦点。
+ *
+ * ## 2026-09-26（裁定 4）：图片下面那枚全宽发送按钮撤掉了
+ *
+ * 撤掉它的理由写在 [SPEC §6.3.1](../../../spec/06-endpoints.md) 的任务裁定里：一个动作
+ * 只出现一处。合并后的列表里「发送」在卡片上走「⋯」菜单（`MemeActions`，自带
+ * `detectSendPath` 与 `usePrefetchShare`，分流逻辑不在这里丢一份），全屏阅览里走那枚
+ * 新加的可见按钮。**连 `sendLabel` 与 `usePrefetchShare` 一起撤**——留着就是第二份实现。
+ * 代价（发出去从 1 击变 2 击）是明码记过的，补回来的是阅览器那枚按钮。
  *
  * 描边用 `outline` + `outline-offset-2` 而不是 `ring` / `border`：它是**落在卡片外面**的，
  * 不占布局、不挤压网格，键盘 ↑↓ 选中时格子不会跳（styling.md）。描边颜色取 `currentColor`。
@@ -184,20 +151,14 @@ function ResultItem({
   meme,
   index,
   selected,
-  onActivate,
   onFavorite,
 }: {
   meme: SearchResult
   index: number
   selected: boolean
-  onActivate: (meme: SearchResult) => void
   onFavorite: (meme: Meme) => void
 }) {
   const name = readableName(meme)
-  /** 文案在渲染时定下来，点击时不再改（clipboard-share.md §5）：一个按钮两种行为最糟。 */
-  const sendLabel = SEND_LABELS[detectSendPath(meme.isAnimated)]
-  // 触屏那一档要在**渲染时**就把原图取好，否则点下去时用户激活已经过期（见该 hook）
-  usePrefetchShare(meme)
 
   return (
     <div
@@ -216,21 +177,6 @@ function ResultItem({
         recallBadges={matchedBadges(meme.matchedBy)}
         onFavorite={onFavorite}
       />
-      {/*
-        点击卡片与 Enter 同一条路径，行为一致（clipboard-share.md §7）：
-        静图是「复制」，动图是「下载」——**文案在渲染时就分开**，
-        不能让用户点了 GIF 之后发现没反应（§3）。
-      */}
-      <Button
-        type="button"
-        variant="secondary"
-        // 一页里几十个「复制」，读屏一个一个念下来分不出是哪张（同 `ThumbRail` 的做法）
-        aria-label={`${sendLabel}第 ${index + 1} 张：${name}`}
-        className={cn(TOUCH, 'w-full')}
-        onClick={() => onActivate(meme)}
-      >
-        {sendLabel}
-      </Button>
     </div>
   )
 }

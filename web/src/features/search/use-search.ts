@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useImageViewerOpen } from '../../components/ImageViewer'
 import {
   ApiError,
   fetchSearch,
@@ -8,8 +9,7 @@ import {
   type Meme,
   type SearchResult,
 } from '../../lib/api'
-import { sendNote, sendMeme } from '../../lib/clipboard'
-import { notifyFailure, notifySend } from '../../lib/toast'
+import { notifyFailure } from '../../lib/toast'
 
 export type SearchState =
   | { kind: 'idle' }
@@ -26,7 +26,7 @@ export type SearchState =
  * 按下键的那一下，焦点是不是**就在某一张结果上**。
  *
  * 只看元素自己有没有 `data-index`，**不看它的祖先**：`closest()` 会把卡片里那些按钮
- * （收藏、发送、图片帧）一起算成「在结果上」，那就又回到「Enter 被谁接走」那个缺陷了。
+ * （收藏、图片帧）一起算成「在结果上」，那就又回到「Enter 被谁接走」那个缺陷了。
  */
 function focusedOptionIndex(target: EventTarget | null): number | null {
   if (!(target instanceof HTMLElement)) return null
@@ -48,6 +48,13 @@ function focusedOptionIndex(target: EventTarget | null): number | null {
 export function useSearch() {
   const [searchParams, setSearchParams] = useSearchParams()
   const q = searchParams.get('q') ?? ''
+
+  /**
+   * 打开全屏阅览用的那一份 `open`。**列表必须自己传**——这一层在 `<MemeGallery>` **之外**，
+   * 走 `useImageViewer()` 读到的是空 context，`open(meme, [])` 会静默退回单张阅览
+   * （翻页按钮与缩略图轨道全没有，且不报错）。见 `useImageViewerOpen` 的注释。
+   */
+  const openViewer = useImageViewerOpen()
 
   // 输入框里未提交的值——这是纯 UI state 的三类之一（state-navigation.md §3）
   const [draft, setDraft] = useState(q)
@@ -171,20 +178,21 @@ export function useSearch() {
   }
 
   /**
-   * 发送选中的那张图。路径与文案都由 `lib/clipboard.ts` 决定——**不再有一份自己的实现**。
+   * 打开全屏阅览。**2026-09-26（裁定 4）起 `Enter` 不再是「发送这一张」。**
    *
-   * 这里曾经复制的是图片地址（临时实现），而用户点这个按钮的意图是**发图**，
-   * 拿到的却是一段 URL。同一个动作两套行为是本端最不能犯的错（clipboard-share.md §3）。
+   * 发送改由**可见的**入口发起：卡片上是「⋯」菜单里那一项（合并后统一走
+   * `MemeActions`），全屏阅览里是那枚新加的按钮。撤掉卡片上原来那枚全宽按钮的同时
+   * 把 `Enter` 指过来，是因为**它指向的行为必须在界面上看得见**——一个界面上不存在、
+   * 只有按下去才知道发生了什么的键，比没有这个键更坏（clipboard-share.md §3）。
    *
-   * ⚠️ 由点击 / 按键事件直接调起，中间不要先 await 别的请求：剪贴板写入要落在
-   * 用户手势的同步调用栈里（§4.1）。
+   * ⚠️ 与旧实现同一条：这里曾经复制的是图片地址（临时实现），而用户按下它时的意图是
+   * **发图**，拿到的却是一段 URL。同一个动作两套行为是本端最不能犯的错。
    */
-  async function handleActivate(meme: SearchResult) {
-    const note = sendNote(await sendMeme(meme))
-    if (note !== null) notifySend(note)
+  function handleActivate(meme: SearchResult) {
+    openViewer(meme, items)
   }
 
-  /** ↑↓ 选择、Enter 复制、Esc 取消选择（clipboard-share.md §7）。 */
+  /** ↑↓ 选择、Enter 打开全屏阅览、Esc 取消选择（clipboard-share.md §7）。 */
   function handleKeyDown(e: React.KeyboardEvent) {
     const inInput = e.target instanceof HTMLInputElement
     /** 结果区那棵子树。`e.currentTarget` 出了 handler 就没了，所以在这儿先取下来。 */
@@ -212,16 +220,20 @@ export function useSearch() {
     }
 
     if (e.key === 'Enter') {
-      // ⚠️ **只在焦点真正落在某张结果上时才算「发送这一张」**，判据是那个元素本身
+      // ⚠️ **只在焦点真正落在某张结果上时才算「打开这一张」**，判据是那个元素本身
       // 带着 `data-index`（`SearchResults` 的 `ResultItem`），不是「谁没挡冒泡」。
       //
-      // 这个 handler 挂在整页的 `<section>` 上，而卡片里的图片帧、收藏按钮、发送按钮
+      // 这个 handler 挂在整页的 `<section>` 上，而卡片里的图片帧、收藏按钮
       // 都在冒泡链上。靠下游 `stopPropagation` 是挡不完的：收藏按钮就没挡，于是
       // 「Tab 到第 5 张、按 Enter 收藏」会被这里接走，`selectedIndex` 默认是 0，
-      // 变成对第 1 张的复制——**键盘用户根本收藏不了**，而且屏幕上什么提示都没有。
+      // 变成打开第 1 张——**键盘用户根本收藏不了**，而且屏幕上什么提示都没有。
+      //
+      // 焦点在图片帧上时不归这里管：那是个真 `<button>`，原生 Enter 会直接点它，
+      // 落到 `MemeImage` → `useImageViewer()`，效果与这里一致（那条路的列表来自
+      // `<MemeGallery>`）。**两条路都开阅览，所以不会打架**。
       const index = focusedOptionIndex(e.target)
       const meme = index === null ? undefined : items[index]
-      if (meme) void handleActivate(meme)
+      if (meme) handleActivate(meme)
       return
     }
 
@@ -249,7 +261,6 @@ export function useSearch() {
     commit,
     retry,
     handleKeyDown,
-    handleActivate,
     handleFavorite,
   }
 }

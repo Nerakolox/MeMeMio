@@ -1,6 +1,6 @@
 import { CornerDownLeft } from 'lucide-react'
 import { DiscoverWall } from '../features/discover/DiscoverWall'
-import { SearchBar } from '../features/search/SearchBar'
+import { SearchBar } from '../components/SearchBar'
 import { SearchResults } from '../features/search/SearchResults'
 import { useSearch } from '../features/search/use-search'
 
@@ -28,12 +28,12 @@ export function HomePage() {
     commit,
     retry,
     handleKeyDown,
-    handleActivate,
     handleFavorite,
   } = useSearch()
 
   return (
-    // 键盘路径（↑↓ 选择、Enter 发送、Esc 取消）挂在整页上：输入框和结果区都要走同一套
+    // 键盘路径（↑↓ 选择、Enter 打开全屏阅览、Esc 取消）挂在整页上：
+    // 输入框和结果区都要走同一套
     <section
       className="mx-auto flex w-full max-w-6xl flex-col gap-3"
       onKeyDown={handleKeyDown}
@@ -43,7 +43,6 @@ export function HomePage() {
       <SearchResults
         state={state}
         selectedIndex={selectedIndex}
-        onActivate={handleActivate}
         onFavorite={handleFavorite}
         onRetry={retry}
       />

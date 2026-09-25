@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useRef } from 'react'
+import { Copy, Download, Share2, type LucideIcon } from 'lucide-react'
 import Lightbox from 'yet-another-react-lightbox'
 import type {
   RenderSlideFooterProps,
@@ -11,8 +12,16 @@ import Zoom from 'yet-another-react-lightbox/plugins/zoom'
 // captions / counter / thumbnails 四个），照习惯补一行会让构建失败。
 import 'yet-another-react-lightbox/styles.css'
 import type { Meme } from '../lib/api'
-import { sendMeme, sendNote, type SendTarget } from '../lib/clipboard'
+import {
+  SEND_LABELS,
+  detectSendPath,
+  sendMeme,
+  sendNote,
+  type SendPath,
+  type SendTarget,
+} from '../lib/clipboard'
 import { notifySend } from '../lib/toast'
+import { TOUCH } from '../lib/touch'
 import { usePrefetchShare } from '../lib/use-prefetch-share'
 import { cn } from '../lib/utils'
 import { VOCAB_DIMENSIONS } from '../lib/vocab'
@@ -97,6 +106,10 @@ export function LightboxViewer({
    * `Ctrl+C` / `Cmd+C` 复制**当前这一张**。走的是和卡片「⋯」菜单里那一项**同一个函数**
    * （`lib/clipboard.ts` 的 `sendMeme`），所以三条路径的分流、每一句文案都不另写一份——
    * 动图在它上面同样落到「下载」并说明原因，不会按下去没反应（clipboard-share.md §3、§7）。
+   *
+   * ⚠️ 2026-09-26（裁定 4）起它**不是这一面唯一的入口**了：上面那枚 `SendButton` 是同一个
+   * 动作的可见形态，两者调的是同一个 `sendImage`。改分流时两条一起改——但分流本身只有
+   * `lib/clipboard.ts` 那一份，这里两处都只是调用点。
    *
    * ## 为什么挂在 `document` 上
    *
@@ -386,7 +399,8 @@ function ThumbRail({
 }
 
 /**
- * 阅览器里我们自己那两块（`render.controls`），宽屏才显形。
+ * 阅览器里我们自己那几块（`render.controls`）：**发送按钮（哪个尺寸都有）**、
+ * 宽屏右栏、宽屏缩略图轨道。
  *
  * 数据从 `SessionContext` 拿——`render.controls` 是个没有参数的 render 函数
  * （`RenderFunction<void>`，`types.d.ts:346`），拿不到 props。而这个组件渲染在
@@ -394,8 +408,12 @@ function ThumbRail({
  * （context 本身放在 `viewer-session.ts`，理由见那个文件。）
  *
  * 它渲染的位置在 `.yarl__container` **里面**（`Controller` 里 `render.controls?.()` 那行，
- * 排在轮播之后）。而容器现在只有舞台那么大（`viewerStyles`），所以这两块走 `fixed`
+ * 排在轮播之后）。而容器现在只有舞台那么大（`viewerStyles`），所以这几块走 `fixed`
  * 按视口定位——它们是容器的后代，但**不看容器的盒子**。
+ *
+ * ⚠️ **发送按钮在这里、不在宽屏那一支里**：它是裁定 4 给这一面的唯一入口，而
+ * `ViewerAside` / `ThumbRail` 都是 `lg` 起才显形的，触屏设备一个都看不到。摆错位置
+ * 的表现是「手机上阅览器里发不出去」，而且不报错。
  */
 function ViewerControls() {
   const controls = useContext(SessionContext)
@@ -405,11 +423,100 @@ function ViewerControls() {
 
   return (
     <>
+      <SendButton meme={meme} />
       <ViewerAside meme={meme} />
       {session.items.length > 1 && (
         <ThumbRail items={session.items} index={session.index} onPick={controls.show} />
       )}
     </>
+  )
+}
+
+/**
+ * 图上那枚按钮的图标。**跟着分流一起变**，与 `SEND_LABELS` 是同一件事的两面：
+ * 图标说的是「会发生什么」，文案说的是「这个动作叫什么」。只写文案不换图标的话，
+ * 动图上会留一个「复制」的图标配「下载」的字。
+ *
+ * 模块内私有：只有 `SendButton` 用（同 `RESULT_GRID` 那条规则，跨 feature 才要导出）。
+ */
+const SEND_ICONS: Record<SendPath, LucideIcon> = {
+  clipboard: Copy,
+  download: Download,
+  share: Share2,
+}
+
+/**
+ * 全屏阅览里那枚**看得见的**发送按钮（2026-09-26 加，裁定 4）。
+ *
+ * ## 它为什么存在
+ *
+ * 此前阅览器里唯一的发送入口是 `Ctrl+C`，而界面上一个字都没提这个快捷键——
+ * **看不见的入口等于没有入口**。同一批裁定又把卡片图片下方那枚全宽按钮撤了
+ * （`SearchResults.tsx`），理由是一个动作只出现一处；于是这枚按钮同时是
+ * **搜索流里鼠标用户的实际出口**，不是顺手补的装饰，位置和文案都不该轻动。
+ *
+ * ## 分流与 `Ctrl+C`、与卡片「⋯」完全同一份
+ *
+ * 调的是同一个 `sendImage`（`sendMeme` → `sendNote` → `notifySend`），所以分流只看
+ * `isAnimated` 与能力探测、**不看用户是点按钮还是按键**：动图在这里同样落到「下载」
+ * 并说明原因（clipboard-share.md §3）。文案与图标在**渲染时**定下来（`detectSendPath`
+ * + `SEND_LABELS` / `SEND_ICONS`）——一个按钮两种行为是最糟的设计（§5）。
+ *
+ * ## 位置：左上角，不是左下角
+ *
+ * 窄屏底部中间是 `SlideFooter`（信息卡）、宽屏底部整条是 `ThumbRail`，左下角在两种版式
+ * 里都被占着。库的工具栏固定在右上角（见 `viewerStyles`），所以只有**左上角**空着。
+ *
+ * 压在图上的东西都得自带对比度：底图可能是白的也可能是黑的，所以走 `bg-black/70` +
+ * 白字 + 背景模糊，与 `SlideFooter` / `MemeCard` 的 `BADGE` 同一条思路（`bg-black/70`
+ * 压在最亮的图上是 `#4d4d4d`，纯白字对它 8.1:1）。**不借主题 token**：这里的底是图，
+ * 不是页面。
+ *
+ * ## `Ctrl+C` 那句按**指针**分档，不按宽度
+ *
+ * 触屏那一档没有 Ctrl 键，提示留在那儿只是噪声。闸门是 `pointer-coarse` 而不是
+ * `max-sm`（700px 的桌面窗口不是手机，宽屏平板也不该按桌面处理，`lib/touch.ts` 有完整
+ * 推导）。基线是**看得见**、藏起来叠在粗指针上——反过来写的话，探针一旦不成立提示
+ * 就整个消失，而它是这枚按钮存在理由的另一半。
+ *
+ * ## 预取不用在这里再挂一份
+ *
+ * `usePrefetchShare(current)` 已经在 `LightboxViewer` 上按**当前这一张**挂过了，这里拿的
+ * 正是同一张（都读 `session.items[session.index]`）。再挂一份是空操作，只会让下一个人
+ * 以为这里是第二个落点。
+ */
+function SendButton({ meme }: { meme: Meme }) {
+  const path = detectSendPath(meme.isAnimated)
+  const Icon = SEND_ICONS[path]
+
+  return (
+    // 外层铺开只为定位，`pointer-events-none` 让它不吃掉「点背景关闭」；只有两枚元素自己接事件
+    <div className="pointer-events-none fixed top-3 left-3 flex flex-col items-start gap-1.5">
+      <button
+        type="button"
+        // 与 `Ctrl+C` 同一个函数，中间不 await 别的请求：剪贴板写入要落在用户手势的
+        // 同步调用栈里（clipboard-share.md §4.1）
+        onClick={() => void sendImage(meme)}
+        // 读屏用户看不到下面那行提示，快捷键得从属性里说出来
+        aria-keyshortcuts="Control+C Meta+C"
+        className={cn(
+          'pointer-events-auto flex cursor-pointer items-center gap-1.5 rounded-full bg-black/70 px-3 text-sm font-medium text-white backdrop-blur-sm transition-colors hover:bg-black/85',
+          // 手指那一档 44，鼠标那一档回到 32，同 `lib/touch.ts`
+          TOUCH,
+        )}
+      >
+        <Icon className="size-4" aria-hidden="true" />
+        {SEND_LABELS[path]}
+      </button>
+      <span
+        className={cn(
+          'pointer-events-none rounded-full bg-black/70 px-2 py-0.5 text-[11px] leading-none text-white backdrop-blur-sm',
+          'pointer-coarse:hidden',
+        )}
+      >
+        Ctrl+C 也可以
+      </span>
+    </div>
   )
 }
 

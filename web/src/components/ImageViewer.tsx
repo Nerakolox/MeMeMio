@@ -49,11 +49,16 @@ export function MemeGallery({ items, children }: { items: readonly Meme[]; child
  * ## 为什么它不能挂在 `MemeImage` 里
  *
  * 首页的键盘路径是挂在根 `<section>` 上的**一个 React `onKeyDown`**
- * （`features/search/use-search.ts`）：`Esc` 取消选中、`↑↓` 移动、`Enter` 复制 / 下载。
+ * （`features/search/use-search.ts`）：`Esc` 取消选中、`↑↓` 移动、`Enter` 打开全屏阅览。
  * 而 **React 的 portal 事件沿 React 树冒泡，不沿 DOM 树**——阅览器就算 portal 到
  * `document.body`，只要它的 React 父链经过那一页，键盘事件照样冒到那个 handler 上：
- * `Esc` 关不干净（背后的选中态被清掉）、`↑↓` 一边看图一边移动搜索结果、`Enter`
- * 在阅览器里**发起一次复制 / 下载**。三件都不报错。
+ * `Esc` 关不干净（背后的选中态被清掉）、`↑↓` 一边看图一边移动搜索结果。两件都不报错。
+ *
+ * ⚠️ 2026-09-26（裁定 4）：**`Enter` 已不在上面这张泄漏清单里**，别看漏。它此前泄漏的
+ * 后果是「在阅览器里按一下复制 / 下载了一张图」，现在它做的是「打开阅览器」——而判据是
+ * 焦点真的落在结果项自己身上（`focusedOptionIndex`），阅览器里的焦点不满足，于是
+ * 什么都不会发生。**这条是判据带来的，不是给 `Enter` 单独打的补丁**：哪天判据换成
+ * 「谁没挡冒泡」，它会立刻重新变成泄漏项。
  *
  * 挂在 `AppLayout` 里、摆在 `Outlet` 那条链的**祖先**上，`<Lightbox>` 的 React 祖先链
  * 就只有外壳，与任何页面无关。（不选「在阅览器上补 `stopPropagation`」：synthetic 的
@@ -137,17 +142,37 @@ const LightboxViewer = lazy(() =>
 )
 
 /**
- * 打开全屏阅览。**没挂 Provider 直接抛错，不静默降级**——降级的表现是「点了没反应」，
- * 而「点了有反应」是这个功能唯一的存在意义。同源的一课见 `App.tsx` 里
- * `TooltipProvider` 缺失直接白屏那条。
+ * 拿到底层的 `open(meme, items)`——**列表由调用方自己给**。
  *
- * 这里把外面那层 `MemeGallery` 的列表接上去。**签名不变**（还是收一张图就打开），
- * 所以 `MemeImage` 一行都不用改——它本来就只 import 这个 hook。
+ * 之所以要有这么一层，是因为 `useImageViewer()` 那份列表是从 `GalleryContext` 读的，
+ * 而那是给**卡片**用的：`MemeImage` 就长在 `<MemeGallery>` 之内，天然读得到。
+ * 页面级的键盘路径不在那棵树里——`use-search.ts` 是在 `<MemeGallery>` **之外**被调用的，
+ * 在那里读 context 拿到的是默认值 `[]`，于是 `open(meme, [])` 会静默退回**单张**阅览
+ * （`open` 里那条 `at = -1` 的兜底）：翻页按钮与缩略图轨道全没有，**而且不报错**。
+ * 所以这一档把列表显式传进来，调用方本来就有（`state.items`）。
+ *
+ * ⚠️ 传进来的必须真是「用户刚才在看的那个列表」——给别的集合是另一种功能，
+ * 见 `OpenImage` 的注释。
+ *
+ * **没挂 Provider 直接抛错，不静默降级**——降级的表现是「点了没反应」，而「点了有反应」
+ * 是这个功能唯一的存在意义。同源的一课见 `App.tsx` 里 `TooltipProvider` 缺失直接白屏那条。
+ */
+export function useImageViewerOpen(): OpenImage {
+  const open = useContext(ImageViewerContext)
+  if (!open) throw new Error('useImageViewer / useImageViewerOpen 必须挂在 ImageViewerProvider 之内')
+  return open
+}
+
+/**
+ * 打开全屏阅览。**签名不变**（还是收一张图就打开），所以 `MemeImage` 一行都不用改
+ * ——它本来就只 import 这个 hook。
+ *
+ * 这里把外面那层 `MemeGallery` 的列表接上去；列表本身怎么来、为什么另一条路要绕开它，
+ * 见 `useImageViewerOpen`。
  */
 export function useImageViewer(): (meme: Meme) => void {
-  const open = useContext(ImageViewerContext)
+  const open = useImageViewerOpen()
   const items = useContext(GalleryContext)
-  if (!open) throw new Error('useImageViewer 必须挂在 ImageViewerProvider 之内')
   return useCallback((meme: Meme) => open(meme, items), [open, items])
 }
 

@@ -86,7 +86,13 @@ export function MemeCard({
 }: {
   meme: Meme
   shape?: ImageShape
-  /** 已本地化的召回来源标签（`matchedBy`），只有搜索页有（SPEC §6.3.1）。 */
+  /**
+   * 已本地化的召回来源标签（`matchedBy`，SPEC §6.3.1）。
+   *
+   * 2026-09-26 合流后**两处都会传**：浏览页（`/browse?q=`）与首页结果区——它们是同一条
+   * 列表的两种落点。无 `q` 时 `matchedBy` 恒为 `[]`，徽标自然不出现，卡片不需要知道
+   * 「这一次是不是在搜」。
+   */
   recallBadges?: string[]
   /** 「⋯」入口整块。**由页面给**——图墙和打标列表没有发送 / 删除入口，不给就没有。 */
   actions?: ReactNode
