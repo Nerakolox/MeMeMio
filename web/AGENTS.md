@@ -24,6 +24,10 @@
 
 **结果排序不归 web。** 服务端 RRF 融合后的顺序就是最终顺序，客户端不重排、不按 `matchedBy` 加权。
 
+**红线：SPEC 里没有的字段、接口、错误码，一个都不许引进来。** 确实需要，停下来回总管提出，等 SPEC 改好、api 导出类型之后再写；本地实现和 SPEC 对不上，也停下来对齐，不边写边改。
+
+**谁说了算**：`spec/` → [总管入口](../AGENTS.md)与 `../agents/rules/` → 本文件 → `agents/rules/` → 代码。代码与 SPEC 冲突改代码。
+
 ## 3. 本端特有的三件事
 
 **能力边界必须诚实。** 浏览器剪贴板只保证 `image/png`，动图写不进去。UI 必须按 `isAnimated` 分流，**不能让用户点了 GIF 之后发现没反应**。见 [clipboard-share.md](agents/rules/clipboard-share.md)。
@@ -40,17 +44,7 @@ Hono RPC 直接消费 `api` 导出的类型，**没有代码生成步骤，不�
 
 ## 5. 样式
 
-**组件库：shadcn/ui（组件层 `radix-luma`），样式载体：Tailwind v4**（2026-09-19 定稿；
-2026-09-21 换成自调 preset `b1VlIttI`、同时从 Tailwind v3.4 迁到 v4，
-见 [styling.md](agents/rules/styling.md)）。
-「只做布局、不做视觉装饰」的阶段约束随这次定稿结束，视觉风格跟主题 token 落地。
-
-- 新组件从 shadcn 拉，落在 `src/components/ui/`，底层是 Radix 原语；颜色/圆角/阴影
-  走 `src/index.css` 的 CSS 变量 token，只引用语义 token、不写死 HEX。
-- 移动优先、44×44 触摸目标、图片不裁剪、动图不自动播放、深色走 `prefers-color-scheme`
-  —— 这些写在 [styling.md](agents/rules/styling.md)，**不因换组件库而放松**。
-- 现有页面的 BEM 样式（`src/styles.css`）逐步迁到 Tailwind，迁移完成前并存；新增代码
-  一律 Tailwind + shadcn。迁移是单独任务，不在引入 shadcn 这一次里做。
+**组件库 shadcn/ui（组件层 `radix-luma`），样式载体 Tailwind v4**，BEM 已全部迁完。新组件从 shadcn 拉、落在 `src/components/ui/`；颜色、圆角、阴影只引用 `src/index.css` 的语义 token，不写死 HEX。选型经过、token 的坑、移动优先、44×44 触摸目标、图片不裁剪、动图不自动播放、深色走 `prefers-color-scheme`，都在 [styling.md](agents/rules/styling.md)（写样式之前读）；后面这几条**不因换组件库而放松**，`src/styles.css` 只剩两条基础声明，不要再往里加。
 
 ## 6. 交付
 

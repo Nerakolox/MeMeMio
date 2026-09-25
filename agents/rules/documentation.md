@@ -14,6 +14,8 @@
 
 引用用明确文件和 `§X.Y`。旧编号不重用；拆分或迁移保留转发入口。Markdown 链接以文件自身为基准；任务里反引号路径以工作区根为基准，归档时检查真实相对链接和活动索引。
 
+**代码注释里引用任务，只写任务文件名，不写目录**（写 `任务 2026-09-24-queue-reliability`，不写 `_archive/joint-tasks/2026-09-24-queue-reliability.md`）；引用契约写 `SPEC §X.Y`。任务文件完成后要从 `joint-tasks/` 移进 `_archive/joint-tasks/`，带目录的注释一归档就断，而且 `check-doc-links.mjs` 只查 markdown，查不到代码里的断链。2026-09-25 盘点时，api 里已经有 7 处注释指着早已归档的任务。
+
 **移动任何文档之后，跑一遍 `node scripts/check-doc-links.mjs`**（仓库根目录，有断链就列出来并以退出码 1 结束）。这条规则一直写着，但 2026-09-24 全仓仍有 22 条断链，21 条是同一个原因——文件从 `joint-tasks/` 移进 `_archive/joint-tasks/` 后 `../spec/` 没改成 `../../spec/`。**层级不会自己跟上，断了也不报错**，所以别只靠眼睛。
 
 ## 决策怎么写
