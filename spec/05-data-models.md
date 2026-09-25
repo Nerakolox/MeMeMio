@@ -4,6 +4,8 @@
 
 数据库使用 snake_case，接口使用 camelCase，见 [§7](07-naming.md)。本章给出结构与语义；索引和迁移的实现约束见 `api/agents/rules/database.md`。
 
+**本节列的是「产品里有这个概念」的持久状态**：用户、库、收藏、导入批次、配置。**为某个契约的实现而存在的中间表不进本节**——例如检索快照（[§6.3.1](06-endpoints.md) 翻页用的 `search_snapshots`）：它没有对外可观察的语义，随时可能被整块换掉（[§9.29](09-decisions.md) 的第一条回退就是砍它），列进来等于让本节的正文绑死一条已声明可推翻的实现。它的结构、TTL 与清理在 `api/agents/rules/retrieval.md`。契约需要说的那部分（检索游标会过期、过期返回 `VALIDATION_FAILED`）已经在 [§1.3](01-http.md) 与 [§6.3.1](06-endpoints.md) 说完。
+
 ## §5.1 User 与邀请
 
 ```sql

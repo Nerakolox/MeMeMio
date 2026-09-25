@@ -44,6 +44,8 @@
 
 明确标记 `proposed` 的：桌面端拖拽发送路径（[§9.2](09-decisions.md) 内）、各供应商的 `dimensions` 与 `json_object` 实际支持情况（[§9.7](09-decisions.md) 内）、敏感内容双通道（[§9.5](09-decisions.md)）、默认推荐配置与模型选型（[§9.8](09-decisions.md)）、[§9.12](09-decisions.md) 起的待验证项表、梗名别名层（[§9.18](09-decisions.md)），以及词表 v0.3.0 的具体词条（[§4.2](04-vocabulary.md)——它的升级门槛是 §9.12 表的 9.17，要评测集跑出结果）。这些要么依赖[供应商探测任务](../joint-tasks/2026-09-13-provider-spikes.md)，要么依赖[评测集任务](../joint-tasks/2026-09-13-eval-set.md)，两个都还没有结果。
 
+（2026-09-26 的[检索与筛选合流](../_archive/joint-tasks/2026-09-26-检索筛选合一.md) 改的是 [§1.3](01-http.md)、[§6.3](06-endpoints.md) 与 [§2.2](02-errors.md)：它不依赖外部探测，当天两端确认后已转 `accepted`，不列在上面这串里。）
+
 ## §0.4 基线与兼容
 
 当前 SPEC 0.1.0-draft，对应产品 0.1.0（未发布）。章节号是引用标识，不等于软件版本号。
