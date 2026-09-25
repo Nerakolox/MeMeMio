@@ -24,16 +24,27 @@
  * 落在 `bg-card` 上就是页面底色（浅色为白，深色为 `oklch(0.205)`），两条都在 4.7 以上。
  * **换底色要重量对比度。**
  *
- * ## `w-fit` 而不是撑满
+ * ## 撑满 + 下边距（2026-09-26 改，此前的理由是「`w-fit` 而不是撑满」）
  *
- * 内容列到 1152px，一句 30 字的说明撑满一条横幅会留下一大片空白。
+ * 原来写的是 `w-fit`：内容列到 1152px，一句 30 字的说明撑满一条横幅会留下一大片空白。
+ * 产品负责人看过之后要求**占满宽度**，并**留出下边距**——理由站得住：这几块是**状态说明**，
+ * 是「这一屏的结果是这么来的」的横幅，宽度跟着结果走才读得出「它在说下面这一整块」；
+ * 缩成一小条反而像内容本身（与 [styling.md](../agents/rules/styling.md)「文案要有承载物」
+ * 是同一条思路的另一半）。`mb-4` 与搜索带那条 `pb-4` 同值，是这块地方的行距。
+ *
+ * 三块现在都是撑满的（空结果那块一直是块级撑满，只有这两条曾经是 `w-fit`）。
+ *
+ * ⚠️ **两个挂载点的下边距不一样，别拿一个数去推另一个**（2026-09-26 量过，两处都写进
+ * 验收断言了）：浏览页那处是块级流，相邻兄弟的外边距会折叠 → 面板之间、面板到图墙
+ * 都是 **16px**；首页那处的容器是 `flex flex-col gap-3`，flex 里外边距**不**折叠
+ * → 12 + 16 = **28px**。想拉齐得去动首页那个容器的 `gap`（它还管着别的孩子），不值当。
  */
 
 import type { ReactNode } from 'react'
 import { SearchX, Sparkles, TriangleAlert } from 'lucide-react'
 import { cn } from '../lib/utils'
 
-const NOTICE = 'flex w-fit items-start gap-2 rounded-2xl border bg-card px-3 py-2 text-sm'
+const NOTICE = 'mb-4 flex w-full items-start gap-2 rounded-2xl border bg-card px-3 py-2 text-sm'
 
 export function Notice({
   children,

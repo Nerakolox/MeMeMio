@@ -124,7 +124,7 @@
 
 | 位置 | 写法 |
 |---|---|
-| 搜索框、提交按钮（`components/SearchBar.tsx`，首页与浏览页共用） | `Input` / `Button` 上各带 `TOUCH`；提交按钮另带 `min-w-18`（72px，接旧 `min-width`） |
+| 搜索框、提交按钮（`components/SearchBar.tsx`，首页与浏览页共用） | 两支形状相同（单行）：`Input` 上带 `TOUCH`，提交按钮 `TOUCH + min-w-18`（72px，接旧 `min-width`）。第四稿初版给浏览页做过多行（`TOUCH` 压 `min-h-16` 那个坑就在那儿），当天被否、分支已删，别再恢复 |
 | 错误态的「重试」（`features/search/SearchResults.tsx`、`features/browse/BrowseResults.tsx`） | `cn(TOUCH, …)`，各另带 `mt-2` |
 | 「换一批」、图墙错误态的「重试」、空库态的「去导入几张」（`features/discover/DiscoverWall.tsx`） | `Button` 上带 `TOUCH`；`variant="link"` 那枚也一样 |
 
@@ -411,6 +411,35 @@ CSS 那边要用 `w-(--viewer-aside-w)` 给两块浮层量自己的宽高，两�
 
 **`pending` 和 `needs_manual` 不用红色。** 它们是正常的中间态，不是故障——[产品明确要求](../../../docs/product.md)没配模型也能导入。用错误色会让用户以为自己做错了什么。
 
+### 聚焦环要留出边距：**`overflow` 不是 `visible` 的盒子会连它一起裁**（2026-09-26）
+
+输入框与按钮的聚焦环是 `focus-visible:ring-3`——**3px 的 box-shadow 外扩**，画在元素盒子之外。
+`overflow` 不是 `visible` 的祖先会把这 3px 一起切掉（`overflow: auto` 也裁，**不是只有
+`overflow: hidden` 才裁**；而且裁的是 ink overflow，不产生滚动条，所以你不会看到任何提示）。
+表现是「点进去，环缺了一条边」，**只在聚焦的那一瞬间出现**，截图走查很容易漏掉。
+
+规则：**把一个可聚焦控件放进裁剪盒时，控件与裁剪边之间至少留 4px。**
+不要为了「让输入框和下面的图左对齐」把这几个像素去掉——对齐的是内容，环被切是缺陷。
+
+落点（浏览页，2026-09-26 由产品负责人看出来，同日随形状变化更新过一次）：
+
+```text
+  当时：搜索框钉在结果列里
+    ResizablePanel        库自己写死 overflow: auto —— 面板是个裁剪盒
+    └ div 钉住的那块       px-2 pt-2（8px，给环留的，不是排版偏好）
+      └ form[role=search]  ← 环从这里往外扩 3px
+
+  现在：搜索带横在两列上面，那个外层容器**没有 overflow**
+        （外壳 `p-6` 的 24px 就是余量，不需要再给谁补内边距）
+```
+
+**这不是说规则失效了**：那条 `px-2 pt-2` 只是随形状一起消失的，搬回到任何
+`overflow != visible` 的盒子里（结果列的 `Panel`、`ScrollArea` 的 viewport、
+`Sheet` 的 body、`Card` 的 `overflow-hidden`）就要重新留 4px。
+
+量法是几何的：把元素盒子按 4px 外扩一圈，逐个祖先比对 `getBoundingClientRect()`，
+见 `web/scripts/verify-search-block.mjs` 的 `ringClip()`。
+
 ### 文案要有承载物（2026-09-24）
 
 **同一句话，裸铺在页面底色上就是「这一块漏渲染了」。** 首页搜索区这批文案
@@ -419,7 +448,7 @@ CSS 那边要用 `w-(--viewer-aside-w)` 给两块浮层量自己的宽高，两�
 | 文案 | 承载物 |
 |---|---|
 | 输入后未提交的 `按回车搜索`（`routes/home.tsx`） | 回车键帽 + 细边的 `rounded-full` 胶囊，`w-fit`、`text-xs` |
-| 降级提示 / `搜索理解为：…`（`SearchResults.tsx` 的 `NOTICE`） | `rounded-2xl border bg-card px-3 py-2` 面板，`w-fit`，各带一枚图标 |
+| 降级提示 / `搜索理解为：…`（`components/Notice.tsx` 的 `NOTICE`） | `rounded-2xl border bg-card px-3 py-2` 面板，**`w-full` + `mb-4`**，各带一枚图标 |
 | 空结果 | 居中的空态块（图标 + 一句话），不是一行浮在空白里的字 |
 
 三条不能随手改的：
@@ -431,6 +460,12 @@ CSS 那边要用 `w-(--viewer-aside-w)` 给两块浮层量自己的宽高，两�
   浅色 4.7、深色 6.9。这一档差得不多，**肉眼看不出来，只有量才知道**——换底色要重量。
 - **提示胶囊不给交互态**（没有 hover、不进 tab 序、不加 `TOUCH`）：它是说明不是按钮，
   长成能点的样子，用户就会去点它。
+- **面板撑满宽度、带 `mb-4`**（2026-09-26 由产品负责人定）。此前是 `w-fit`，理由是
+  「30 个字的说明撑满一条横幅会留一大片空白」——**那条理由被否了**：这几块是与下面
+  一整块结果配套的状态说明，宽度跟着结果走才读得出它在说哪一块，缩成一小条反而像内容。
+  别按旧理由改回 `w-fit`。**下边距两处不一样**（量过）：浏览页是块级流，折叠后 16px；
+  首页的容器是 `flex flex-col gap-3`，不折叠，12 + 16 = 28px。同一个组件挂在两处，
+  数不同是容器的差别，不是漏改。
 
 > 同类的那一处**已经做完了**（2026-09-24）：复制反馈那句 `copyNote.text` 在首页与浏览页
 > 各是一行裸文字（`SearchResults.tsx` / `BrowseResults.tsx`）。它现在是右上角 toast

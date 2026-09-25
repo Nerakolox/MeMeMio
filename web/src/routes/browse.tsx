@@ -59,6 +59,36 @@
  *   瀑布流（masonic 的虚拟化要自己喂 `scrollTop`，理由见 BrowseResults 的文件头）。
  *   此前那套 `scrollbar-gutter: stable` 不再需要：Radix 的滚动条是**浮层**、不占宽，
  *   「竖条出现 → 容器窄 15px → 列数变少 → 墙变矮 → 竖条消失」这条回路从根上不存在。
+ *
+ * ## 第四稿（2026-09-26）：搜索带横在两列**上面**，占满内容宽
+ *
+ * 形状定了三次，第三次才是要的样子——产品负责人的两句话：「搜索也要放在上面」、
+ * 「而且也要占满宽度」。所以搜索**不在结果列里**，而是分栏组**上面一整条**：
+ *
+ * ```text
+ *   ┌──────────────────────────────────────────────┐
+ *   │ [ 用一句话描述你要找的图…            ] [搜索] │ ← 搜索带（整宽、md 以上钉住）
+ *   ├────────────┬─────────────────────────────────┤
+ *   │ 筛选列     │ 结果列（两根列各自滚）          │
+ *   └────────────┴─────────────────────────────────┘
+ * ```
+ *
+ * 结构上外层多了一根纵向 flex：外层拿高度（`100svh − 顶栏`，`md:-my-6` + `md:py-6`
+ * 那套一个字没改，只是从分栏组挪到了外层），搜索带 `shrink-0`、分栏组 `md:flex-1 md:min-h-0`
+ * ——**余量由 flex 分配，算式里不需要加搜索带这一项**。
+ *
+ * ⚠️ 分栏组自己那行内 `height: 100%` 要用 `md:h-auto!` 压掉：不压的话它按外层整高排，
+ * 搜索带会被顶到可视区外面去（行内样式只服 `!important`，原因见 `ui/resizable.tsx`）。
+ *
+ * 两条走过的弯路，记下来免得再来一遍：
+ *   · 第三稿把搜索框放进**结果列的滚动区**：省事，但滚下去就看不见了；
+ *   · 第四稿初版把它**钉在结果列顶上**：滚不掉了，可它只占右列、还被 `max-w-2xl`
+ *     封在 672px（「别横铺到头」是当时的理由，产品负责人否掉：搜的是一整句话，
+ *     而这一条是这一页的主入口）。
+ *
+ * 搜索框本身同日也试过多行（`SearchBar` 的 `multiline`），**当天换回单行**——输入框在左、
+ * 按钮在右，与首页那条路逐字一致。那个分支已删，别再恢复：要恢复先问，多行框的坑
+ * （`Textarea` 没有 `forwardRef`、`TOUCH` 会压掉注册表的 `min-h-16`）不在代码里了。
  */
 
 import * as React from 'react'
@@ -90,112 +120,125 @@ export function BrowsePage() {
   return (
     <>
       {/*
-        `md:py-6` 不是「顺手加的间距」：它和 `md:-my-6` 一起把两列放回改前的位置
-        （顶栏下 24px），见上面那段推导。
+        外层：md 以上**页面本身不滚动**（只有两根列各自滚），搜索带横在两列**上面**。
 
-        面板尺寸用**数字**（react-resizable-panels v4 的约定：数字=像素，
-        无单位字符串=百分比）：220 是筛选列原来的宽度；可拖范围 168（再窄 chip 就得换行）
-        到 420。`groupResizeBehavior="preserve-pixel-size"` 让窗口变大时**筛选列宽度不变**，
-        多出来的全归结果列——这就是「左栏固定、右栏占满」的字面意思。
-
-        高度上的两个 `!` 不能省：库给自己写行内 `height:100%` + `display:flex`，
-        而行内样式压得过大类——只有 `!important` 能反过来压住它（ui/resizable.tsx 记了这条）。
-        没有 `!` 的表现是「容器高 = 内容高」：页面又能滚了，左栏跟着跑，回到第二稿之前。
+        `md:py-6` 不是「顺手加的间距」：它和 `md:-my-6` 一起把内容放回改前的位置
+        （顶栏下 24px），见上面那段推导。`max-md:block` 让窄屏退回普通块级堆叠
+        （那一档整页在滚，与改前逐字一致）。
       */}
-      <ResizablePanelGroup
-        orientation="horizontal"
-        className="max-md:block! max-md:h-auto! md:-my-6 md:h-[calc(100svh_-_var(--app-header-h))]! md:py-6"
-      >
-        {/* 桌面筛选列。手机上 `hidden`（那时走 `BrowseFilterSheet` 抽屉）。 */}
-        <ResizablePanel
-          id="filters"
-          defaultSize={220}
-          minSize={168}
-          maxSize={420}
-          groupResizeBehavior="preserve-pixel-size"
-          className="hidden md:block"
-        >
-          {/*
-            `pr-3` 是留给滚动条的：Radix 的竖条是**浮层**，绝对定位在 Root 的右沿，
-            而 viewport 是 `size-full`（撑满内容盒）——不留这几像素，筛选内容的右端
-            会被浮层压住 8px。结果列同理（那边被压的是最右一列的图）。
-          */}
-          <ScrollArea className="h-full pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain">
-            <BrowseFilters filters={filters} user={user} />
-          </ScrollArea>
-        </ResizablePanel>
+      <div className="flex flex-col max-md:block md:-my-6 md:h-[calc(100svh_-_var(--app-header-h))] md:py-6">
+        {/*
+          搜索带：**横跨两列、占满内容宽**（产品负责人 2026-09-26 定的形状：
+          「搜索也要放在上面」「而且也要占满宽度」）。
+
+          `shrink-0` = 别被下面那根 `md:flex-1` 的分栏组挤扁；`pb-4` 是它与两列之间的
+          空档（改前是 `mb-4`）。`md:pr-3` 与结果列的滚动区同值：浮层滚动条压的是
+          内容右沿，这边不加的话按钮会比最右一列的图宽出去 12px。
+
+          ⚠️ **`autoFocus={false}`**：这一页是「翻着看」的，进来多半是点筛选或直接滚，
+          抢走焦点会让手机上先弹一层键盘盖住半屏；这里的查询词通常也是从 URL 进来的
+          （别人分享的链接），不是现打的。理由与闸门写在 `components/SearchBar`。
+        */}
+        <div className="shrink-0 pb-4 md:pr-3">
+          <SearchBar
+            value={filters.draft}
+            onChange={filters.setDraft}
+            onSubmit={filters.commitQuery}
+            autoFocus={false}
+          />
+
+          {/* 窄屏工具条：抽屉入口 + 快捷「清除」。桌面这行不存在（筛选列常驻在左边） */}
+          <div className="mt-3 flex items-center gap-2 md:hidden">
+            <BrowseFilterSheet filters={filters} user={user} />
+            {filters.hasFilters && (
+              <Button variant="ghost" size="sm" className={TOUCH} onClick={filters.clear}>
+                清除
+              </Button>
+            )}
+          </div>
+        </div>
 
         {/*
-          拖拽手柄。`mx-3` 撑出两列之间的空档（改前是 `md:gap-6` 的 24px），
-          1px 的线因此落在正中间。可见的那 1px 当然不到 44px 触摸目标，
-          但**这条路径只在 md 以上存在**，且库自己给粗指针留了 37px 的命中区
-          （`resizeTargetMinimumSize` 的默认值），不会「按不准」。
+          `md:flex-1 md:min-h-0`：分栏组吃掉搜索带以外的余量——**算式里不用加搜索带这一项**，
+          由 flex 分配。两个类各挡一件事：`flex-1` 是「占满剩下的高」，
+          `min-h-0` 是「可以矮过内容」（flex 项默认 `min-height: auto`，不给 0 的话
+          两根列会被图墙撑高、自己就不滚了，等于退回成整页滚）。
+
+          ⚠️ `md:h-auto!` 压掉库那行内 `height: 100%`：不压的话分栏组按外层整高排，
+          搜索带会被顶到可视区外面去（行内样式只服 `!important`，见 `ui/resizable.tsx`）。
+
+          面板尺寸用**数字**（react-resizable-panels v4 的约定：数字=像素，
+          无单位字符串=百分比）：220 是筛选列原来的宽度；可拖范围 168（再窄 chip 就得换行）
+          到 420。`groupResizeBehavior="preserve-pixel-size"` 让窗口变大时**筛选列宽度不变**，
+          多出来的全归结果列——这就是「左栏固定、右栏占满」的字面意思。
         */}
-        <ResizableHandle className="mx-3 hidden md:flex" />
-
-        <ResizablePanel id="results" minSize={320}>
-          {/*
-            `h-full` 撑满面板。**不要**往这里塞内边距：瀑布流按容器的 `offsetWidth`
-            算列数，内边距会把最后一列顶出去。窄屏工具条放在 viewport 里，
-            因此它跟着内容一起滚（改前也是这样）。
-
-            Radix 会在 viewport 里套一层 `display:table` 的行内样式 div，块级孩子
-            进表里按收缩宽度算——实测瀑布流容器的 `offsetWidth` 仍是满宽
-            （那层带着 `min-width:100%` 兜底），列数与改前逐字相同，所以没有加
-            `[&>div]:block!`。**别照抄别人的写法**：这里加不加以量出来的列数为准，
-            见任务文件的验收数字。
-          */}
-          <ScrollArea
-            viewportRef={setScroller}
-            /* `md:pr-3` 的 `md:` 不能省：手机上这个 viewport 不滚、没有滚动条可躲，
-               白扣掉的 12px 正好让列数从 2 掉到 1（(330+12)/172 = 1.98），
-               而 2 列才是这一档原来的样子。 */
-            className="h-full md:pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain"
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="max-md:block! max-md:h-auto! md:h-auto! md:min-h-0 md:flex-1"
+        >
+          {/* 桌面筛选列。手机上 `hidden`（那时走 `BrowseFilterSheet` 抽屉）。 */}
+          <ResizablePanel
+            id="filters"
+            defaultSize={220}
+            minSize={168}
+            maxSize={420}
+            groupResizeBehavior="preserve-pixel-size"
+            className="hidden md:block"
           >
             {/*
-              搜索框（2026-09-26 合流加）。**没有它 `/browse?q=` 只能靠手打地址进**，
-              而合流的意义正是「检索与筛选是同一条列表」（state-navigation.md §6）。
-
-              ⚠️ **`autoFocus={false}`**：这一页是「翻着看」的，进来多半是点筛选或直接滚，
-              抢走焦点会让手机上先弹一层键盘盖住半屏；这里的查询词通常也是从 URL
-              进来的（别人分享的链接），不是现打的。理由与闸门写在 `components/SearchBar`。
-
-              位置：结果列的最上面（在窄屏工具条之上）。**它会跟着内容一起滚**——
-              与它下面那行工具条一样，因为这里不能塞固定头：md 以上容器高度钉死在
-              `100svh − 顶栏`（见文件头那段推导），往滚动区外面加一行就得改那个算式。
-              代价记在这儿：滚到下面时搜索框看不见了，要改得先动那套高度。
+              `pr-3` 是留给滚动条的：Radix 的竖条是**浮层**，绝对定位在 Root 的右沿，
+              而 viewport 是 `size-full`（撑满内容盒）——不留这几像素，筛选内容的右端
+              会被浮层压住 8px。结果列同理（那边被压的是最右一列的图）。
             */}
-            <div className="mb-4">
-              <SearchBar
-                value={filters.draft}
-                onChange={filters.setDraft}
-                onSubmit={filters.commitQuery}
-                autoFocus={false}
+            <ScrollArea className="h-full pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain">
+              <BrowseFilters filters={filters} user={user} />
+            </ScrollArea>
+          </ResizablePanel>
+
+          {/*
+            拖拽手柄。`mx-3` 撑出两列之间的空档（改前是 `md:gap-6` 的 24px），
+            1px 的线因此落在正中间。可见的那 1px 当然不到 44px 触摸目标，
+            但**这条路径只在 md 以上存在**，且库自己给粗指针留了 37px 的命中区
+            （`resizeTargetMinimumSize` 的默认值），不会「按不准」。
+          */}
+          <ResizableHandle className="mx-3 hidden md:flex" />
+
+          <ResizablePanel id="results" minSize={320}>
+            {/*
+              **不要**往滚动区里塞内边距：瀑布流按容器的 `offsetWidth` 算列数，
+              内边距会把最后一列顶出去。
+
+              Radix 会在 viewport 里套一层 `display:table` 的行内样式 div，块级孩子
+              进表里按收缩宽度算——实测瀑布流容器的 `offsetWidth` 仍是满宽
+              （那层带着 `min-width:100%` 兜底），列数与改前逐字相同，所以没有加
+              `[&>div]:block!`。**别照抄别人的写法**：这里加不加以量出来的列数为准，
+              见任务文件的验收数字。
+
+              `h-full`：面板的高度是定的（分栏组 `md:flex-1`），滚动区撑满它。
+              **窄屏这一档它不生效也不该生效**：面板那时是普通块（`max-md:block!`）、
+              高度 auto，滚动区高度由内容决定，滚的是整页——与改前逐字一致
+              （`BrowseResults` 的 `useScrollMetrics` 正是按「谁真的在滚」判的）。
+            */}
+            <ScrollArea
+              viewportRef={setScroller}
+              /* `md:pr-3` 的 `md:` 不能省：手机上这个 viewport 不滚、没有滚动条可躲，
+                 白扣掉的 12px 正好让列数从 2 掉到 1（(330+12)/172 = 1.98），
+                 而 2 列才是这一档原来的样子。 */
+              className="h-full md:pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain"
+            >
+              <BrowseResults
+                list={list}
+                user={user}
+                searching={filters.query !== ''}
+                scrollEl={scroller}
+                onSend={(t) => void actions.send(t)}
+                onEdit={(meme) => actions.openEditor(meme.id)}
+                onRemove={actions.remove}
               />
-            </div>
-
-            {/* 窄屏工具条：抽屉入口 + 快捷「清除」。桌面这行不存在（筛选列常驻在左边） */}
-            <div className="mb-4 flex items-center gap-2 md:hidden">
-              <BrowseFilterSheet filters={filters} user={user} />
-              {filters.hasFilters && (
-                <Button variant="ghost" size="sm" className={TOUCH} onClick={filters.clear}>
-                  清除
-                </Button>
-              )}
-            </div>
-
-            <BrowseResults
-              list={list}
-              user={user}
-              searching={filters.query !== ''}
-              scrollEl={scroller}
-              onSend={(t) => void actions.send(t)}
-              onEdit={(meme) => actions.openEditor(meme.id)}
-              onRemove={actions.remove}
-            />
-          </ScrollArea>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+            </ScrollArea>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
 
       {/*
         编辑侧边栏。key 用 meme.id：换一张图时组件要重挂，草稿才有正确的初始值——
