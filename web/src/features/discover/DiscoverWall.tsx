@@ -164,7 +164,7 @@ export function DiscoverWall() {
           <div className={WALL_GRID}>
             {/* 这一屏只有收藏一个动作，**没有复制 / 下载 / 分享**，是有意的：
                 发送路径的入口至今只做到搜索结果与浏览页（见
-                joint-tasks/2026-09-19-browse-meme-actions.md 的「明确不做」——
+                任务 2026-09-19-browse-meme-actions 的「明确不做」——
                 图墙卡片上那片位置留给后续的「复制 / 发送」）。
                 真流程在 src/lib/clipboard.ts，接的时候直接用它，别在这里另写一份。
 

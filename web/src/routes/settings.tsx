@@ -23,12 +23,12 @@ import { VisionSettings } from '../features/settings/VisionSettings'
  * ⚠️ Embedding **仍然是全站一份、仅管理员可改**（SPEC §9.6）——这条没有因为并页而变。
  * 它现在是设置页里的一个管理员分段，不是每人一份的用户设置。settings-ux.md §2 的
  * 「两个页面」和 SPEC §9.9 的「分成两个页面」是按旧结构写的，见
- * `joint-tasks/2026-09-18-settings-merge.md`。
+ * 任务 2026-09-18-settings-merge。
  *
  * 统计面板（settings-ux.md §9）仍未做——**它要的端点已经有了**（`GET /memes/tag-status?scope=all`
  * 早就支持），只是没人把「全站：已完成 / 待处理 / 需人工 / 索引过期」这一行画出来。
  * 目前全站计数只在 `RetagPanel` 里露了三个（作为重打标的进度），索引过期那一个仍无从查看。
- * 待办留在 `joint-tasks/2026-09-19-tagging-status.md`。
+ * 待办留在任务 2026-09-19-tagging-status。
  *
  * 2026-09-21：整页换成 shadcn 组件（原来是一套手写 BEM）。**结构一个字没动**——
  * 分段、顺序、锚点、折叠、管理员可见性都是契约，换的是它们长什么样。

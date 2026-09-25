@@ -216,7 +216,7 @@ export type MemeDetail = InferResponseType<MemesClient[':id']['$get']>
  * `emotions` → `emotionsV2`）服务端会拒，但前端编译期不会报错，只会在运行时收到
  * 一个 `VALIDATION_FAILED`。补法是 api 端给这条路由挂一个校验器让 RPC 能推导，
  * 那是 api 的实现约束（见 api/agents/rules/database.md 一类的本端规则），
- * 不是这一端能决定的——已回报总管，见 joint-tasks/2026-09-19-browse-meme-actions.md。
+ * 不是这一端能决定的——已回报总管，见任务 2026-09-19-browse-meme-actions。
  *
  * ⚠️ 这个缺口在 v0.2.0 拆维度那次**真的咬了一口**：某一维漏发，
  * 编译期一声不响，运行时也不报错——服务端只是没收到那个字段，于是按「不改」处理。

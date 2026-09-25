@@ -29,7 +29,7 @@ import { usePrefetchShare } from '../../lib/use-prefetch-share'
  *
  * 右键是桌面专属交互，手机上等于没有入口，而移动端是这个产品的主场
  * （styling.md「移动端不是适配，是主场」）。按钮两端都能用，位置固定、可键盘聚焦，
- * 也不和浏览器的原生右键菜单抢。理由见 joint-tasks/2026-09-19-browse-meme-actions.md。
+ * 也不和浏览器的原生右键菜单抢。理由见任务 2026-09-19-browse-meme-actions。
  *
  * ## 2026-09-21：手写弹层换成 `DropdownMenu` + `AlertDialog`
  *

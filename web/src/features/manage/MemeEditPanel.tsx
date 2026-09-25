@@ -138,7 +138,7 @@ export function MemeEditPanel({
           「描述以下什么都没有」，不报错、不告警。定高 flex 列里的 `overflow-hidden` 组件
           都会被这样吃掉，所以修在容器上而不是某一个子组件上——将来往这里加 `Card`
           （同样自带 `overflow-hidden`）不用再想一遍。实测数字见
-          joint-tasks/2026-09-22-语义维度拆分.md 的 web 端验收。
+          任务 2026-09-22-语义维度拆分 的 web 端验收。
         */}
         <div
           ref={bodyRef}
