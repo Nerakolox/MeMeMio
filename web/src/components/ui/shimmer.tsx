@@ -41,32 +41,51 @@ import { cn } from 'cn'
  * 理由与 `index.css` 里 `@keyframes shimmer` 那段一样：Tailwind v4 的 `translate-x-*`
  * 走的是 `translate` 独立属性，和 `transform` 会叠加，两边都写就扫不满。
  */
-export function Shimmer({ className, ...props }: React.ComponentProps<'div'>) {
+export function Shimmer({
+  className,
+  appear = true,
+  ...props
+}: React.ComponentProps<'div'> & {
+  /**
+   * 挂上时要不要淡入。**只有「灰色第一次出现」的那一处该淡入**——列表级骨架
+   * （浏览页、图墙、rail、打标列表、待确认队列）。
+   *
+   * ⚠️ **`MemeImage` 那一处必须传 `false`**：数据一到，整墙骨架就换成每张卡自己的
+   * 占位块，灰色是**接过来的**，不是新出现的。那里也淡入的话，交棒那一帧整屏的灰
+   * 一起掉到 0 再爬回来——就是「全屏闪一下」（2026-09-26 逐帧量到：浏览页灰量
+   * 12 → 0 → 4，首页 26 → 4）。masonic 首帧后会把容器重挂一次，格子跟着重挂，
+   * 同样会再闪一遍。
+   */
+  appear?: boolean
+}) {
   return (
-    <div data-slot="shimmer" className={cn(SHIMMER_BASE, className)} {...props}>
+    <div
+      data-slot="shimmer"
+      className={cn(SHIMMER_BASE, appear && SHIMMER_APPEAR, className)}
+      {...props}
+    >
       <span className={SHIMMER_BAND} />
     </div>
   )
 }
 
 /**
- * 底色 + 进场。**`relative` 与 `overflow-hidden` 都在这**：扫光那条是绝对定位的，
+ * 底色。**`relative` 与 `overflow-hidden` 都在这**：扫光那条是绝对定位的，
  * 少一个容器就裁不住它（它会横穿整个页面）。
  *
  * ⚠️ **`relative` 是可以被覆盖的**，`MemeImage` 就传 `absolute inset-0` 把整个占位块
  * 铺在图片框里——`cn` 做的是 tailwind-merge 那套「后者赢」，不会两份都留在类名里。
- *
+ */
+const SHIMMER_BASE = 'relative block overflow-hidden rounded-2xl bg-muted-foreground/30'
+
+/**
  * 进场是 **200ms 淡入**：这个工具要快（styling.md「不做的」），所以不吃 `animate-in`
  * 自带的那档默认时长，也**不做缩放**——缩放会让整墙的格子一起「弹」一下，
  * 而一屏可能有几十个。
  *
- * **这只是「出现」那一次动效的一半。** 另一半在 `MemeImage` 的 `<img>` 上：图到了自己
- * 也从 `opacity-0` 抬到 1（同样 200ms）。进场的这条是「占位块出现」，那条是「图出现」，
- * 两者在同一张卡上先后各走一次，中间那 200ms 底下是白底——取舍写在那边。
+ * 「出现」的另一半在 `MemeImage`：图到了与占位块**交叉淡变**，不是先摘灰块再淡图。
  */
-const SHIMMER_BASE =
-  'relative block overflow-hidden rounded-2xl bg-muted-foreground/30 ' +
-  'animate-in fade-in-0 duration-200 motion-reduce:animate-none'
+const SHIMMER_APPEAR = 'animate-in fade-in-0 duration-200 motion-reduce:animate-none'
 
 /**
  * 扫光本身。**`w-full` 是「和容器一样宽」**，所以 `translateX(200%)` 正好从

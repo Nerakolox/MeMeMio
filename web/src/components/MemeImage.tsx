@@ -1,8 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import type { Meme } from '../lib/api'
+import { cn } from '../lib/utils'
 import { useImageViewer } from './ImageViewer'
 import { Shimmer } from './ui/shimmer'
+
+/** 占位块淡出的时长（`duration-200`）+ 一点余量，到点才从 DOM 摘掉。 */
+const SHIMMER_FADE_MS = 240
 
 /**
  * 卡片的比例形态。**两种都是既有行为，不是新选择**：
@@ -89,6 +93,16 @@ export function memeRatio(meme: Meme): number {
  */
 export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: ImageShape }) {
   const [loaded, setLoaded] = useState(false)
+  /**
+   * 占位块淡完之后才摘。**不靠 `transitionend`**：`prefers-reduced-motion` 下没有过渡，
+   * 那个事件永远不来，占位块就一直挂着（透明、但仍是个节点）。定时器两档都收得了尾。
+   */
+  const [shimmerGone, setShimmerGone] = useState(false)
+  useEffect(() => {
+    if (!loaded) return
+    const t = setTimeout(() => setShimmerGone(true), SHIMMER_FADE_MS)
+    return () => clearTimeout(t)
+  }, [loaded])
   const [failed, setFailed] = useState(false)
   const [playing, setPlaying] = useState(false)
   const openImage = useImageViewer()
@@ -137,21 +151,9 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
     >
       <img
         className={
-          // **图到了才淡入。** 占位块那半条是「它自己出现时淡入」（`ui/shimmer.tsx`），
-          // 这是另一半：`loaded` 那一帧占位块摘掉、图从 0 抬到 1，200ms，与占位块同档。
-          //
-          // ⚠️ 斜坡那 200ms 底下是**图片框自己的白底**（`bg-white`，两个主题都是）——
-          // 占位块在 `loaded` 同一帧就没了，不会等在下面当背景。看着是「灰块 → 卡片
-          // 空一下 → 图淡上来」而不是「灰块化进图里」，这是有意的取舍：要留住灰色背景
-          // 就得让占位块在 DOM 里多活 200ms，那期间那道**无限循环**的扫光也得多跑 200ms，
-          // 每个已加载的格子都要为一次 200ms 的观感背一个常驻节点。不值。
-          //
-          // 加载中置 `opacity-0`：那一刻 `<img>` 本来就画不出东西，置不置都是占位块在屏幕
-          // 上；置了，图到的那一帧才会走过渡而不是硬切。hover 播放动图时 `loaded` 已经是
-          // true，换 `src` 不会再淡一次（那一档的连续靠首帧与缩略图同源）。
-          'h-full w-full transition-opacity duration-200 motion-reduce:transition-none ' +
-          (shape === 'natural' ? 'object-contain' : 'object-cover') +
-          (loaded ? ' opacity-100' : ' opacity-0')
+          shape === 'natural'
+            ? 'h-full w-full object-contain'
+            : 'h-full w-full object-cover'
         }
         src={src}
         alt={label}
@@ -172,8 +174,23 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
         底色的深浅、扫光的强弱全在 `Shimmer` 里，**这里只覆盖深色那一档**：
         这个框在两个主题下都是白底（见文件头），所以深色模式下要的是浅色档那道扫光，
         不然白光压在 `white/15` 上等于没有。
+
+        **图到了是交叉淡变**：占位块压在图上面，`loaded` 之后它自己 200ms 淡出、露出
+        底下已经画好的图，淡完再摘掉。图本身**不再**做 opacity 过渡——两边同时淡的话
+        中点两层都是半透明，露出白底，就是「闪一下」。
+
+        `appear={false}`：这里的灰是从列表骨架**接过来**的，不是新出现的，
+        再淡入一次就是整屏的灰同时掉到 0（见 `Shimmer` 的 `appear`）。
       */}
-      {!loaded && <Shimmer className="absolute inset-0 dark:via-white/60" />}
+      {!shimmerGone && (
+        <Shimmer
+          appear={false}
+          className={cn(
+            'absolute inset-0 dark:via-white/60',
+            loaded && 'opacity-0 transition-opacity duration-200 motion-reduce:transition-none',
+          )}
+        />
+      )}
     </button>
   )
 
