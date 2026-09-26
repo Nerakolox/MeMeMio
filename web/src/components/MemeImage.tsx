@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import type { Meme } from '../lib/api'
 import { cn } from '../lib/utils'
@@ -103,6 +103,25 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
     const t = setTimeout(() => setShimmerGone(true), SHIMMER_FADE_MS)
     return () => clearTimeout(t)
   }, [loaded])
+
+  /**
+   * **挂上时图已经在手里了，就不摆占位块。** 浏览页瀑布流是虚拟化的：卡片滚出视口几屏
+   * 就被摘掉，滚回来是**新挂**的——`loaded` 从 false 重来，一张早就看过的图先变灰、
+   * 再花 200ms 淡回来。2026-09-26 实测：5 页 × 40 条滚到底再滚回顶，回程新挂 158 张、
+   * 每张都重摆一次占位块，而网络请求是 0（字节在浏览器的内存缓存里）。
+   *
+   * 判据是 `img.complete && naturalWidth > 0`：命中内存缓存的图在插进 DOM 的那一刻就是
+   * complete。放在 layout effect 里是为了**赶在首帧之前**——放 effect 里，灰块会先画出来一帧。
+   * 两个状态一起置上：这里不是「图刚到」，没有要交叉淡变的东西。
+   */
+  const imgRef = useRef<HTMLImageElement>(null)
+  useLayoutEffect(() => {
+    const img = imgRef.current
+    if (img?.complete && img.naturalWidth > 0) {
+      setLoaded(true)
+      setShimmerGone(true)
+    }
+  }, [])
   const [failed, setFailed] = useState(false)
   const [playing, setPlaying] = useState(false)
   const openImage = useImageViewer()
@@ -150,6 +169,7 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
       style={shape === 'natural' ? { aspectRatio: memeRatio(meme) } : undefined}
     >
       <img
+        ref={imgRef}
         className={
           shape === 'natural'
             ? 'h-full w-full object-contain'
