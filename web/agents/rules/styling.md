@@ -299,6 +299,30 @@ useEffect(() => {
 
 **不裁剪是有原因的**：表情包的信息经常在边缘（一行小字、一个角标），`cover` 裁掉之后用户认不出这是哪张。
 
+## 横滑一条：`ScrollArea`，不是 `overflow-x-auto`（2026-09-26）
+
+首页两条 rail 与浏览页的结果列都要「一条能滚的东西」，**用 shadcn 的 `ScrollArea`**
+（横滑的那条传 `orientation="horizontal"`，见 `components/ui/scroll-area.tsx` 的本地改动二）。
+原生 `overflow-x-auto` 出来的滚动条在桌面上一律 15px、在 macOS 上还会随系统偏好整条消失，
+和 Radix 那根浮层条放在同一屏上一眼不像一套。
+
+四件必须一起记住的事：
+
+| 事 | 为什么 |
+|---|---|
+| **给条留出货道**：rail 是 `pb-3`，浏览页是 `pr-3` | Radix 的条是 `position: absolute; bottom/right: 0` 的**浮层**，不占内容高度——不留它就是直接压在图上 |
+| **`p-1` 在内、`-mx-1` 在外**（rail） | `p-1` 是上面「聚焦环要留出边距」那条在横向上的落地：viewport 是个裁剪盒，卡片帧的环要 4px。`-mx-1` 把这 4px 还给版心，rail 的首图才和图墙左沿对齐（实测两边都是 177） |
+| **`overscroll-x-contain` 挂在 viewport 上** | 滚动发生在 viewport 里，Root 那层没有 `overflow`——写到 Root 上**不报错**，只表现为「划到头整页跟着动」。写法：`[&>[data-slot=scroll-area-viewport]]:overscroll-x-contain` |
+| **别图省事挂两根条** | Radix 按「挂着哪几根条」定 viewport 的 `overflow`，多挂一根用不上的，那一轴就白白变成滚动容器（滑块不溢出时不画，看不出异常） |
+
+⚠️ **没有东西可滚的时候，Radix 连条的元素都不挂**（DOM 里没有
+`[data-slot=scroll-area-scrollbar]`，不只是滑块不画）。走查时量到「条不见了」先看
+`scrollHeight > clientHeight`——替身默认给浏览页 4 张、不溢出，就是拿 `browseTall` 摆出
+一屏装不下的量再量的（`scripts/mock-api.mjs` 那条开关的注释说的是同一件事）。
+
+一条 rail 的形状（**高度一致、宽度不一致**：行高定死、宽按这张图的比例算）不在这里，
+它是 `features/home/MemeRail.tsx` 的文件头，含「为什么不设宽度上限」「为什么另一根轴不齐」。
+
 ## 动图
 
 列表里的动图**默认不自动播放**，显示首帧 + 一个角标。一屏几十个 GIF 同时播放会让手机发烫、滚动掉帧。

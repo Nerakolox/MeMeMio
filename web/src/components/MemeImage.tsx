@@ -14,6 +14,30 @@ import { Skeleton } from './ui/skeleton'
 export type ImageShape = 'square' | 'natural'
 
 /**
+ * 一张图的比例（`width / height`，一个数）。**这是它的唯一落点。**
+ *
+ * `width`/`height` 为 null（旧数据、探测失败）或非正数时兜底 **1**（正方形）——
+ * 宁可占成一个方，也不能让格子高度塌成 0。
+ *
+ * 导出去是因为它有两个消费者，而两者必须算出同一个数：
+ *
+ * - `frameClass('natural')` 那一支按它占位（浏览页瀑布流、首页 rail 的每张卡）；
+ * - **首页 rail 按它算每一格的宽**（行高定死、宽随比例，见 `features/home/MemeRail.tsx`）。
+ *
+ * 各写一份的表现是：rail 里那个外框与图**在非方图上都对不齐**，而方图看上去一切正常
+ * ——最不容易发现的那种。
+ *
+ * 返回**一个数**而不是 `'4 / 3'` 那样的 CSS 写法，也是因为它要进 `calc()`：
+ * `calc(10rem * 4/3)` 里的 `4/3` 不是一个数，乘不出来。`aspectRatio` 两个都收，
+ * `calc()` 只收一个。
+ */
+export function memeRatio(meme: Meme): number {
+  return meme.width != null && meme.height != null && meme.width > 0 && meme.height > 0
+    ? meme.width / meme.height
+    : 1
+}
+
+/**
  * 一张表情包的承载层：占位、骨架、失败兜底、动图播放。
  *
  * 四个页面（浏览 / 搜索 / 图墙 / 打标列表）共用它，所以**角标、收藏按钮那些卡片级的东西
@@ -77,15 +101,6 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
   // 静态和播放是同一个地址，换 src 没有意义。
   const src = playing && meme.isAnimated ? meme.url : thumb
 
-  /**
-   * 按比例占位。`width`/`height` 为 null（旧数据、探测失败）时兜底 1:1——
-   * 宁可占成一个方，也不能让格子高度塌成 0。
-   */
-  const ratio =
-    meme.width != null && meme.height != null && meme.width > 0 && meme.height > 0
-      ? `${meme.width} / ${meme.height}`
-      : '1 / 1'
-
   function handleError() {
     // 播放失败退回静态首帧，**不把整张卡打成失败态**：第一帧本来就已经在屏幕上了，
     // 用户看到的仍然是一张正常的图，只是不动。
@@ -97,7 +112,7 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
     // **不包按钮**：图都没出来，进去只会看到一张破图，而这里能给的（是哪个文件坏了）
     // 才是那一步该看的信息。失败态是这一帧唯一的出口，没有别的动作可给。
     return (
-      <div className={frameClass(shape)} style={shape === 'natural' ? { aspectRatio: ratio } : undefined}>
+      <div className={frameClass(shape)} style={shape === 'natural' ? { aspectRatio: memeRatio(meme) } : undefined}>
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-3 text-center">
           <ImageOff className="size-6 shrink-0 text-zinc-400" />
           <span className="line-clamp-3 text-xs break-all text-zinc-500">
@@ -118,7 +133,7 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
       // `cursor: pointer`**（v3 加、v4 去掉，preflight 里也没有这条），不写的话
       // 鼠标划到图上仍是箭头——「这里能点」只剩读屏和提示文案在说。
       className={`${frameClass(shape)} cursor-pointer`}
-      style={shape === 'natural' ? { aspectRatio: ratio } : undefined}
+      style={shape === 'natural' ? { aspectRatio: memeRatio(meme) } : undefined}
     >
       <img
         className={
