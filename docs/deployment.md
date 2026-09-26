@@ -263,7 +263,155 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 
 ⚠️ **但这条探活只探得到「服务端配置通不通」，探不到「浏览器那头对不对」。** 缓存毒化那一类（§8.3）里 api 与 bucket 全都正常，探活是绿的，出错的是浏览器里的一次 CORS 检查——**别把探活通过读成「复制这条路就没问题了」**。
 
-## 9. 落地检查清单
+## 9. 首次部署
+
+前提：服务器上已经装好 Docker（带 Compose v2），并且**已经有一个跑在 Docker 里的反代**（Caddy 或 nginx）占着 80/443。代码在服务器上拉，镜像在服务器上构建，不走镜像仓库。
+
+> 反代如果是**直接装在宿主机上**的（不在容器里），它按容器名找不到 `mememio-app`，本节的 §9.3 不适用。先回来改这一节，不要自己给 `compose.yaml` 加 `ports:`（§4）。
+
+### 9.1 拉代码、填 `.env`
+
+```bash
+git clone <仓库地址> mememio && cd mememio
+cp .env.example .env
+```
+
+逐项填 `.env`（字段语义见 [environments.md](environments.md)），和本机开发不同的只有这几项：
+
+| 字段 | 部署时填什么 |
+|---|---|
+| `APP_SLUG` | 本机唯一。改了它，下文所有 `mememio-*` 都跟着变 |
+| `DB_PASSWORD` | `openssl rand -hex 24` |
+| `DATABASE_URL` | 照样例留着即可——容器里的 app 不读这一行，`compose.yaml` 会覆盖 |
+| `SESSION_SECRET` | `openssl rand -base64 32` |
+| `CONFIG_ENC_KEY` | `openssl rand -base64 24`（正好 32 字符）。**生成完立刻离线备份一份**（§7） |
+| `R2_*` | 按 §8 开通，`R2_PUBLIC_BASE_URL` 不带末尾 `/` |
+| `NODE_ENV` | **必须改成 `production`** |
+
+> ⚠️ **`NODE_ENV=production` 同时是「会话 cookie 带 `Secure`」的开关**（`api/src/routes/auth.ts`）。于是两个方向都会静默出错：
+>
+> - 忘了改 → cookie 不带 `Secure`，HTTPS 下照样能用，只是少了一层保护，**没有任何报错**。
+> - 改了但站点走的是 HTTP → 浏览器丢掉这个 cookie，表现是**注册 / 登录返回成功，下一个请求就 401**。先确认反代那头是 HTTPS。
+
+### 9.2 构建并起库、迁移、起服务
+
+```bash
+# 全机只需一次；已存在会报 already exists，忽略
+docker network create shared-proxy
+
+docker compose build
+docker compose up -d db
+docker compose run --rm app node dist/migrate.js
+docker compose up -d
+docker compose logs -f app
+```
+
+顺序不能换：迁移之前起 app，启动时的版本检查会发现库落后，打印待跑的迁移后 `exit(1)`（§6），`restart: unless-stopped` 会让它反复重启。
+
+日志里要看到监听端口那一行，**且没有「R2 探活失败」**（§8.4）。探活失败时进程拒绝启动，这是有意的。
+
+### 9.3 反代
+
+把反代容器接到 `shared-proxy` 网络上（已经接过的跳过这步）：
+
+```bash
+docker network connect shared-proxy <反代容器名>
+```
+
+**Caddy**（自动申请证书）：
+
+```caddyfile
+meme.example.com {
+	reverse_proxy mememio-app:3000
+}
+```
+
+**nginx**：
+
+```nginx
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name meme.example.com;
+    # ssl_certificate / ssl_certificate_key 按你已有的证书方案填
+
+    location / {
+        # 反代的 DNS 解析：容器重建后 IP 会变，用 Docker 内置 DNS 按名字每次解析
+        resolver 127.0.0.11 valid=30s;
+        set $upstream http://mememio-app:3000;
+        proxy_pass $upstream;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 导入进度走 SSE，服务端 15 秒发一次心跳；超时必须比它长
+        proxy_read_timeout 120s;
+        proxy_buffering off;
+    }
+}
+```
+
+**`X-Forwarded-For` 是限流的前提，不是可选项。** api 按「反代追加在末尾的那一项」认客户端 IP，默认信任**一层**反代（`api/src/lib/client-ip.ts` 的 `TRUSTED_PROXY_HOPS = 1`）。所以：
+
+- **nginx 必须设这个头**，用 `$proxy_add_x_forwarded_for`（追加）或 `$remote_addr`（覆盖）都行，末尾一项都是真实客户端。**不设**时 nginx 会把客户端自己带的 `X-Forwarded-For` 原样转发，末尾一项由请求方随便填，每次换一个值就换一个限流桶——登录限流（每分钟 10 次）等于没有。
+- Caddy 默认就会设，不用写。
+- **反代前面如果还有一层**（Cloudflare 橙云、云厂商负载均衡），就不是一层了。末尾那一项会变成 CDN 节点的地址，同一节点背后的人共用一个限流桶。**这种结构先不要上**，要改 api 端的取法。
+
+请求体上限不用调：导入只上传文件清单，图片本身由浏览器直传 R2，最大请求体约 1 MB（`api/src/app.ts` 的 `MAX_BODY_BYTES`），nginx 默认的 `client_max_body_size 1m` 刚好够。
+
+配完 reload 反代，确认：
+
+```bash
+curl -s https://meme.example.com/api/v1/health
+# {"status":"ok","startedAt":"...","vocabVersion":"..."}
+```
+
+### 9.4 首个管理员：反代一通立刻注册
+
+**第一个注册的人自动成为管理员（`User`），不需要邀请码**（SPEC §3.2）。之后所有注册都要邀请码。这意味着从反代生效到你注册完成之间，**谁先打开 `/register` 谁就是管理员**。这个空窗期是有意保留的（[SPEC §9.32](../spec/09-decisions.md)），靠操作顺序避开：
+
+1. 反代 reload 之后，**立刻**打开 `https://meme.example.com/register`，邀请码留空，注册。
+2. 确认自己是管理员：
+
+   ```bash
+   docker compose exec db psql -U mememio -d mememio -c "select name, role, created_at from users order by created_at"
+   ```
+
+   只有一行、`role` 是 `User`、名字是你的——完成。
+
+3. **如果第一行不是你**：马上把反代那条站点注释掉并 reload，然后清空用户及其挂着的一切（对方可能已经生成了邀请码、填了模型配置，这些表都有外键指向 `users`，只删 `users` 会失败）：
+
+   ```bash
+   docker compose exec db psql -U mememio -d mememio -c "truncate users cascade"
+   ```
+
+   ⚠️ **这条命令只在全新的库上用。** `cascade` 会连带清空所有引用用户的表，包括 `memes`——上线之后任何时候敲它，都是清库。
+
+   再回到第 1 步。
+
+之后给别人的邀请码在管理页生成。
+
+### 9.5 上线后第一轮核对
+
+走一遍 §10 的清单。其中三条只有在真域名下才验得到，别跳过：
+
+- R2 CORS 的 `AllowedOrigins` 换成了正式域名；
+- 真导一张图，`url` 和 `thumbUrl` 在浏览器里打得开；
+- 点一次「复制」，剪贴板里是图而不是下载。
+
+### 9.6 以后更新
+
+```bash
+git pull
+docker compose build
+docker compose run --rm app node dist/migrate.js
+docker compose up -d
+```
+
+`migrate` 每次都跑：没有新迁移时它什么也不做（drizzle 按账本跳过已跑过的），漏跑时新镜像会起不来（§6）。
+
+## 10. 落地检查清单
 
 新机器部署或者新加一个同机项目时，逐条核对：
 
@@ -280,4 +428,6 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 - [ ] 起一次进程确认没有「R2 探活失败」——它是 R2 配错唯一会主动报出来的地方（§8.4）
 - [ ] 真导一张图，在浏览器里打开返回的 `url` 和 `thumbUrl`，**看到图**而不是 404
 - [ ] `CONFIG_ENC_KEY` 已离线备份到 Docker 和数据库之外的地方
-- [ ] 反代已配置指向 `${APP_SLUG}-app`
+- [ ] `.env` 里 `NODE_ENV=production`，且站点走 HTTPS（§9.1：两者不匹配时登录后立刻 401）
+- [ ] 反代已配置指向 `${APP_SLUG}-app`，并设置了 `X-Forwarded-For`；反代前面**没有**再套一层 CDN（§9.3）
+- [ ] 首个注册的账号是自己，`role = 'User'`（§9.4）

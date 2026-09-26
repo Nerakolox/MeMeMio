@@ -1,6 +1,6 @@
 # 首次部署与积压的联合验收
 
-**状态**：`planning` ｜ **性质**：总管 + 运维（不改 `api/`、`web/` 代码）｜ 开于 2026-09-24
+**状态**：`in_progress` ｜ **性质**：总管 + 运维（不改 `api/`、`web/` 代码）｜ 开于 2026-09-24
 
 ## 1. 为什么要做
 
@@ -36,5 +36,25 @@
 
 ## 4. 阻塞
 
-- 首个管理员那一段，等[会话与访问收口](2026-09-24-auth-access-hardening.md) §4 第 1 条的裁定。
+- ~~首个管理员那一段，等[会话与访问收口](2026-09-24-auth-access-hardening.md) §4 第 1 条的裁定。~~ —— 2026-09-26 裁定为「保持现状、手册写清」，见 [SPEC §9.32](../spec/09-decisions.md)。
 - 需要一台部署目标机和一个域名：**由产品负责人提供**，本任务不假设已有。
+
+## 5. 进展（2026-09-26）
+
+**产品负责人给定的部署形态：** 服务器拉代码、自己 `docker compose build` 自己跑，不走镜像仓库；服务器上**已有**跑在 Docker 里的 Caddy / nginx 占着 80/443。这正好是现有 `compose.yaml` 的设计（不映射端口，挂 `shared-proxy`），**`compose.yaml` 与 `Dockerfile` 都没改**。
+
+**手册已写**：`docs/deployment.md` 新增 §9「首次部署」（原 §9 清单顺延为 §10，新增 3 条勾选项）：
+
+- §9.1 `.env` 与本机开发不同的项。单独标了 `NODE_ENV=production` —— 它同时是 cookie `Secure` 的开关，忘改是静默少一层保护，改了却走 HTTP 是「登录成功、下一个请求 401」；
+- §9.2 命令序列：`network create` → `build` → `up -d db` → `migrate` → `up -d`；
+- §9.3 Caddy / nginx 样例。nginx 带 `X-Forwarded-For`、Docker 内置 DNS、SSE 超时与 `proxy_buffering off`；写明 `TRUSTED_PROXY_HOPS = 1` 意味着**前面不能再套 CDN**；
+- §9.4 首个管理员：反代一通立刻注册 + SQL 核对 + 被抢注时 `truncate users cascade`（只限新库）；
+- §9.6 以后更新的四条命令。
+
+**没验的，别读成验过了：**
+
+- **一条命令都没在干净机器上跑过。** 本机试构建镜像时 Docker Desktop 没开，`docker compose build` 连不上 daemon，**镜像构建也没复跑**（上次真构建是 2026-09-13，之后两端依赖都变过）。
+- nginx 样例是按代码推出来的，没对着真 nginx 起过；Caddy 那两行同理。
+- `truncate users cascade` 没在库上执行过。
+
+**下一步：** ①本机开 Docker Desktop，照 §9.2 走一遍（反代用一个临时 Caddy 容器、`localhost` 域名），卡住的地方写回手册；②产品负责人在服务器上真部署一次；③之后逐项跑 §2 的「需要部署」那一类。
