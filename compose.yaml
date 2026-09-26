@@ -2,6 +2,7 @@
 #
 # ⚠️ 这个文件里不允许出现任何 ports: 映射。单机多项目下手工分配宿主端口必然出错，
 #    统一走 shared-proxy 反代，按容器名访问。本机开发要连数据库时用 compose.dev.yaml。
+#    反代装在宿主机上、进不了 Docker 网络时，叠加 compose.host-proxy.yaml（只开 app，只绑 127.0.0.1）。
 
 name: ${APP_SLUG}
 

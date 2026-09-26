@@ -1,0 +1,16 @@
+# 反代装在宿主机上（不在容器里）时用的叠加层。
+#
+# compose.yaml 不映射端口，靠反代容器挂 shared-proxy 按容器名访问（docs/deployment.md §4）。
+# 宿主机上的 nginx 进不了 Docker 网络，只能走宿主端口，所以这里给 app 开一个口。
+#
+# 不用每次敲 -f：在 .env 里写
+#   COMPOSE_FILE=compose.yaml:compose.host-proxy.yaml
+# 之后 docker compose 的所有子命令都会同时加载两个文件。见 docs/deployment.md §9.3。
+#
+# 绑 127.0.0.1 而不是 0.0.0.0：Docker 发布的端口会绕过 ufw，绑 0.0.0.0 等于把
+# 不带 HTTPS 的 app 直接挂到公网上。只开 app，db 永远不开。
+
+services:
+  app:
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-13080}:3000"

@@ -265,9 +265,16 @@ bucket 设置里开 **Public Access**，拿到 `https://pub-<hash>.r2.dev` 形�
 
 ## 9. 首次部署
 
-前提：服务器上已经装好 Docker（带 Compose v2），并且**已经有一个跑在 Docker 里的反代**（Caddy 或 nginx）占着 80/443。代码在服务器上拉，镜像在服务器上构建，不走镜像仓库。
+前提：服务器上已经装好 Docker（带 Compose v2），并且已经有一个反代（Caddy 或 nginx）占着 80/443、管着证书。代码在服务器上拉，镜像在服务器上构建，不走镜像仓库。
 
-> 反代如果是**直接装在宿主机上**的（不在容器里），它按容器名找不到 `mememio-app`，本节的 §9.3 不适用。先回来改这一节，不要自己给 `compose.yaml` 加 `ports:`（§4）。
+**先看反代装在哪，两种接法不一样**（§9.3）：
+
+| 反代 | 怎么找到 app | 要做的 |
+|---|---|---|
+| **A. 直接装在宿主机上**（`apt install nginx`，其他站点写的是 `proxy_pass http://127.0.0.1:端口`） | 宿主端口 `127.0.0.1:13080` | `.env` 里加一行 `COMPOSE_FILE`，叠加 `compose.host-proxy.yaml` |
+| **B. 跑在 Docker 容器里** | 容器名 `mememio-app:3000`，走 `shared-proxy` 网络 | 把反代容器接进 `shared-proxy` |
+
+A 是 §4「一个端口都不映射」的例外：宿主机上的进程进不了 Docker 网络，只能走宿主端口。例外被限定在一个单独的文件里，**只开 app、只绑 `127.0.0.1`**，`compose.yaml` 本身仍然一个 `ports:` 都没有。
 
 ### 9.1 拉代码、填 `.env`
 
@@ -287,6 +294,8 @@ cp .env.example .env
 | `CONFIG_ENC_KEY` | `openssl rand -base64 24`（正好 32 字符）。**生成完立刻离线备份一份**（§7） |
 | `R2_*` | 按 §8 开通，`R2_PUBLIC_BASE_URL` 不带末尾 `/` |
 | `NODE_ENV` | **必须改成 `production`** |
+| `COMPOSE_FILE` | **仅接法 A**：新加一行 `COMPOSE_FILE=compose.yaml:compose.host-proxy.yaml`。之后所有 `docker compose` 子命令都自动带上两个文件，不用每次敲 `-f` |
+| `APP_HOST_PORT` | **仅接法 A，可选**：默认 `13080`，和同机别的服务撞了再改 |
 
 > ⚠️ **`NODE_ENV=production` 同时是「会话 cookie 带 `Secure`」的开关**（`api/src/routes/auth.ts`）。于是两个方向都会静默出错：
 >
@@ -310,7 +319,49 @@ docker compose logs -f app
 
 日志里要看到监听端口那一行，**且没有「R2 探活失败」**（§8.4）。探活失败时进程拒绝启动，这是有意的。
 
+`docker network create shared-proxy` 两种接法都要跑：`compose.yaml` 把它声明成外部网络，不存在时 `up` 直接报错。接法 A 用不到它，但声明还在。
+
 ### 9.3 反代
+
+#### 接法 A：宿主机上的 nginx
+
+先确认端口通了（`docker compose ps` 里 app 那一行应显示 `127.0.0.1:13080->3000/tcp`）：
+
+```bash
+curl -s http://127.0.0.1:13080/api/v1/health
+```
+
+然后在 `http {}` 里加一个 `server`：
+
+```nginx
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name mememio.example.com;
+    # ssl_certificate / ssl_certificate_key：全局已配且证书覆盖这个子域时不用写
+
+    location / {
+        proxy_pass http://127.0.0.1:13080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 导入进度走 SSE，服务端 15 秒发一次心跳；超时必须比它长
+        proxy_read_timeout 120s;
+        proxy_buffering off;
+    }
+}
+```
+
+HTTP → HTTPS 跳转的那个 `server` 的 `server_name` 里也加上这个域名。
+
+> 为什么只要一个 `location /`：api 同域托管前端（`/api/*` 之外全回退 `index.html`），前后端是同一个进程，不需要像静态站那样拆 `root` 和 `/api/`。
+
+⚠️ **Docker 发布的端口不受 ufw 管**——它直接写 iptables。所以 `compose.host-proxy.yaml` 必须绑 `127.0.0.1`；写成 `"13080:3000"` 会让不带 HTTPS 的 app 直接暴露在公网上，而 `ufw status` 里看不出来。
+
+#### 接法 B：容器里的反代
 
 把反代容器接到 `shared-proxy` 网络上（已经接过的跳过这步）：
 
@@ -351,6 +402,8 @@ server {
     }
 }
 ```
+
+#### 两种接法都适用
 
 **`X-Forwarded-For` 是限流的前提，不是可选项。** api 按「反代追加在末尾的那一项」认客户端 IP，默认信任**一层**反代（`api/src/lib/client-ip.ts` 的 `TRUSTED_PROXY_HOPS = 1`）。所以：
 
@@ -418,7 +471,7 @@ docker compose up -d
 - [ ] `.env` 里 `APP_SLUG` 已改成本项目专属值，且与同机其他项目不重复
 - [ ] `docker volume ls` 中本项目的卷带 `APP_SLUG` 前缀，且不与他人同名
 - [ ] `docker network ls` 中内部网络带前缀；`shared-proxy` 已创建
-- [ ] compose 里**没有任何 `ports:` 映射**（db 尤其不能暴露）
+- [ ] `compose.yaml` 里**没有任何 `ports:` 映射**（db 尤其不能暴露）；接法 A 的端口只在 `compose.host-proxy.yaml` 里，且绑的是 `127.0.0.1`（§9.3）
 - [ ] **部署机上不存在、也永远不要用 `compose.dev.yaml`**——它唯一的作用是给本机开发把 db 的 5432 绑到 `127.0.0.1`，只在显式 `-f compose.dev.yaml` 时才生效。命名成 `compose.override.yaml` 会被自动加载，所以刻意**没有**这么命名
 - [ ] `R2_KEY_PREFIX` 已设置（若与其他项目共用 bucket），且以 `/` 结尾
 - [ ] `R2_PUBLIC_BASE_URL` 已设置，**不带末尾 `/`**，且**没有**把 `R2_KEY_PREFIX` 拼进去（§8.2）
