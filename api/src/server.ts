@@ -1,7 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { serve, type ServerType } from '@hono/node-server'
-import { serveStatic } from '@hono/node-server/serve-static'
 import { app } from './app.js'
 import { db, waitForDatabase } from './data/db.js'
 import { checkMigrations } from './data/migration-state.js'
@@ -15,6 +12,7 @@ import { installProcessErrorHandlers, installShutdownHandlers } from './shutdown
 import { resumeInterruptedBatches } from './services/import.js'
 import { assertR2Reachable } from './storage/r2.js'
 import { vocabulary, vocabularySize } from './vocab.js'
+import { mountWebDist } from './web-dist.js'
 
 /**
  * 启动顺序（agents/rules/env-validation.md §3）：
@@ -74,7 +72,9 @@ async function main(): Promise<void> {
   }
   log.info({ applied: migrations.applied }, '迁移版本已是最新')
 
-  mountWebDist()
+  if (!mountWebDist(app, WEB_DIST_DIR)) {
+    log.info({ dir: WEB_DIST_DIR }, '没有 web 构建产物，只提供 API（开发态正常）')
+  }
 
   const server = serve({ fetch: app.fetch, port: env.port }, (info) => {
     log.info({ port: info.port, nodeEnv: env.nodeEnv }, 'HTTP 已启动')
@@ -127,27 +127,6 @@ function closeHttpServer(server: ServerType): void {
   // `ServerType` 那个联合里有 http2 的那几个（TLS 部署用），而 http2 的连接归 session
   // 管、没有这个方法。这里实际起的是 http1 服务，`in` 收窄一下比断言干净
   if ('closeAllConnections' in server) server.closeAllConnections()
-}
-
-/**
- * 同域托管 SPA（SPEC §0.1 / §1.1）：/api/* 之外的路径回退到 index.html。
- * 开发态 public/ 不存在（web 跑在 Vite 上），跳过即可，不是错误。
- */
-function mountWebDist(): void {
-  const indexPath = join(WEB_DIST_DIR, 'index.html')
-  if (!existsSync(indexPath)) {
-    log.info({ dir: WEB_DIST_DIR }, '没有 web 构建产物，只提供 API（开发态正常）')
-    return
-  }
-
-  const indexHtml = readFileSync(indexPath, 'utf-8')
-
-  app.use('/assets/*', serveStatic({ root: './public' }))
-  app.get('*', async (c, next) => {
-    // /api/* 没命中就交给 notFound 出错误信封，不要给它返回一张 HTML
-    if (c.req.path.startsWith('/api/')) return next()
-    return c.html(indexHtml)
-  })
 }
 
 main().catch((error: unknown) => {
