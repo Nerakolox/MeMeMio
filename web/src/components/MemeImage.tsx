@@ -137,9 +137,21 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
     >
       <img
         className={
-          shape === 'natural'
-            ? 'h-full w-full object-contain'
-            : 'h-full w-full object-cover'
+          // **图到了才淡入。** 占位块那半条是「它自己出现时淡入」（`ui/shimmer.tsx`），
+          // 这是另一半：`loaded` 那一帧占位块摘掉、图从 0 抬到 1，200ms，与占位块同档。
+          //
+          // ⚠️ 斜坡那 200ms 底下是**图片框自己的白底**（`bg-white`，两个主题都是）——
+          // 占位块在 `loaded` 同一帧就没了，不会等在下面当背景。看着是「灰块 → 卡片
+          // 空一下 → 图淡上来」而不是「灰块化进图里」，这是有意的取舍：要留住灰色背景
+          // 就得让占位块在 DOM 里多活 200ms，那期间那道**无限循环**的扫光也得多跑 200ms，
+          // 每个已加载的格子都要为一次 200ms 的观感背一个常驻节点。不值。
+          //
+          // 加载中置 `opacity-0`：那一刻 `<img>` 本来就画不出东西，置不置都是占位块在屏幕
+          // 上；置了，图到的那一帧才会走过渡而不是硬切。hover 播放动图时 `loaded` 已经是
+          // true，换 `src` 不会再淡一次（那一档的连续靠首帧与缩略图同源）。
+          'h-full w-full transition-opacity duration-200 motion-reduce:transition-none ' +
+          (shape === 'natural' ? 'object-contain' : 'object-cover') +
+          (loaded ? ' opacity-100' : ' opacity-0')
         }
         src={src}
         alt={label}

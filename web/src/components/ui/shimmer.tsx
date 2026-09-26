@@ -59,6 +59,10 @@ export function Shimmer({ className, ...props }: React.ComponentProps<'div'>) {
  * 进场是 **200ms 淡入**：这个工具要快（styling.md「不做的」），所以不吃 `animate-in`
  * 自带的那档默认时长，也**不做缩放**——缩放会让整墙的格子一起「弹」一下，
  * 而一屏可能有几十个。
+ *
+ * **这只是「出现」那一次动效的一半。** 另一半在 `MemeImage` 的 `<img>` 上：图到了自己
+ * 也从 `opacity-0` 抬到 1（同样 200ms）。进场的这条是「占位块出现」，那条是「图出现」，
+ * 两者在同一张卡上先后各走一次，中间那 200ms 底下是白底——取舍写在那边。
  */
 const SHIMMER_BASE =
   'relative block overflow-hidden rounded-2xl bg-muted-foreground/30 ' +
