@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
-import { Skeleton } from '../../components/ui/skeleton'
+import { Shimmer } from '../../components/ui/shimmer'
 import { MemeGallery } from '../../components/ImageViewer'
 import { MemeCard } from '../../components/MemeCard'
 import { ApiError, fetchMemes, toStateError, toggleFavorite, type Meme } from '../../lib/api'
@@ -83,8 +83,7 @@ export function TaggingList({ status }: { status: string }) {
     return (
       <div className={GRID} aria-busy="true">
         {Array.from({ length: 6 }).map((_, i) => (
-          // `motion-reduce:animate-none` 不能省：注册表的 Skeleton 只有 animate-pulse
-          <Skeleton key={i} aria-hidden="true" className="aspect-square motion-reduce:animate-none" />
+          <Shimmer key={i} aria-hidden="true" className="aspect-square" />
         ))}
       </div>
     )

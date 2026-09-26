@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import type { Meme } from '../lib/api'
 import { useImageViewer } from './ImageViewer'
-import { Skeleton } from './ui/skeleton'
+import { Shimmer } from './ui/shimmer'
 
 /**
  * 卡片的比例形态。**两种都是既有行为，不是新选择**：
@@ -155,7 +155,13 @@ export function MemeImage({ meme, shape = 'square' }: { meme: Meme; shape?: Imag
         onPointerEnter={meme.isAnimated ? handlePointerEnter : undefined}
         onPointerLeave={meme.isAnimated ? handlePointerLeave : undefined}
       />
-      {!loaded && <Skeleton className="absolute inset-0 rounded-2xl bg-zinc-200" />}
+      {/*
+        占位块铺满整个框，`absolute inset-0` 覆盖掉组件自己的 `relative`（`cn` 后者赢）。
+        底色的深浅、扫光的强弱全在 `Shimmer` 里，**这里只覆盖深色那一档**：
+        这个框在两个主题下都是白底（见文件头），所以深色模式下要的是浅色档那道扫光，
+        不然白光压在 `white/15` 上等于没有。
+      */}
+      {!loaded && <Shimmer className="absolute inset-0 dark:via-white/60" />}
     </button>
   )
 

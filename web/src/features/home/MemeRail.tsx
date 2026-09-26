@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Skeleton } from '../../components/ui/skeleton'
+import { Shimmer } from '../../components/ui/shimmer'
 import { Button } from '../../components/ui/button'
 import { ScrollArea } from '../../components/ui/scroll-area'
 import { MemeGallery } from '../../components/ImageViewer'
@@ -153,8 +153,7 @@ export function MemeRail({
           {Array.from({ length: RAIL_SIZE }).map((_, i) => (
             /* 还不知道比例，骨架一律占成方的——与 `memeRatio()` 的兜底同一个形状 */
             <div key={i} className={RAIL_ITEM} style={itemWidth(1)}>
-              {/* `motion-reduce:animate-none` 不能省：注册表的 Skeleton 只有 animate-pulse */}
-              <Skeleton aria-hidden="true" className="size-full motion-reduce:animate-none" />
+              <Shimmer aria-hidden="true" className="size-full" />
             </div>
           ))}
         </RailScroller>

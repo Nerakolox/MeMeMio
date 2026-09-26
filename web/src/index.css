@@ -83,6 +83,36 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /*
+   * 图片占位块那道扫光（`components/ui/shimmer.tsx`）。时长只有这一个落点——
+   * 改快改慢改这一个数，别去调用点写 `animate-[shimmer_…]`。
+   *
+   * 1.6s 是「看得出来在动、又不催人」的一档：这批占位块一屏能同时出现几十个
+   * （图墙、瀑布流、rail），比这更快会变成一片闪。
+   */
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+}
+
+/*
+ * 扫光的 keyframes 写在 `@theme` **外面**，和上面那批 token 不是一回事：
+ * 主题里那份按需输出，这份无条件输出。几行的东西，不值得再引入一层
+ * 「它到底有没有被 emit」的疑问。
+ *
+ * ⚠️ **动的是 `transform`，静止位置用 `left` 摆**，两个属性各管各的。
+ * Tailwind v4 的 `translate-x-*` 走的是 `translate` 这个**独立属性**
+ * （`translate: var(--tw-translate-x) …`，不是 `transform` 的一部分），
+ * 一个元素上两者会叠加：占位块若用 `-translate-x-full` 摆静止位、keyframes 又动
+ * `transform`，扫光会从「容器左外侧」起步后被再推一次，**整条扫不满就停住**
+ * （表现是白光从左边进来，走到中间不动了），而且不报错。
+ */
+@keyframes shimmer {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(200%);
+  }
 }
 
 :root {

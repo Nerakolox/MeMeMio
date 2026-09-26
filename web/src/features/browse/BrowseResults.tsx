@@ -41,7 +41,7 @@ import { MemeCard } from '../../components/MemeCard'
 import { DegradedNotice, EmptyNotice, RewrittenNotice } from '../../components/Notice'
 import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Button } from '../../components/ui/button'
-import { Skeleton } from '../../components/ui/skeleton'
+import { Shimmer } from '../../components/ui/shimmer'
 import { matchedBadges, type Meme, type User } from '../../lib/api'
 import type { SendTarget } from '../../lib/clipboard'
 import { TOUCH } from '../../lib/touch'
@@ -96,12 +96,7 @@ export function BrowseResults({
       {!initialDone && loading && (
         <div className={SKELETON_GRID} aria-busy="true">
           {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
-            // `motion-reduce:animate-none` 不能省：注册表的 Skeleton 只有 animate-pulse
-            <Skeleton
-              key={i}
-              aria-hidden="true"
-              className="aspect-square motion-reduce:animate-none"
-            />
+            <Shimmer key={i} aria-hidden="true" className="aspect-square" />
           ))}
         </div>
       )}

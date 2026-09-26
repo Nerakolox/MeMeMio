@@ -4,7 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from '../../components/ui/alert'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Card, CardContent } from '../../components/ui/card'
-import { Skeleton } from '../../components/ui/skeleton'
+import { Shimmer } from '../../components/ui/shimmer'
 import { ApiError } from '../../lib/api'
 import { fetchReviews, resolveReview, type ReviewItem } from '../../lib/api-imports'
 import { TOUCH } from '../../lib/touch'
@@ -92,8 +92,7 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
 
   if (state.kind === 'loading') {
     // 骨架按真实卡片的形状摆（两张 4:3 预览 + 下面几行），不是一条居中的「加载中…」：
-    // 数据回来时高度不跳。`motion-reduce:animate-none` 不能省，注册表的 Skeleton 只有
-    // animate-pulse。
+    // 数据回来时高度不跳。
     return (
       <div className="flex flex-col gap-4" aria-busy="true">
         {[0, 1].map((i) => (
@@ -101,8 +100,8 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
             {/* 分档与 `ReviewCard` 用同一条容器查询：视口宽度不等于卡片宽度（外壳有侧边导航），
                 骨架必须与真卡片在同一个断点上换列，否则数据回来时会跳一下 */}
             <CardContent className="@container grid grid-cols-2 gap-4 @max-[560px]:grid-cols-1">
-              <Skeleton className="aspect-4/3 motion-reduce:animate-none" />
-              <Skeleton className="aspect-4/3 motion-reduce:animate-none" />
+              <Shimmer className="aspect-4/3" />
+              <Shimmer className="aspect-4/3" />
             </CardContent>
           </Card>
         ))}

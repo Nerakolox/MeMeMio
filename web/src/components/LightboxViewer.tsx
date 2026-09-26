@@ -336,7 +336,7 @@ function ViewerAside({ meme }: { meme: Meme }) {
  * 容器，表现是点开一张图整页跟着跳一下。手算 `scrollLeft` 没有这个面。
  *
  * `prefers-reduced-motion` 那一档退回即时跳：轨道自己动起来是动效，不长在信息本身上，
- * 该听用户的（同 `MemeImage` 的 hover 播放、`Skeleton` 的 `motion-reduce:animate-none`）。
+ * 该听用户的（同 `MemeImage` 的 hover 播放、`Shimmer` 的 `motion-reduce:animate-none`）。
  */
 function ThumbRail({
   items,
