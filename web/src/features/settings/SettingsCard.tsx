@@ -9,11 +9,18 @@ import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle }
  * **`id` 挂在这张 Card 上，不是挂在里面**：旧地址 `/admin/invites` 这类重定向到
  * `/settings#invites`，`use-hash-scroll.ts` 用 `getElementById` 找落点，
  * 而**数据没回来之前锚点也必须存在**——挂在内层就意味着加载态下滚不到。
- * `scroll-mt` 是落点余量，让标题不贴着视口顶边（原来是 `.settings-page__block` 的
- * `scroll-margin-top: 16px`）。**2026-09-21 顶栏改吸顶之后这个余量要加上顶栏的高度**——
- * 顶栏从「滚上去就走」变成「一直占着视口最上面 3.5rem」，只留 16px 的话锚点会落进顶栏
- * 底下，`scrollIntoView()` 照样返回、不报错，人看到的是「点了邀请码却停在上一段」。
- * 值从 `--app-header-h` 算（`index.css` 的 `:root`），不写死两个数的和。
+ * `scroll-mt` 是落点余量，让标题不贴着滚动区顶边（原来是 `.settings-page__block` 的
+ * `scroll-margin-top: 16px`）。**这个余量按「谁在滚」分档，两档差的就是顶栏那 56px**
+ * （2026-09-26 页面级滚动区那次改动）：
+ *
+ * - **手机档（<768px）：页面仍滚窗口**，顶栏 `sticky` 一直占着视口最上面 3.5rem，
+ *   只留 16px 的话锚点会落进顶栏底下——`scrollIntoView()` 照样返回、不报错，
+ *   人看到的是「点了邀请码却停在上一段」。所以这里是 `--app-header-h + 1rem`
+ *   （值从 `index.css` 的 `:root` 算，不写死两个数的和）。
+ * - **md 以上：滚的是外壳里那个 `ScrollArea`**，它**在顶栏下面**、不是被顶栏盖着
+ *   （顶栏是它的兄弟节点，不是浮在它上面的），所以那 56px 不再是遮挡，要减掉。
+ *   留着的话 `scrollIntoView()` 会把卡片多推出 56px 空白——不报错，只是每次点锚点
+ *   都要多看一眼空白（实测：留着是卡片顶在 128px，减掉是 72px，与改版前逐像素一致）。
  *
  * 工具类里的 `_` 是空格：`calc()` 的 `+` 两侧**必须有空白**，写成 `+1rem` 整条会被浏览器丢弃。
  *
@@ -40,7 +47,7 @@ export function SettingsCard({
   children: ReactNode
 }) {
   return (
-    <Card id={id} className="scroll-mt-[calc(var(--app-header-h)_+_1rem)]">
+    <Card id={id} className="scroll-mt-[calc(var(--app-header-h)_+_1rem)] md:scroll-mt-4">
       <CardHeader>
         <CardTitle>
           <h2>{title}</h2>

@@ -323,6 +323,41 @@ useEffect(() => {
 一条 rail 的形状（**高度一致、宽度不一致**：行高定死、宽按这张图的比例算）不在这里，
 它是 `features/home/MemeRail.tsx` 的文件头，含「为什么不设宽度上限」「为什么另一根轴不齐」。
 
+## 页面滚什么：外壳里一个 `ScrollArea`，md 以上归它（2026-09-26）
+
+页面的滚动条也换成了同一根：**md 以上滚的是外壳里那个 `ScrollArea` 的 viewport**
+（`App.tsx` 的 `AppLayout`，`SidebarInset` 加 `md:h-svh md:overflow-hidden`），
+不再是窗口——改前首页 / 设置 / 导入 / 组件页显示的是系统原生条，和 rail、浏览页那几根
+Radix 浮层条在同一屏上不像一套。
+
+**手机档刻意不改**（`md:` 前缀，三档理由都在 `App.tsx` 那段注释里）：触屏不显示滚动条、
+换过去视觉上什么也换不到；窗口能滚才有 iOS / Android 地址栏随滚动收起；`BrowseResults`
+手机那一档的瀑布流指标读的就是 `window.scrollY`。
+
+三件必须一起记住的事：
+
+| 事 | 为什么 |
+|---|---|
+| **`type="always"` 是必需的** | Radix 的 viewport `overflow-y` 是「挂着条就 `scroll`、没条就 **`hidden`**」。`hover` / `scroll` 都要等 `pointerenter` 才挂条，于是指针没进过内容区之前**这一页根本不能滚**：键盘 / PageDown / `scrollIntoView`（`/settings#invites`）全都不动，**而且不报错**。滑块仍是真溢出时才画，短页面不会多出一根 |
+| **把 Radix 那层表壳压回块级** | `[&>[data-slot=scroll-area-viewport]>div]:block!`。Radix 在 viewport 里套一层行内 `display:table`，表盒宽度上限是内容的 **min-content**——首页两条 rail 的行是 `shrink-0` 的横排，它的 min-content 会顶上来：实测 1264 窗口下首页内容层被撑到 **1200px**（其余页面都是 1008），`max-w-6xl` 那层跟着按 1152 排、右半边被裁。压回块级后是 960，与改版前一致 |
+| **「比顶栏低」的补偿按档分** | 顶栏在 md 以上是滚动区的**兄弟节点**，不再盖在内容上——`SettingsCard` 的 `scroll-mt` 因此是「手机档 `--app-header-h + 1rem`、md 档只有 `1rem`」。留着那 56px 不报错，只是锚点每次多推出一截空白（实测 128px → 72px）。同类的还有 `index.css` 里 `--app-header-h` 那份清单 |
+
+⚠️ **浏览页不受影响，也不该受影响**：那一页 md 以上的高度是钉死的（`100svh − 顶栏`，
+`routes/browse.tsx` 里那套算式），正好等于滚动区的视口高，所以它**不会**多出一根页面条
+（实测 844/844、滑块 null），两列各自那根照旧。
+
+⚠️ **依赖「谁在滚」的代码只有两处**，改这一块之前先看它们：
+`features/browse/BrowseResults.tsx` 的瀑布流指标（它自己按「谁真的在滚」分两支）与
+`use-browse-list.ts` 的 `IntersectionObserver`（`root` 是 null = 视口，靠祖先裁剪照算）。
+后者在多插了一层祖先滚动区之后**仍在触发**——实测取到第二页、渲染出 8 张，
+见 [任务文件](../../../joint-tasks/2026-09-26-首页改版.md) §9「同日补做二」。
+
+**没跟着换的滚动容器**（都不是「页面」，各有原因）：三处抽屉里的 `overflow-y-auto`
+（`MemeEditPanel` —— 那一处文件里写着不用 `ScrollArea` 的理由；`BrowseFilterSheet` ——
+只在窄屏出现，而窄屏根本不显示滚动条）、`TestResultPanel`、侧边栏导航
+（`ui/sidebar.tsx` 的 `no-scrollbar`）与全屏阅览器的缩略图轨道（同 `no-scrollbar`）
+——后两处的条是**故意藏起来的**，换成 `ScrollArea` 等于给它加一根。
+
 ## 动图
 
 列表里的动图**默认不自动播放**，显示首帧 + 一个角标。一屏几十个 GIF 同时播放会让手机发烫、滚动掉帧。

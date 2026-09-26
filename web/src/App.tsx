@@ -5,6 +5,7 @@ import { ImportProvider, useImport } from './contexts/import'
 import { AppSidebar } from './components/AppSidebar'
 import { ImageViewerProvider } from './components/ImageViewer'
 import { Button } from './components/ui/button'
+import { ScrollArea } from './components/ui/scroll-area'
 import {
   SidebarInset,
   SidebarProvider,
@@ -132,12 +133,17 @@ function PageFallback() {
  *
  * 吸顶的代价是**几处「比它低」的地方**必须跟着算，全部按 `--app-header-h`
  * （`index.css` 的 `:root`，吸顶那天为它新加的一个值）：
- *   · 浏览页筛选列的 sticky `top` 与 `max-height`（`routes/browse.tsx`）
- *   · `SettingsCard` 的 `scroll-mt`（`#invites` 这类锚点的落点）
+ *   · 本条自己的身高（`h-(--app-header-h)`）；
+ *   · 浏览页外壳被钉成 `100svh − 顶栏`（`routes/browse.tsx`；那一页试过 `sticky`
+ *     左栏，实测「结果列比视口矮时可粘余量为 0」，第三稿改成的钉高布局）；
+ *   · `SettingsCard` 的 `scroll-mt`（`#invites` 这类锚点的落点）——**这一处按档分**：
+ *     手机档顶栏还盖着窗口滚动的页面，要加 56；md 以上页面滚的是内容区、顶栏是它的
+ *     兄弟节点不是盖在它上面，那一档只有 16；
+ *   · toast 避让顶栏的 `offset.top`（`components/ui/sonner.tsx`）。
  * （**三处抽屉不在这张表里**：它们在 Radix 那一层、压得住顶栏，所以按注册表原样全高，
  * 见下面 `z-index` 那段。）
- * 再加上本条自己的高度。顶栏还得压住页面内容，所以 `bg-background` 不能省
- * ——省了不报错，是内容从顶栏底下透出来。
+ * 顶栏还得是不透的，所以 `bg-background` 不能省——省了不报错，是内容从顶栏底下透出来；
+ * md 以上没有遮挡关系了（滚动区在它下面），但手机档仍是窗口滚到它底下，这一条照样成立。
  *
  * ## z-index 20（2026-09-22 定；当天先从 `z-10` 抬到 9999、又落到 60，最终收到 20）
  *
@@ -180,7 +186,40 @@ function AppLayout() {
         */}
         <ImageViewerProvider>
           <AppSidebar />
-          <SidebarInset>
+          {/*
+            ## 页面级的滚动发生在**内容区**，不在窗口（2026-09-26）
+
+            改前这两个类都没有：外壳是自然高度、页面滚的是**窗口**
+            ——于是这一页显示的是**系统原生滚动条**（桌面 15px，macOS 上还会随系统偏好整条
+            消失），与浏览页 / 两条 rail 那几根 Radix 浮层条在同一屏上不像一套。
+            现在 md 以上由下面那个 `ScrollArea` 承担滚动，全站一种条。
+
+            **手机档刻意不改**（`md:` 前缀，不是漏写）：
+
+            - 触屏本来就不显示滚动条，换过去在视觉上什么也换不到；
+            - 窗口能滚，iOS / Android 的地址栏才会随滚动收起，换成内部滚动区就**永久少掉
+              那条地址栏让出的高度**；
+            - `BrowseResults` 手机那一档的瀑布流指标读的就是 `window.scrollY`（它按「谁真的
+              在滚」分支），窗口留着，那段代码一行不用动。
+
+            代价是「谁在滚」这件事**按断点分叉**：任何依赖滚动量的代码都要自己认档
+            （`features/browse/BrowseResults.tsx` 的瀑布流指标就是按「谁真的在滚」分的那两支）。
+
+            `md:h-svh` 的尺子必须是 `svh`：浏览页把自己的高度钉成
+            `100svh − var(--app-header-h)`，两把尺不一样的话那一页会差出地址栏那一段。
+          */}
+          <SidebarInset className="md:h-svh md:overflow-hidden">
+            {/*
+              `sticky` 现在只对手机档有意义（那一档页面仍在滚窗口，长页面往下一滚还得能
+              折侧边栏）；md 以上滚动发生在下面那层，顶栏本来就不动，`sticky` 是惰性的
+              ——**但不删**：删了手机档就没吸顶了，而两档共用这一份 JSX。
+
+              `z-20` 的理由也随之改了一半：改前它压的是「滚动时卡片浮层画到顶栏上」，
+              现在卡片在下面的滚动区里、本来就压不到顶栏。留着是因为两处的层叠顺序由它
+              一次说清（卡片浮层 `z-10` 在滚动区内部，顶栏 `z-20` 在它之上），
+              以及手机档还有窗口滚动这一档。**别往上抬**：Radix 那一层（抽屉 / Dialog /
+              Sheet）是 `z-50`，抬过 50 就会被顶栏切成两条（2026-09-22 那次就是这个问题）。
+            */}
             <header className="sticky top-0 z-20 flex h-(--app-header-h) shrink-0 items-center gap-2 border-b bg-background px-4">
               {/*
                 44 是手机那一档的（手指按抽屉开关），鼠标那一档回到 32——
@@ -196,17 +235,54 @@ function AppLayout() {
               <ImportProgressLink />
             </header>
             {/* `SidebarInset` 自己就是 `<main>`，这里不能再套一层，会出现两个 main 地标 */}
-            <div className="flex-1 p-6">
-              {/*
-                按需加载的页面在这里兜底（`Suspense` 是 `lazy` 的必需搭配，没有它整页报错）。
-                边界**包 `Outlet` 而不是包整个 `Routes`**：包在外面的话，一次切页会把侧边栏
-                与顶栏一起换成 fallback，整条外壳闪一下——用户看到的像是应用重开了。
-                在这一层，外壳留着、换掉的只有内容区。
-              */}
-              <Suspense fallback={<PageFallback />}>
-                <Outlet />
-              </Suspense>
-            </div>
+            {/*
+              ## 页面滚动区
+
+              `type="always"` 是**必需的**，不是保险：Radix 的 viewport 高度是按「挂着哪几根
+              条」定的——`overflow-y` 在有条时是 `scroll`、没条时**是 `hidden`**
+              （`@radix-ui/react-scroll-area` 的 `ScrollAreaViewport`）。默认的 `type="hover"`
+              要 `pointerenter` 才挂上条，于是**指针没进过内容区之前这一页根本不能滚**：
+              键盘 / PageDown / `scrollIntoView`（`/settings#invites` 那条锚点）全都不动，
+              **而且不报任何错**。`type="always"` 一进页面就挂条，首帧起就是 `scroll`，
+              与它替下来的原生窗口滚动行为逐项一致。滑块仍然是**真溢出时才画**
+              （`hasThumb`：`viewport/content` 落在 (0,1) 之间才有），所以短页面不会多出一根。
+
+              ## `[&>[data-slot=scroll-area-viewport]>div]:block!` 不是凑数的
+
+              Radix 在 viewport 里套了一层行内样式写死 `min-width:100%; display:table` 的
+              盒子（见 `components/ui/scroll-area.tsx` 头部）。表盒的宽度**上限是内容的
+              min-content**，而首页那两条 rail 的行是 `shrink-0` 的横排（`features/home/MemeRail.tsx`）
+              ——它本来就该比屏幕宽、由 rail 自己那根横条来滚，可它的 min-content 会
+              一路穿过 rail 的 viewport 顶进这层表盒：实测 1264 窗口下首页内容层被撑到
+              **1200px**（其余页面都是 1008），`max-w-6xl` 那层因此按 1152 排、右半边被
+              viewport 裁掉。压回块级之后宽度就只由这一层决定，与改版前逐像素一致。
+
+              压的是**这层表壳**（`>` viewport `>` div，必须逐级直取）：写成后代选择器会
+              连 rail 自己那层表壳一起压，那是另一件事（rail 的横条靠它撑宽）。
+              其余页面本来就不受这层影响，`min-width:100%` 的兜底在它们那里是准的。
+
+              `p-6` 留在 viewport **里面**：内边距要跟着内容一起滚。浏览页那条
+              `md:-my-6 md:py-6` 的算式正是靠它——那个 `-my-6` 取消的就是这 24px。
+
+              手机档 `md:flex-1` 不生效，这一层高度由内容决定（与浏览页结果列同一档），
+              页面照旧滚窗口，见 `SidebarInset` 那段。
+            */}
+            <ScrollArea
+              type="always"
+              className="md:min-h-0 md:flex-1 [&>[data-slot=scroll-area-viewport]>div]:block!"
+            >
+              <div className="p-6">
+                {/*
+                  按需加载的页面在这里兜底（`Suspense` 是 `lazy` 的必需搭配，没有它整页报错）。
+                  边界**包 `Outlet` 而不是包整个 `Routes`**：包在外面的话，一次切页会把侧边栏
+                  与顶栏一起换成 fallback，整条外壳闪一下——用户看到的像是应用重开了。
+                  在这一层，外壳留着、换掉的只有内容区。
+                */}
+                <Suspense fallback={<PageFallback />}>
+                  <Outlet />
+                </Suspense>
+              </div>
+            </ScrollArea>
           </SidebarInset>
         </ImageViewerProvider>
       </SidebarProvider>

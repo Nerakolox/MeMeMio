@@ -12,10 +12,12 @@ import { ScrollArea as ScrollAreaPrimitive } from "radix-ui"
  * 不改注册表的其余部分。
  *
  * ⚠️ Viewport 内部还套了一层 Radix 自己生成的行内样式 div：
- * `style="min-width:100%; display:table"`。`display: table` 会让**块级布局的孩子**按
- * 收缩宽度算（`width:100%` 的表内子元素是循环依赖，靠 `min-width:100%` 兜底），
- * 往里面放网格 / 瀑布流这类布局容器时，得在调用处写 `[&>div]:block!` 把那层压回块级
- * （见 routes/browse.tsx）。**不在这里全局改**：横向滚动的内容正需要那层 table 撑宽。
+ * `style="min-width:100%; display:table"`。表盒的宽度**上限是内容的 min-content**，
+ * 横滑一条（rail）那种 `shrink-0` 的横排会把自己的 min-content 顶到祖先上去——
+ * 实测外壳那个页面滚动区因此把首页内容层撑到 **1200px**（视口只有 1008），
+ * 在调用处写 `[&>[data-slot=scroll-area-viewport]>div]:block!` 才压得回来
+ * （见 `App.tsx` 的页面滚动区，那里有实测数字）。**不在这里全局改**：横向滚动的内容
+ * 正需要那层 table 撑宽。
  *
  * 本地改动二（2026-09-26）：多一个 `orientation`。
  *

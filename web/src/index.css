@@ -128,9 +128,14 @@
   /*
    * 外壳顶栏（`App.tsx` 的 `AppLayout`）的高度。**不是随手写的一个尺寸**：
    * 顶栏吸顶（2026-09-21）之后，页面里有几处必须「比它低」，都按这个值算——
-   * 顶栏自己（`h-(--app-header-h)`）、浏览页筛选列的 sticky `top` 与 `max-height`
-   * （`routes/browse.tsx`）、三处抽屉的顶边（导航 / 编辑 / 筛选，见 `styling.md` 那张表）、
-   * `SettingsCard` 的 `scroll-mt`。
+   * 顶栏自己（`h-(--app-header-h)`）、浏览页被钉成的那一屏（`100svh − 这个值`，
+   * `routes/browse.tsx`）、三处抽屉的顶边（导航 / 编辑 / 筛选，见 `styling.md` 那张表）、
+   * `SettingsCard` 的 `scroll-mt`、toast 避让顶栏的 `offset.top`（`ui/sonner.tsx`）。
+   *
+   * **这一节的表要跟着「谁在滚」更新**（2026-09-26）：md 以上页面滚的是外壳里那个
+   * `ScrollArea`，顶栏是它的兄弟节点、不再盖在内容上——于是像 `SettingsCard` 的
+   * `scroll-mt` 这类「顶栏高度 + 余量」的补偿，在那一档要减掉顶栏这一段。
+   * 手机档仍滚窗口，原值照旧。
    *
    * 散着写几个 `56px` 不会报错，只会让某天改高度时漏掉一两处，表现是
    * 「筛选栏滑到顶栏底下」或「锚点被顶栏盖住」——都不是报错，是肉眼才发现得了的错位。

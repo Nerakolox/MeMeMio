@@ -126,7 +126,8 @@ export function MemeEditPanel({
         {/*
           只让中间这段滚，头尾常驻——底部的「保存」在最长的字段清单下也要够得着。
           没用 `ScrollArea`：它的 viewport 内容层是 `display: table`，对表单布局是错工具，
-          而原生滚动还白送 iOS 的惯性滚动与 `scrollIntoView`。
+          而原生滚动还白送 iOS 的惯性滚动与 `scrollIntoView`（那层现在能在调用处压回块级，
+          见 `App.tsx` 的页面滚动区；这一栏仍按后面那条理由留着原生滚动）。
 
           ⚠️ **`[&>*]:shrink-0` 不是装饰，是这一栏能不能看见东西的前提。** 这是一个
           **高度确定**的 flex 列（`flex-1` + `min-h-0`，父级 `inset-y-0`），而 flex 子项
