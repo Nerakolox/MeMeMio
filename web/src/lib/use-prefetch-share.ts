@@ -11,6 +11,10 @@ import { detectSendPath, prefetchShareFile, type SendTarget } from './clipboard'
  *
  * 一次取到的字节**和网格里那张缩略图无关**，是原图，所以代价真实存在：只在
  * `detectSendPath` 说这条路是分享时才取，取过的地址由 `prefetchShareFile` 自己兜住。
+ *
+ * ⚠️ **只给「同时挂着的卡数有上限、且不会反复重挂」的地方用**：全屏阅览器（当前一张）、
+ * 首页图墙发送键（一批 10 张）。浏览页瀑布流**不能用**——虚拟化让卡片滚一趟就重挂一趟，
+ * 实测手机上 200 张发了 502 次原图请求；那里改在「⋯」菜单打开时才取（`MemeActions`）。
  */
 export function usePrefetchShare(target: SendTarget | undefined): void {
   useEffect(() => {

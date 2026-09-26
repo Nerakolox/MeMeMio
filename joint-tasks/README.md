@@ -73,6 +73,7 @@
 |---|---|
 | 手机 → 分享（`navigator.share({files})`）：iPhone Safari + Android Chrome 各点一次动图与静图 | [浏览页图片操作](../_archive/joint-tasks/2026-09-19-browse-meme-actions.md)、`web/agents/rules/clipboard-share.md §8` |
 | iOS 上「点击前先取原图」保住用户激活这条是否真的成立 | [web 交互缺陷批修](../_archive/joint-tasks/2026-09-24-web-interaction-fixes.md) 第 3、4 条 |
+| 浏览页「⋯」改成**菜单打开时才预取**原图后，iPhone Safari 点开菜单就点「分享」一张大 GIF：是分享还是降级成下载 | [浏览页图片加载](../_archive/joint-tasks/2026-09-26-浏览页图片加载.md) §4 |
 | 手机端首页不再自动聚焦、不弹键盘盖住随机图墙 | [首页随机图墙](../_archive/joint-tasks/2026-09-19-home-random-grid.md)（代码已修于 `a5ee19b`，真机未看） |
 | 真 api × 真浏览器联调：`existing` 为 null 的降级、`sizeBytes` 字符串、SSE 断线→快照→重连 | [导入任务归档](../_archive/joint-tasks/2026-09-15-import.md) |
 | `QUOTA_EXCEEDED` 的 `remaining` 展示、`INTERNAL` 的 `requestId` 展示 | 同上，需真实配额环境 |

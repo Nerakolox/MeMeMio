@@ -50,7 +50,9 @@ export function CardSendButton({ meme }: { meme: Meme }) {
 
   // 触屏那一档要在渲染时就把原图取好：分享必须落在用户手势的同步调用栈里，
   // 大 GIF 取完再调 `navigator.share` 时激活已经过期（`lib/clipboard.ts` 的 SharePrefetch）。
-  // 一屏 10 张，正好在 `SHARE_PREFETCH_MAX`（12）以内。
+  // 一屏 10 张，正好在 `SHARE_PREFETCH_MAX`（12）以内，且图墙不虚拟化、不会重挂。
+  // 浏览页「⋯」**不是**这么取的（菜单打开时才取，见 `MemeActions`）：这里是一击直发，
+  // 没有「打开菜单」那段时间可借。
   usePrefetchShare(meme)
 
   return (

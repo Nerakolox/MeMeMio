@@ -75,7 +75,7 @@ src/features/
 | `vocab.ts` | 读 `shared/vocab/vocab.json`，提供筛选选项 |
 | `format.ts` | 时间、文件大小等纯格式化 |
 | `use-mobile.ts` | `useIsMobile()`，shadcn 的 `sidebar.tsx` 用它决定走桌面栏还是手机抽屉 |
-| `use-prefetch-share.ts` | `usePrefetchShare()`，触屏那一档在渲染时把原图取好，见 [clipboard-share.md](clipboard-share.md) |
+| `use-prefetch-share.ts` | `usePrefetchShare()`，触屏那一档在渲染时把原图取好——**只给阅览器与图墙用**，浏览页瀑布流虚拟化会反复重挂，改在「⋯」打开时取（`MemeActions`），见 [clipboard-share.md](clipboard-share.md) |
 | `use-meme-batch.ts` | 「取 N 张」：首页图墙与两条 rail 共用的取数 + 三态，**不分页**（分页只在 `use-browse-list.ts`） |
 | `tag-status.ts` | `tag_status` / `failures[].reason` 的中文映射，**唯一一份**（SPEC §5.2.3、§6.6.1） |
 | `touch.ts` | `TOUCH = 'min-h-11'`，触摸目标 44px 的**唯一落点**，见 [styling.md](styling.md) |

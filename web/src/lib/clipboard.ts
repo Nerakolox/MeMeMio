@@ -12,9 +12,9 @@
  * | 桌面 · 动图 | 下载（动图写不进剪贴板，SPEC §9.2） |
  *
  * ⚠️ **两条路都要落在用户手势的同步调用栈里**，而它们各自的办法不同：剪贴板那条
- * 把取图的 Promise 交给 `ClipboardItem`（§4.1），分享那条在**渲染时预取**原图
- * （`prefetchShareFile` + `usePrefetchShare`）。两条都不能写成「先 await 取图、
- * 再调浏览器 API」。
+ * 把取图的 Promise 交给 `ClipboardItem`（§4.1），分享那条在**点击之前预取**原图
+ * （`prefetchShareFile`：浏览页「⋯」在菜单打开时取，图墙发送键与阅览器在渲染时取，
+ * 见 `usePrefetchShare`）。两条都不能写成「先 await 取图、再调浏览器 API」。
  *
  * ⚠️ **分流唯一依据是 `isAnimated`，不是 `mime`。** WebP 和 APNG 都可能是动图也可能是静图，
  * `image/webp` 说明不了任何事；服务端已经真的解析过容器了，用它给的答案（SPEC §5.2.2）。
@@ -308,7 +308,15 @@ const sharePrefetches = new Map<string, SharePrefetch>()
  */
 const SHARE_PREFETCH_MAX = 12
 
-/** 渲染时调用（见 `usePrefetchShare`）。同一个地址只取一次，重复调用是空操作。 */
+/**
+ * 点击之前调用。同一个地址只取一次，重复调用是空操作。
+ *
+ * ⚠️ **别在「每张卡渲染时」调它，除非那一屏的卡数有上限、且不会重挂。** 浏览页瀑布流是
+ * 虚拟化的，卡片滚出去被摘、滚回来重挂；取原图走 `cache: 'reload'`、这张表满了又整个清空，
+ * 2026-09-26 实测手机上滚完 200 张发了 502 次原图请求。所以那里改成菜单打开时才取
+ * （`features/manage/MemeActions.tsx`）；图墙（一批 10 张、不虚拟化）与阅览器（只取当前一张）
+ * 仍在渲染时取（`usePrefetchShare`）。
+ */
 export function prefetchShareFile(target: SendTarget): void {
   if (sharePrefetches.has(target.url)) return
   if (sharePrefetches.size >= SHARE_PREFETCH_MAX) sharePrefetches.clear()

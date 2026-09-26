@@ -20,9 +20,8 @@ import {
 import { OVERLAY_BTN } from '../../components/MemeCard'
 import { cn } from '../../lib/utils'
 import { TOUCH } from '../../lib/touch'
-import { SEND_LABELS, detectSendPath, type SendTarget } from '../../lib/clipboard'
+import { SEND_LABELS, detectSendPath, prefetchShareFile, type SendTarget } from '../../lib/clipboard'
 import { notifyFailure } from '../../lib/toast'
-import { usePrefetchShare } from '../../lib/use-prefetch-share'
 
 /**
  * 卡片右上角的「⋯」操作入口。**入口不是右键菜单。**
@@ -111,9 +110,25 @@ export function MemeActions({
    * 动图那一档这里是「下载」，用户点之前就知道拿不到剪贴板。
    */
   const path = detectSendPath(target.isAnimated)
-  // 触屏那一档要在渲染时就把原图取好：分享要落在用户手势的同步调用栈里，
-  // 大 GIF 取完再调 `navigator.share` 时激活已经过期（`lib/clipboard.ts` 的 SharePrefetch）
-  usePrefetchShare(target)
+
+  /**
+   * 触屏那一档**打开菜单时**才去取原图：分享要落在用户手势的同步调用栈里，大 GIF 取完再调
+   * `navigator.share` 时激活已经过期（`lib/clipboard.ts` 的 SharePrefetch），所以点「分享」
+   * 之前就得把字节拿到手——「打开菜单 → 读菜单 → 点分享」这段时间就是取图的窗口。
+   *
+   * ⚠️ **不要改回渲染时预取**（2026-09-26 之前是 `usePrefetchShare(target)`）。这个组件挂在
+   * 浏览页瀑布流的**每一张**卡上，而瀑布流是虚拟化的：卡片滚出去被摘、滚回来重挂。实测
+   * 390×844 触屏滚完 5 页 200 张，发了 **502 次原图请求**（缩略图才 200 次）——每次都是
+   * `cache: 'reload'`，预取表满 12 份又整个清空，同一张原图被反复下载。原图是缩略图的
+   * 几倍到几十倍大，手机流量下这是整页最重的一笔，而绝大多数卡片永远不会被分享。
+   *
+   * 代价：菜单打开到点下「分享」之间取不完的大 GIF，会走 `shareFile` 的兜底（等完再分享，
+   * 可能已拿不到激活 → 降级下载并说明原因）。iOS 真机待测，见任务板「待测清单」。
+   */
+  function handleOpenChange(next: boolean) {
+    if (next && path === 'share') prefetchShareFile(target)
+    setOpen(next)
+  }
 
   /** 菜单关闭后要回到「⋯」的两条路：Esc，以及执行了发送（那条路上没有别的层接管焦点）。 */
   function closeToTrigger() {
@@ -137,7 +152,7 @@ export function MemeActions({
     // data-actions-for 是给「编辑侧边栏关闭后把焦点交回来」用的查询目标，
     // 和搜索页用 [data-index] 找回卡片是同一种做法。见 features/browse/use-browse-actions.ts 的 closeEditor。
     <div data-actions-for={target.id}>
-      <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenu open={open} onOpenChange={handleOpenChange}>
         <DropdownMenuTrigger asChild>
           {/*
             Button 是 forwardRef（button.tsx 专门为此加过）。React 18 里不 forwardRef 的组件
@@ -155,6 +170,11 @@ export function MemeActions({
             size="icon"
             data-actions-trigger
             aria-label="图片操作"
+            // 手指一按下就开始取，比等菜单真正打开早一拍（触屏上 Radix 在 click 时才开）。
+            // 重复调用是空操作，与 handleOpenChange 那一次不冲突。
+            onPointerDown={() => {
+              if (path === 'share') prefetchShareFile(target)
+            }}
             // 鼠标 32 / 手指 44，与 MemeCard 的收藏按钮同一条闸门（`pointer-coarse`，
             // 不是 `max-sm`：那个把「窄窗口」当成「手机」，两种都判错）。
             className={cn(OVERLAY_BTN, 'size-8 pointer-coarse:size-11')}
