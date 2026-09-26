@@ -26,11 +26,21 @@
  *
  * 两个滚动源都走同一段代码：**桌面是 ScrollArea 的 viewport**（`scrollEl`），
  * **手机不给 `scrollEl`**、退回窗口（整页在滚，与改动前一致）。
+ *
+ * ## 列宽是个变量（2026-09-26，任务「浏览页捏合缩放」）
+ *
+ * 桌面上 `Ctrl + 滚轮` / 触控板捏合在几档列宽之间跳（`use-wall-density`），换档时
+ * 指针下那张图钉在原处（`use-wall-zoom`）。三件事别弄岔：
+ *
+ * - **换档不 bump `epoch`**：那会整墙重挂（卡片本地状态、已解码的图全丢）。列宽变了
+ *   位置器自己会重建，`key={epoch}` 只管「items 变短」那一件事，与列宽无关。
+ * - **位置器换成了 `useScaledPositioner`**：masonic 原版把旧高度原样抄给新位置器，
+ *   换档后要等 ResizeObserver 一格一格改正，锚点因此钉不住（理由在那个文件头）。
+ * - 骨架网格与瀑布流**读同一个 `columnWidth`**，仍是「同一笔账」。
  */
 
 import {
   useMasonry,
-  usePositioner,
   useResizeObserver,
   type RenderComponentProps,
 } from 'masonic'
@@ -48,19 +58,23 @@ import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
 import { MemeActions } from '../manage/MemeActions'
 import type { BrowseList } from './use-browse-list'
+import { useScaledPositioner } from './use-scaled-positioner'
+import { useWallDensity } from './use-wall-density'
+import { useWallZoom } from './use-wall-zoom'
 
 /** 一屏骨架的格数。**与结果无关，只是占位**——够铺满一屏即可。 */
 const SKELETON_COUNT = 12
 
 /**
- * 骨架网格。`minmax(160px,1fr)` / `gap-3` 与 masonic 的 `columnWidth={160}` /
- * `columnGutter={12}` 是同一笔账：骨架与首屏结果尺寸不一致的话，骨架消失那一刻整页重排。
+ * 骨架网格。`minmax(var(--wall-col),1fr)` / `gap-3` 与瀑布流的 `columnWidth` /
+ * `COLUMN_GUTTER` 是同一笔账：骨架与首屏结果尺寸不一致的话，骨架消失那一刻整页重排。
+ * 列宽是当前密度档（`--wall-col` 由行内样式给），两处读的是同一个值。
  *
- * 自己写死这一份，不从别处 import：骨架格数要跟着**这一页的列宽**走，而全仓只有这一处
- * 是 160px 列的瀑布流（首页图墙那张网格是 5 列等分，分档方式都不同）。
+ * 自己写这一份，不从别处 import：骨架格数要跟着**这一页的列宽**走，而全仓只有这一处
+ * 是按最小列宽分列的瀑布流（首页图墙那张网格是 5 列等分，分档方式都不同）。
  */
 const SKELETON_GRID =
-  'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(160px,1fr))]'
+  'grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(var(--wall-col),1fr))]'
 
 export function BrowseResults({
   list,
@@ -90,11 +104,17 @@ export function BrowseResults({
   onRemove: (meme: Meme) => Promise<void>
 }) {
   const { items, loading, initialDone, error, degraded, rewritten, epoch, sentinelRef } = list
+  // 放在这一层而不是 BrowseWall 里：骨架也要读它，而 BrowseWall 会随 epoch 重挂
+  const density = useWallDensity()
 
   return (
     <>
       {!initialDone && loading && (
-        <div className={SKELETON_GRID} aria-busy="true">
+        <div
+          className={SKELETON_GRID}
+          style={{ '--wall-col': `${density.columnWidth}px` } as React.CSSProperties}
+          aria-busy="true"
+        >
           {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
             <Shimmer key={i} aria-hidden="true" className="aspect-square" />
           ))}
@@ -134,6 +154,8 @@ export function BrowseResults({
             // 换 key 强制重挂，位置器从零重建（删除让 items 缩短时必需，见 use-browse-list 的 epoch）
             key={epoch}
             scrollEl={scrollEl ?? null}
+            columnWidth={density.columnWidth}
+            onStep={density.step}
             items={items.map((meme) => ({
               meme,
               favorite: () => list.applyFavorite(meme),
@@ -160,11 +182,13 @@ export function BrowseResults({
 
 // ---- 瀑布流 ----
 
-/** 与 `SKELETON_GRID` 的 `minmax(160px,1fr)` / `gap-3` 是同一笔账，改一个要改另一个。 */
-const COLUMN_WIDTH = 160
+/** 与 `SKELETON_GRID` 的 `gap-3` 是同一笔账，改一个要改另一个。列宽见 `use-wall-density`。 */
 const COLUMN_GUTTER = 12
-/** 图还没量出来时按多高占位。也决定首屏那一批先渲染多少格。 */
-const ITEM_HEIGHT_ESTIMATE = 220
+/**
+ * 图还没量出来时，高度按列宽的几倍占位（160 列宽时是改前那个 220）。
+ * 也决定首屏那一批先渲染多少格——列宽变了它得跟着变，不然最密那一档首批只摆出半屏。
+ */
+const ITEM_HEIGHT_RATIO = 220 / 160
 /** 视口上下各多渲染几屏。masonic 里这个系数是乘在 `height` 上的。 */
 const OVERSCAN_BY = 3
 /**
@@ -276,7 +300,8 @@ function useScrollMetrics(
  * 1. **宽度**自己量（`useLayoutEffect` + `ResizeObserver`）：`<Masonry>` 用
  *    `useContainerPosition` 干这个，列数由容器宽决定，拖分隔条时也得跟着变。
  *    放在 layout effect 里是为了首帧就拿到真宽度——放 effect 里会先按 0 宽算出一列再重排。
- * 2. `usePositioner` 建位置器，`useResizeObserver` 让图量出来之后重排。
+ * 2. `useScaledPositioner` 建位置器（换档时按比例换算高度，理由见那个文件），
+ *    `useResizeObserver` 让图量出来之后重排。
  * 3. `scrollTop` / `height` 由 `useScrollMetrics` 给（不取窗口）。
  * 4. `render` 必须是模块级稳定引用，见下面那段注释。
  */
@@ -284,21 +309,25 @@ function BrowseWall({
   items,
   itemKey,
   scrollEl,
+  columnWidth,
+  onStep,
 }: {
   items: BrowseMasonryItem[]
   itemKey: (item: BrowseMasonryItem) => string
   scrollEl: HTMLElement | null
+  /** 最小列宽（当前密度档）。实际列宽由容器宽度分出来，见 `useScaledPositioner`。 */
+  columnWidth: number
+  /** 换一档密度。不给（窄屏）就不接管 `Ctrl + 滚轮`。 */
+  onStep: ((dir: 1 | -1) => boolean) | undefined
 }) {
   const wallRef = React.useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = React.useState(0)
   const { height, scrollTop, isScrolling, read } = useScrollMetrics(scrollEl, wallRef)
 
-  const positioner = usePositioner({
-    width,
-    columnWidth: COLUMN_WIDTH,
-    columnGutter: COLUMN_GUTTER,
-  })
+  const positioner = useScaledPositioner({ width, columnWidth, columnGutter: COLUMN_GUTTER })
   const resizeObserver = useResizeObserver(positioner)
+  // 换档那一次渲染用校正后的滚动量选格子，理由见 use-wall-zoom 的文件头
+  const zoomScrollTop = useWallZoom({ scrollEl, wallRef, positioner, columnWidth, step: onStep, read })
 
   /*
    * 量宽度。两个坑叠在一起，缺一个就退化成「一列」：
@@ -353,11 +382,11 @@ function BrowseWall({
     items,
     itemKey,
     containerRef: wallRef,
-    scrollTop,
+    scrollTop: zoomScrollTop ?? scrollTop,
     isScrolling,
     height,
     overscanBy: OVERSCAN_BY,
-    itemHeightEstimate: ITEM_HEIGHT_ESTIMATE,
+    itemHeightEstimate: Math.round(columnWidth * ITEM_HEIGHT_RATIO),
     render: BrowseMasonryCell,
   })
 }
