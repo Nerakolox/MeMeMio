@@ -357,7 +357,7 @@ export function UiPage() {
           <DemoCard>
             <Accordion type="single" collapsible className="w-full max-w-md">
               <AccordionItem value="a">
-                <AccordionTrigger>什么是 Mememio？</AccordionTrigger>
+                <AccordionTrigger>什么是 MeMeMio？</AccordionTrigger>
                 <AccordionContent>
                   一个本地优先的表情包库，导入、打标、搜索、一键发送。
                 </AccordionContent>

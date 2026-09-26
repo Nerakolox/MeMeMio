@@ -143,7 +143,7 @@ export function AppSidebar() {
             <SidebarMenuButton
               asChild
               size="lg"
-              tooltip="Mememio"
+              tooltip="MeMeMio"
               // `justify-center` 只在窄栏下加：`size="lg"` 那一档的 registry 里写着
               // `group-data-[collapsible=icon]:p-0!`（**带 `!`**），于是 32px 的方块内边距为 0，
               // 图形 LOGO 贴死左沿——实测中心 16，而同栏里每一个导航图标都是 24。
@@ -151,7 +151,7 @@ export function AppSidebar() {
               className={cn(NAV_ITEM_SIZE, 'group-data-[collapsible=icon]:justify-center')}
               onClick={closeDrawer}
             >
-              <Link to="/" aria-label="Mememio">
+              <Link to="/" aria-label="MeMeMio">
                 {/* 图形 + 文字两颗 LOGO 替代了原来的通用图标 + 文字（2026-09-22）。
                     源文件在仓库根（`MeMeMio-LOGO.svg` / `MeMeMio-TEXT.svg`），这里是它的副本；
                     深色那一份由它换色得到（配方写在 `web/agents/rules/styling.md`），

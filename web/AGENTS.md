@@ -1,4 +1,4 @@
-# Mememio · web 执行者入口
+# MeMeMio · web 执行者入口
 
 本目录默认角色为 **web 执行者**：SPA、搜索与发送体验、导入与设置 UI。不修改 `api/` 的实现代码；需要改接口时回到 [总管入口](../AGENTS.md)，按 [SPEC §8](../spec/08-collaboration.md) 走契约先行。
 

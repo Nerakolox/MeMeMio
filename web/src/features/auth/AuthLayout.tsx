@@ -49,7 +49,7 @@ export function AuthLayout({ children }: { children: ReactNode }) {
  * 深色下会变成深底上的深图形，不是不好看，是看不见。所以备两份文件、由页面这一侧挑
  * （`<source media>` 是页面求值的），只下载用到的那一份。
  *
- * `alt` 的分工同侧边栏：文字 LOGO 是图形化的产品名，`alt="Mememio"` 让读屏念出来；
+ * `alt` 的分工同侧边栏：文字 LOGO 是图形化的产品名，`alt="MeMeMio"` 让读屏念出来；
  * 图形 LOGO `alt=""`，名字已经由前者给了，不必读两遍。
  *
  * 尺寸比侧边栏那两颗大一档（那边是 `size-5` + `h-4`，收在导航项里）：
@@ -65,7 +65,7 @@ function BrandPane() {
         </picture>
         <picture className="contents">
           <source srcSet="/mememio-wordmark-dark.svg" media="(prefers-color-scheme: dark)" />
-          <img src="/mememio-wordmark.svg" alt="Mememio" className="h-6 w-auto shrink-0" />
+          <img src="/mememio-wordmark.svg" alt="MeMeMio" className="h-6 w-auto shrink-0" />
         </picture>
       </div>
     </div>
