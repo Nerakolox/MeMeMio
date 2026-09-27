@@ -76,17 +76,36 @@ async function walkEntry(entry: FileSystemEntryLike, out: File[]): Promise<void>
 /** 从拖放事件里递归取出所有文件。不支持 `webkitGetAsEntry` 时退回 `dataTransfer.files`。 */
 export async function filesFromDataTransfer(dt: DataTransfer): Promise<File[]> {
   const items = Array.from(dt.items ?? []).filter((i) => i.kind === 'file')
-  if (items.length === 0) return Array.from(dt.files ?? [])
+  // 同样必须在同步区抓：一旦 await 过，dt.files 也已经是空的（原来第 89 行那个兜底
+  // 读的就是它，所以形同虚设）。
+  const flat = Array.from(dt.files ?? [])
+  if (items.length === 0) return flat
 
+  // protected mode：这一整个 map 必须在 drop 事件的同步派发区里跑完。
+  // 处理函数一旦交出控制权（哪怕只是 await 一个已 resolve 的 Promise），拖拽数据存储
+  // 就被清空，之后每次 webkitGetAsEntry() 都返回 null。
+  //
+  // 原来这行写在 for 循环体里：第一次迭代还在同步区、拿得到 entry，紧接着的 await
+  // 就交出了控制权，从第二次迭代起全是 null —— 于是无论拖几张都只认第一张。
+  const entries = items.map(
+    (i) =>
+      (
+        i as DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntryLike | null }
+      ).webkitGetAsEntry?.() ?? null,
+  )
+
+  // 没有目录就不必递归：FileList 本身就是完整的，一条 await 都不用等。
+  // 散图是绝大多数情况，走这条路顺带把「递归中途失败只回半截」也排除了。
+  if (!entries.some((e) => e && e.isDirectory)) return flat
+
+  // 到这里才第一次 await。entry.file() / readEntries() 不受 protected mode 限制，
+  // 慢慢递归。
   const out: File[] = []
-  for (const item of items) {
-    const entry = (
-      item as DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntryLike | null }
-    ).webkitGetAsEntry?.()
+  for (const entry of entries) {
     if (entry) await walkEntry(entry, out)
   }
   // 目录递归失败时至少别把拖进来的东西丢了
-  return out.length > 0 ? out : Array.from(dt.files ?? [])
+  return out.length > 0 ? out : flat
 }
 
 /** 剪贴板粘贴。和拖拽一样是入口之一，不走另一条上传路径。 */
