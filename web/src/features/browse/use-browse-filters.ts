@@ -49,16 +49,38 @@ function buildParams(sp: URLSearchParams): FetchMemesParams {
   if (upl) p.uploader = upl
   const ts = sp.get('tagStatus')
   if (ts) p.tagStatus = ts
+  // 人物 / 系列（SPEC §6.3.2）。**单值**，不像词表那样 `getAll`——一张图至多归一个人物，
+  // 也不会有两个 series 的说法，服务端对重复参数直接 `VALIDATION_FAILED`。
+  //
+  // ⚠️ **这里不校验 id 长得像不像 uuid。** 校验就要在客户端留一份格式规则，而那份规则
+  //    迟早和服务端的 `isUuid` 漂；服务端对不合法的形状回 400，界面照常显示
+  //    （见 `use-browse-list` 的错误态）。前端自作聪明地「先滤掉」会让一个手打错的
+  //    链接看起来像「筛出来是空的」。
+  const person = sp.get('person')
+  if (person) p.person = person
+  const series = sp.get('series')
+  if (series) p.series = series
   return p
 }
 
 /**
- * 不是词表维度的那些筛选键（两个开关 + 两个下拉）。
+ * 不是词表维度的那些筛选键（两个开关 + 两个下拉 + 人物 / 系列）。
  *
  * **与 `VOCAB_FIELDS` 合成一份「筛选键」的清单**，`countActive` 与 `clear` 都认它——
  * 两处各写一份就会漂，而漂的表现是「角标数 3、清完还剩 1 个」。
+ *
+ * `person` / `series` 进来之后，「清除」和新加的「人物」按钮上的「清除」都会清掉它们
+ * （**两处清的是同一件事**，不矛盾：`person` 就是一个筛选条件）。真正要留意的是它反过来
+ * 也成立——**「清除」会把人物筛选一起清掉**，所以那句话是「清除全部筛选」。
  */
-const SINGLE_KEYS = ['isAnimated', 'favorited', 'uploader', 'tagStatus'] as const
+const SINGLE_KEYS = [
+  'isAnimated',
+  'favorited',
+  'uploader',
+  'tagStatus',
+  'person',
+  'series',
+] as const
 
 /**
  * 生效中的筛选项**个数**（窄屏工具条那个角标用它）。
@@ -203,6 +225,44 @@ export function useBrowseFilters() {
     setSearchParams(next, { replace: true })
   }
 
+  /**
+   * 一键清掉人物 / 系列（「人物」按钮上那个 ×）。
+   *
+   * ⚠️ **两个键必须在同一次 `setSearchParams` 里删**：连调两次 `setString` 时，
+   *    两次都从同一个 `searchParams` 快照起手（它是这次渲染的闭包值），后一次的结果
+   *    会把前一次整个盖掉——表现是「点了一下 ×，只清掉了一个」。
+   */
+  function clearPersons() {
+    const next = new URLSearchParams(searchParams)
+    next.delete('person')
+    next.delete('series')
+    setSearchParams(next, { replace: true })
+  }
+
+  /**
+   * 从「按人物浏览」那个 modal 里选中一格。`person` 与 `series` **互相清掉**。
+   *
+   * 两个参数在服务端是 AND（§6.3.2），而 modal 里列的是全站的人物 / 系列——
+   * 留着上一样再选下一样，交集多半是空的，而用户刚刚明明看到那一格写着几十张图。
+   * 一次点击应当得到一个非空的结果，所以写这个键的同时删掉那一个。
+   *
+   * 同一次 `setSearchParams` 里写两个键的理由与 `clearPersons` 相同。
+   */
+  function pickPerson(id: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set('person', id)
+    next.delete('series')
+    setSearchParams(next, { replace: true })
+  }
+
+  /** 同上，系列那一侧。 */
+  function pickSeries(id: string) {
+    const next = new URLSearchParams(searchParams)
+    next.set('series', id)
+    next.delete('person')
+    setSearchParams(next, { replace: true })
+  }
+
   return {
     params,
     /** 取数参数的规范化字符串（**含 `q`**）。取数 effect 认它，不认对象引用。 */
@@ -223,9 +283,24 @@ export function useBrowseFilters() {
     favorited: searchParams.get('favorited') === 'true',
     uploader: searchParams.get('uploader'),
     tagStatus: searchParams.get('tagStatus'),
+    /**
+     * 当前筛的人物 / 系列 id，`null` = 没筛。**这里给的是 id 不是名字**——
+     * URL 里只有 id（SPEC §6.3.2），名字要用 `GET /persons/{id}` 换。
+     *
+     * ⚠️ **不要在按钮上直接显示 id**：那串 uuid 对用户没有意义，而「未命名的人物」
+     *    也没有名字可显示。名字由调用方取到之后传进 `BrowseFilters`（见那个文件的
+     *    `personLabel`），取不到就显示「已选中的人物」——不是留空，空按钮看起来像坏了。
+     */
+    person: searchParams.get('person'),
+    series: searchParams.get('series'),
     setMulti,
     toggleBool,
     setString,
+    /** 一键清掉 `person` 与 `series` 这两个键，见函数上那段。 */
+    clearPersons,
+    /** modal 里选中一格：写一个键、删另一个键，两者互斥。 */
+    pickPerson,
+    pickSeries,
     clear,
   }
 }

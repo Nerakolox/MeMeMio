@@ -58,6 +58,19 @@ export function useBrowseList(params: FetchMemesParams) {
   const [epoch, setEpoch] = useState(0)
 
   /**
+   * `items` 当前有多少条，**同步读得到的那一份**。
+   *
+   * `load()` 是 `useCallback`，闭包里读不到最新的 `items`，而它需要「屏幕上本来有没有
+   * 东西」这个判据来决定整表替换时要不要重挂位置器（见 `load` 里整表替换那一支）。
+   * 用 ref 而不是把 `items` 塞进依赖数组：塞进去 `load` 的引用每来一页就换，
+   * 依赖它的两个 effect 会跟着重跑一遍。
+   */
+  const itemsLenRef = useRef(0)
+  useEffect(() => {
+    itemsLenRef.current = items.length
+  }, [items])
+
+  /**
    * 只认最后一次发出的请求。
    *
    * 换筛选、连点「重试」时前一个请求可能后到——不拦住就把上一组筛选的结果盖进这一组
@@ -125,15 +138,32 @@ export function useBrowseList(params: FetchMemesParams) {
       try {
         const page = await fetchMemes({ ...params, cursor })
         if (me !== seq.current) return
-        setItems((prev) => (cursor ? [...prev, ...page.items] : page.items))
+        if (cursor) {
+          setItems((prev) => [...prev, ...page.items])
+          // 带游标的那一页下来了 = 游标是好的，恢复的这次可以了（见 recoveredRef）
+          recoveredRef.current = false
+        } else {
+          /*
+            整表替换。屏幕上本来有东西、而这一份**可能更短**（合并之后重拉、被拒的游标
+            回第一页），所以这里要顺带把位置器换掉：masonic 按 index 缓存位置，**缩短会让
+            它去读 `items[i]` 上的 `undefined`**，`itemKey` 抛
+            `Cannot read properties of undefined (reading 'meme')`，整个 React 树被卸掉
+            ——**白屏**（2026-09-30 实测：按人物筛 →「不是 X」摘掉一张 → 合并 → 白屏）。
+            换 `key` 重挂一次就没有旧 index 了。
+
+            ⚠️ **这一下必须与 `setItems` 落在同一次提交里**。分两次做（例如先 bump、
+            等 fetch 回来再换 items）没用：那一次重挂拿到的还是旧的 3 条，缩短发生在
+            重挂**之后**，照样抛。这个坑真踩过一遍。
+          */
+          if (itemsLenRef.current > 0) setEpoch((e) => e + 1)
+          setItems(page.items)
+          setInitialDone(true)
+        }
         cursorRef.current = page.nextCursor
         setNextCursor(page.nextCursor)
         setDegraded(page.degraded)
         setRewritten(page.rewritten)
         failedCursorRef.current = undefined
-        // 带游标的那一页下来了 = 游标是好的，恢复的这次可以了（见 recoveredRef）
-        if (cursor) recoveredRef.current = false
-        if (!cursor) setInitialDone(true)
       } catch (err) {
         if (me !== seq.current) return
         // `toStateError` 而不是 `as ApiError`：断网 / 代理挂了时 fetch 抛的是 TypeError，
@@ -252,6 +282,27 @@ export function useBrowseList(params: FetchMemesParams) {
   }
 
   /**
+   * 从头重拉第一页（**整表替换**）。
+   *
+   * 与 `retry` 不是一回事：`retry` 重拉的是**失败的那一页**，只在没有失败页时才碰巧
+   * 等于整表重来，而那个「碰巧」随时会被上面那段恢复逻辑改掉。
+   *
+   * 用在「这一组的内容本身变了」的时候——2026-09-30 加的人物写操作就是这一类：
+   * 合并之后当前人物多了几张图，不重拉的话屏幕上还是合并前那一份，而用户刚刚
+   * 才看过确认框里那个新的张数。
+   *
+   * 代价是会把已经翻过的页和滚动位置丢掉。这是有意的：内容变了，旧位置没有意义。
+   *
+   * 缩短时要重挂位置器这件事**由 `load()` 自己管**（见那里整表替换那一支）——
+   * 放在这里先 bump 是没用的：那一次重挂拿到的还是旧的 items，缩短发生在重挂之后，
+   * 照样白屏。所以这里只负责「重拉」。
+   */
+  function reload() {
+    recoveredRef.current = false
+    void load()
+  }
+
+  /**
    * 收藏走乐观更新：立刻翻，失败回滚（state-navigation.md §8）。
    *
    * 失败**要弹一句**（2026-09-24 改，此前静默）。回滚之后图标自己翻回去，看起来与
@@ -298,6 +349,8 @@ export function useBrowseList(params: FetchMemesParams) {
     epoch,
     sentinelRef,
     retry,
+    /** 从头重拉第一页。用在写操作改动了这一组内容之后，见函数上那段。 */
+    reload,
     applyFavorite,
     applyRemoval,
     applyUpdate,

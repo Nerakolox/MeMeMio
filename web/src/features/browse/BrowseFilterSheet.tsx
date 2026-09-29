@@ -9,6 +9,7 @@
  * 抽屉 + 满宽瀑布流（迁移前是 chip 墙压在图上）——这是有意的，记在任务文件里。
  */
 
+import { useState } from 'react'
 import { SlidersHorizontal, X } from 'lucide-react'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
@@ -28,12 +29,26 @@ import type { BrowseFiltersState } from './use-browse-filters'
 export function BrowseFilterSheet({
   filters,
   user,
+  personLabel,
+  seriesLabel,
+  onOpenPersons,
 }: {
   filters: BrowseFiltersState
   user: User | null
+  personLabel: string | null
+  seriesLabel: string | null
+  onOpenPersons: () => void
 }) {
+  /*
+    抽屉开合是**纯 UI state**（state-navigation.md §3 第一类），不进 URL。之前这里是不受控的
+    （`<Sheet>` 不给 `open`），改成受控只为一件事：**点「人物」时先把抽屉收起来再开 modal**
+    ——两层模态叠着的时候，Esc 关掉的是哪一层、焦点落在谁那里，都是要靠试才知道的问题
+    （`ImageViewer` 的文件头记过同一类）。
+  */
+  const [open, setOpen] = useState(false)
+
   return (
-    <Sheet>
+    <Sheet open={open} onOpenChange={setOpen}>
       {/* 触发器就是抽屉关掉后的焦点落点——Radix 会还给它，所以这里不用手写「焦点交回」 */}
       <SheetTrigger asChild>
         <Button
@@ -79,7 +94,17 @@ export function BrowseFilterSheet({
         {/* 只让中间这段滚、标题常驻（同 MemeEditPanel 的结构）：七维共 191 个 chip，
             展开两三维就比屏幕长了（收起时不长，但常驻标题对两种情形都不亏） */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4">
-          <BrowseFilters filters={filters} user={user} />
+          <BrowseFilters
+            filters={filters}
+            user={user}
+            personLabel={personLabel}
+            seriesLabel={seriesLabel}
+            // 先收起抽屉再开 modal，理由见上面 `open` 那个 state
+            onOpenPersons={() => {
+              setOpen(false)
+              onOpenPersons()
+            }}
+          />
         </div>
       </SheetContent>
     </Sheet>

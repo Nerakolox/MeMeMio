@@ -163,6 +163,69 @@ export async function fetchReindexStatus(): Promise<ReindexStatus> {
   return readJson<ReindexStatus>(await fetch('/api/v1/admin/reindex/status'))
 }
 
+// --- 图片向量（仅管理员，全站一份，SPEC §6.7.5） --------------------------
+
+/**
+ * `GET /config/image-embed`。**与 `EmbedConfig` 同构，外加一个 `imageInputWorks`。**
+ *
+ * ⚠️ 这个能力位是**三态**，和视觉那几个一样：`null` 是「**还没测过**」，不是
+ *    「不支持」。把它渲染成「上游不收图」会让管理员去换一个本来没问题的模型。
+ *
+ * 它还是这份配置**唯一**的硬闸门：判 `false` 时 `ok` 也是 `false`，配置存不进来
+ * （SPEC §6.7.5）。理由是上游把图**静默丢掉**时照样回一个向量，不报错——
+ * 表现是所有人物慢慢并成一团，而不是某处报错。
+ */
+export type ImageEmbedConfig = InferResponseType<typeof api.api.v1.config['image-embed']['$get']>
+
+/**
+ * `PUT /config/image-embed` 的响应：比 GET 多 `reindexTriggered` /
+ * `reindexEnqueuedCount`，与 embedding 那份同名同义（SPEC §6.5.3）。
+ *
+ * ⚠️ **这里的条数比 embedding 那份贵得多**：图片向量每张图都要发一次上游调用，
+ *    所以 `reindexEnqueuedCount` 是「这一下再花部署方多少钱」。是数字不是布尔，
+ *    判断写 `> 0`。
+ */
+export type ImageEmbedConfigSaved = InferResponseType<
+  typeof api.api.v1.config['image-embed']['$put']
+>
+
+/**
+ * `POST /config/image-embed/test`（SPEC §6.7.5）。在 embedding 那五个字段之外多一个
+ * `imageInputWorks`。
+ *
+ * 同视觉与 embedding：**不通过也是 200**，结果在响应体里。当 HTTP 错误处理会丢掉
+ * `rawError`，而上游把图丢掉时那是不看日志的管理员唯一的线索。
+ */
+export type ImageEmbedTestResult = InferResponseType<
+  typeof api.api.v1.config['image-embed']['test']['$post']
+>
+
+export async function fetchImageEmbedConfig(): Promise<ImageEmbedConfig> {
+  return readJson<ImageEmbedConfig>(await fetch('/api/v1/config/image-embed'))
+}
+
+/** 同另外两路：不通过也是 200。 */
+export async function testImageEmbedConfig(input: ConfigInput): Promise<ImageEmbedTestResult> {
+  return readJson<ImageEmbedTestResult>(await postJson('/api/v1/config/image-embed/test', input))
+}
+
+/**
+ * 保存。请求体与 `/config/embed` **逐字同形**（`ConfigInput`），所以 api 侧那三个解析
+ * 函数是直接复用的，这里也复用同一个类型——**不另写一份**。
+ *
+ * ⚠️ **图片向量的 `EMBED_DIM_TOO_SMALL` 与文本那份口径不同**：这里比对的是截断之前
+ *    的原生维度。判据由服务端给（`dimParamWorks` / `willTruncate`），前端不自己算。
+ */
+export async function putImageEmbedConfig(
+  input: ConfigInput,
+  confirmReindex = false,
+): Promise<ImageEmbedConfigSaved> {
+  const body = confirmReindex ? { ...input, confirmReindex: true } : input
+  return readJson<ImageEmbedConfigSaved>(
+    await postJson('/api/v1/config/image-embed', body, 'PUT'),
+  )
+}
+
 // --- 运行参数（仅管理员，全站一份配置、但每个数都是每进程的） ----------------
 
 /**

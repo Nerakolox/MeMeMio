@@ -76,6 +76,21 @@ import { notifyFailure } from '../../lib/toast'
  * 打开时聚焦「取消」、Esc 退出——比上一版自己写的更完整。它跟着「⋯」走，
  * 整条删除链路因此不依赖页面。
  */
+/**
+ * 「按人物筛」时才有的两项（任务 §5.2、§6.7.4）。
+ *
+ * **不给就整组不出现**——离开人物语境之后「把这张移出哪个人物」没有答案，
+ * 所以这不是「默认关掉的开关」，是「只有在那个语境里才存在」。
+ */
+export type PersonMemeActions = {
+  /** 当前人物的名字，`null` = 未命名。菜单上写「不是<名字>」。 */
+  name: string | null
+  /** 「不是 X」：把这张图移出当前人物（`assignments` 的 `none: true`）。 */
+  onRemove: () => void
+  /** 「设为封面」：让这张当那个人物的脸（`coverMemeId`）。 */
+  onSetCover: () => void
+}
+
 export function MemeActions({
   target,
   canDelete,
@@ -83,6 +98,7 @@ export function MemeActions({
   onSend,
   onEdit,
   onDelete,
+  person,
 }: {
   target: SendTarget
   /** 上传者本人或 admin（SPEC §6.4.2）。**这只是体验**——服务端仍是唯一权威。 */
@@ -96,6 +112,8 @@ export function MemeActions({
    * 所以这里只等它落定，不看结果。
    */
   onDelete: () => Promise<void>
+  /** 按人物筛时才有的两项。**失败也由调用方讲**（同 `onDelete`），这里只负责触发。 */
+  person?: PersonMemeActions
 }) {
   const [open, setOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -215,6 +233,25 @@ export function MemeActions({
           <DropdownMenuItem className={TOUCH} onSelect={onEdit}>
             编辑
           </DropdownMenuItem>
+
+          {/*
+            按人物筛时才有的两项（任务 §5.2）。**排在「编辑」之后、「删除」之前**：
+            删除是最后一个，它是这一列里唯一不可逆的（同一套顺序在别处也这么排）。
+
+            「不是 X」的文案带上名字——只写「不是这个人物」的话，用户得回头看页头才知道
+            是谁，而这一项一旦点错，那个人物里就少了一张图（没有撤销，只能再手动放回去）。
+            未命名时退回泛称：`未命名` 读起来像学名，「这个人物」是正常的中文。
+          */}
+          {person && (
+            <>
+              <DropdownMenuItem className={TOUCH} onSelect={person.onRemove}>
+                不是{person.name ?? '这个人物'}
+              </DropdownMenuItem>
+              <DropdownMenuItem className={TOUCH} onSelect={person.onSetCover}>
+                设为封面
+              </DropdownMenuItem>
+            </>
+          )}
 
           {/*
             「删除」**保留但禁用**，不隐藏——藏起来会让用户以为没有这个功能，

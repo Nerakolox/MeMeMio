@@ -1,6 +1,13 @@
 import type { InferResponseType } from 'hono/client'
 import { api, type RetagResult, type TagStatusSummary } from './api'
-import type { ReindexTriggered, RuntimeConfig } from './api-config'
+import type { ImageEmbedTestResult, ReindexTriggered, RuntimeConfig } from './api-config'
+import type {
+  AssignmentsOutcome,
+  Person,
+  PersonReindexTriggered,
+  PersonSuggestions,
+  Series,
+} from './api-persons'
 
 /**
  * 骨架任务的**验证点 1**，留在仓库里当编译期断言：
@@ -165,3 +172,95 @@ const _runtimeShape: RuntimeConfig = {
 }
 
 void _runtimeShape
+
+/**
+ * 人物与系列的编译期断言（SPEC §6.7.2、人物与系列那一批 2026-09-30）。
+ *
+ * ## 为什么这几条值得单列
+ *
+ * 三条都踩在「字段没了不会报错，只会变成一个自信的错答案」上——这正是本文件存在的理由：
+ *
+ * 1. **`Person.cover` 恒非 null**，而 `Series.cover` 可以为 null（空系列）。
+ *    把后者当非空用，界面上是一张加载失败的图；把前者当可空用，是空系列那条路
+ *    被写成了「封面缺失」——两种都只在特定数据下才看得见。
+ * 2. **`/suggestions` 是包着 `items` 的信封，不是裸数组**（§6.7.3）。
+ *    ⚠️ 这一条是**这次真踩过的**：网页这一侧一开始按裸数组读，类型检查照样过
+ *    （`.map` 在 `any` 上不报错），跑起来才是 `items.map is not a function`。
+ *    断言把它钉死在编译期。
+ * 3. **`enqueuedCount` 是那个补跑面板唯一的记账**（`PersonsReindexPanel`），
+ *    它改名之后前端不报错，只会永远说「没有新排队的记录」，而实际排了——
+ *    与 `_reindexTriggeredShape` 是同一个失败模式，只是这次花的是按张计费的钱。
+ */
+const _personShape: Person = {
+  id: '00000000-0000-0000-0000-000000000000',
+  name: null,
+  seriesId: null,
+  seriesName: null,
+  isHidden: false,
+  memeCount: 3,
+  // 恒非 null：图数 ≥ 1 的人**一**定有封面（§5.7.4）
+  cover: { memeId: '00000000-0000-0000-0000-000000000001', thumbUrl: 'https://example.invalid/t.webp' },
+  updatedBy: null,
+  updatedAt: null,
+}
+
+void _personShape
+
+const _seriesShape: Series = {
+  id: '00000000-0000-0000-0000-000000000000',
+  name: '某个作品',
+  personCount: 2,
+  memeCount: 8,
+  // 可以为 null——**空系列没有封面**（§6.7.2）
+  cover: null,
+  createdBy: '00000000-0000-0000-0000-000000000002',
+  createdAt: '2026-09-30T00:00:00Z',
+  updatedBy: null,
+  updatedAt: null,
+}
+
+void _seriesShape
+
+/** 信封，不是裸数组。少写这一层就是上面第 2 条那个失败。 */
+const _suggestionsShape: PersonSuggestions = { items: [_personShape] }
+
+void _suggestionsShape
+
+/**
+ * `{ movedCount, person }`——`person` 在 `none: true` 那一支是 **null**（§6.7.4）。
+ * 「不是 X」之后界面对这两个字段各有各的用法：`movedCount` 是回执，`person` 为 null
+ * 恰好是「它现在不属于任何人物」的确认。
+ */
+const _assignmentsShape: AssignmentsOutcome = { movedCount: 1, person: null }
+
+void _assignmentsShape
+
+const _personReindexTriggeredShape: PersonReindexTriggered = {
+  enqueuedCount: 0,
+  running: false,
+  total: 0,
+  done: 0,
+  stale: 0,
+  failed: 0,
+}
+
+void _personReindexTriggeredShape
+
+/**
+ * 图片向量的测试结果（SPEC §6.7.5）。
+ *
+ * ⚠️ `imageInputWorks` 改名或消失的后果**比别处更坏**：`imageEmbedProbes` 判的是
+ *    `value === null ? 未探测 : value ? ✓ : ✗`，而 `undefined` 三种都不是——它会落进
+ *    ✗ 那一支，界面上就是**「上游没有在编码图片，图片被丢掉了」**，
+ *    一个言之凿凿的错结论。管理员会照它去换模型，而模型本来是好的。
+ */
+const _imageEmbedTestShape: ImageEmbedTestResult = {
+  ok: false,
+  nativeDim: 1024,
+  dimParamWorks: true,
+  willTruncate: false,
+  imageInputWorks: false,
+  rawError: null,
+}
+
+void _imageEmbedTestShape

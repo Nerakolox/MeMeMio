@@ -84,6 +84,7 @@ export function BrowseResults({
   onSend,
   onEdit,
   onRemove,
+  personActions,
 }: {
   list: BrowseList
   user: User | null
@@ -102,6 +103,16 @@ export function BrowseResults({
   onSend: (target: SendTarget) => void
   onEdit: (meme: Meme) => void
   onRemove: (meme: Meme) => Promise<void>
+  /**
+   * 按人物筛时才传（任务 §5.2）。**不传就是「不在人物语境里」**，卡片菜单上那两项
+   * 整个不出现——Meme 的对外表示里没有「属于哪个人物」（§6.7.2），离开这个语境
+   * 根本无从知道该把一张图移出谁。
+   */
+  personActions?: {
+    personName: string | null
+    onRemoveFromPerson: (meme: Meme) => void
+    onSetCover: (meme: Meme) => void
+  }
 }) {
   const { items, loading, initialDone, error, degraded, rewritten, epoch, sentinelRef } = list
   // 放在这一层而不是 BrowseWall 里：骨架也要读它，而 BrowseWall 会随 epoch 重挂
@@ -165,6 +176,7 @@ export function BrowseResults({
               // 编辑对所有人开放，删除只限上传者与 admin（SPEC §6.4 / §9.1）。
               // 前端判断只是体验，服务端仍会独立判一次。
               canDelete: user?.role === 'admin' || meme.uploaderId === user?.id,
+              personActions,
             }))}
             itemKey={(item) => item.meme.id}
           />
@@ -411,10 +423,16 @@ type BrowseMasonryItem = {
   edit: () => void
   remove: () => Promise<void>
   canDelete: boolean
+  /** 按人物筛时才有的那一组，直接透传（见 `BrowseResults` 的 `personActions`）。 */
+  personActions?: {
+    personName: string | null
+    onRemoveFromPerson: (meme: Meme) => void
+    onSetCover: (meme: Meme) => void
+  }
 }
 
 function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
-  const { meme } = data
+  const { meme, personActions } = data
 
   return (
     <MemeCard
@@ -442,6 +460,17 @@ function BrowseMasonryCell({ data }: RenderComponentProps<BrowseMasonryItem>) {
           onSend={(t) => void data.send(t)}
           onEdit={data.edit}
           onDelete={data.remove}
+          // 两个回调按**这一格**的 meme 绑好再交出去：菜单那边只负责「是哪一项被点了」，
+          // 不该再揣着这张图是谁（它拿到的 `target` 只是发送用的最小信息）
+          person={
+            personActions === undefined
+              ? undefined
+              : {
+                  name: personActions.personName,
+                  onRemove: () => personActions.onRemoveFromPerson(meme),
+                  onSetCover: () => personActions.onSetCover(meme),
+                }
+          }
         />
       }
       onFavorite={data.favorite}

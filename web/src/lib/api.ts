@@ -262,6 +262,22 @@ export type FetchMemesParams = Partial<Record<VocabField, string[]>> & {
    *   - 它是**全库**抽样，不是「最新一批里抽几张」——首页靠它把老图翻出来。
    */
   random?: boolean
+  /**
+   * 只看某个人物的图（SPEC §6.3.2，`proposed`）。**单值**——一张图至多归一个人物，
+   * 两个人物取 AND 恒为空，所以服务端对重复参数返回 `VALIDATION_FAILED`。
+   *
+   * ⚠️ **不存在的 id 返回空列表，不是错误**（§6.3.2）。所以「筛完是空的」有两种成因，
+   * 界面不要把它当成出错的信号。
+   */
+  person?: string
+  /**
+   * 只看某个系列下所有人物的图（SPEC §6.3.2）。同理单值，与 `person` 同时给时取 AND。
+   *
+   * ⚠️ **这里只认具体 id。** `none`（不属于任何系列）只在 `GET /persons` 上有
+   * （api 的 `readSeriesFilter` 只给那个端点接），传到这里是 `VALIDATION_FAILED` ——
+   * 这是 2026-09-30 记在任务 §10.6.1 的缺口，不是实现遗漏。
+   */
+  series?: string
 }
 
 export async function fetchMemes(params: FetchMemesParams = {}): Promise<MemesResponse> {
@@ -279,6 +295,10 @@ export async function fetchMemes(params: FetchMemesParams = {}): Promise<MemesRe
   if (params.cursor) qs.set('cursor', params.cursor)
   if (params.limit !== undefined) qs.set('limit', String(params.limit))
   if (params.random) qs.set('random', 'true')
+  // 人物 / 系列筛选（SPEC §6.3.2）。单值、不重复——服务端对重复参数返回
+  // `VALIDATION_FAILED`，所以这里用 `set` 而不是 `append`。
+  if (params.person) qs.set('person', params.person)
+  if (params.series) qs.set('series', params.series)
 
   const res = await fetch(`/api/v1/memes?${qs.toString()}`)
   if (!res.ok) throw await toApiError(res)
