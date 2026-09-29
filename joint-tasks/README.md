@@ -59,6 +59,7 @@
 | [人工补完标签之后，怎么离开待处理列表](2026-09-24-needs-manual-exit.md) | `planning` | 跨端 | **要先裁定才能动手**：§6.4.1 的写入清单里没有 `tag_status`，而 §6.6.2 说「人工用 `PATCH` 补」是 `needs_manual` 的两条出路之一——两节矛盾，补完仍留在列表里。三个走法见任务文件、推荐 A；验收动作与[打标状态界面](2026-09-19-tagging-status.md)共用（都要真库造一张 `needs_manual`，造一次验两条） |
 | [回收站、查重与定时清理](2026-09-24-trash-and-cleanup.md) | `planning` | 跨端 | restore / duplicates 未实现、五个定时任务为零、「重传删过的图」语义未定义 |
 | [测试设施与 CI](2026-09-24-test-infra-ci.md) | `planning` | 跨端 | 无 CI、web 无常驻测试。**排在 §6.4 与部署之后** |
+| [桌面壳（Tauri）与手机 PWA](2026-09-27-桌面壳与PWA.md) | `planning` | 跨端 | **待讨论**：倾向手机 PWA + 桌面 Tauri 壳加载线上站点（不打包前端，所以不需要 API 版本管理）；§4 六个问题未裁定。开工前先验证「剪贴板里的 GIF 文件粘进微信还是动图」 |
 | [梗名别名层](2026-09-13-meme-lexicon.md) | `planning` | 总管 | 检索实现定稿前做完；词表是闭集，梗名是开集，见 [SPEC §9.18](../spec/09-decisions.md) |
 
 **2026-09-25 已全部归档**：上一版这里压着 21 张 `done` 的任务文件，挡住它们的是代码注释里写死的 `joint-tasks/` 路径。两端各开一张单端任务把注释改成只写任务名（写法见 [documentation.md](../agents/rules/documentation.md)），随后 23 张一起移进 [`_archive/joint-tasks/`](../_archive/joint-tasks/README.md)，一句话结论搬到那边的索引表里。
