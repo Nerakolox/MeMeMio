@@ -29,12 +29,15 @@ function dims(width: number | null, height: number | null): string {
 export function ReviewCard({
   item,
   busy,
+  locked = false,
   error,
   onDecide,
   onLater,
 }: {
   item: ReviewItem
   busy: boolean
+  /** 别处正在批量处理队列：按钮禁用，但不显示「提交中…」（这一条并不是在提交）。 */
+  locked?: boolean
   error: string | null
   onDecide: (action: 'import' | 'skip') => void
   /** 只收起这一条，**不调接口**——条目仍在队列里，下次进来还在（import-ux.md §5）。 */
@@ -121,15 +124,15 @@ export function ReviewCard({
             type="button"
             variant="outline"
             className={TOUCH}
-            disabled={busy}
+            disabled={busy || locked}
             onClick={() => onDecide('skip')}
           >
             跳过
           </Button>
-          <Button type="button" className={TOUCH} disabled={busy} onClick={() => onDecide('import')}>
+          <Button type="button" className={TOUCH} disabled={busy || locked} onClick={() => onDecide('import')}>
             仍然导入
           </Button>
-          <Button type="button" variant="ghost" className={TOUCH} disabled={busy} onClick={onLater}>
+          <Button type="button" variant="ghost" className={TOUCH} disabled={busy || locked} onClick={onLater}>
             稍后再说
           </Button>
         </div>

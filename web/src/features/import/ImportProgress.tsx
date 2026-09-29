@@ -185,7 +185,9 @@ export function ImportProgress({
         <Card>
           <CardContent className="flex flex-col gap-3">
             <p>
-              已入库 {done.imported} 张，跳过 {done.exactDup} 张完全相同的文件，
+              {/* 「库里已有的图」而不是「完全相同的文件」：跳过的也包括画面相同（距离 0 或
+                  视觉模型判同一张）的，不一定字节相同（SPEC §9.33）。条目行的 reason 写着依据。 */}
+              已入库 {done.imported} 张，跳过 {done.exactDup} 张库里已有的图，
               {done.needsReview} 张待你确认
               {done.failed > 0 && `，${done.failed} 张失败`}。
             </p>

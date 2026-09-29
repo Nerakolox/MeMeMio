@@ -10,6 +10,7 @@ import { fetchReviews, resolveReview, type ReviewItem } from '../../lib/api-impo
 import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
 import { ReviewCard } from './ReviewCard'
+import { reviewKey, SkipZeroDistance, zeroDistanceCandidates } from './SkipZeroDistance'
 
 /** 服务端超过 7 天连同暂存文件一起清理（import-ux.md §5），界面上要说明。 */
 const REVIEW_TTL_DAYS = 7
@@ -35,6 +36,8 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
    * 条目还在服务端，下次进来还会出现。用户导入完三千张后不想当场判，是正常需求。
    */
   const [deferred, setDeferred] = useState<string[]>([])
+  /** 「距离为 0 的全部跳过」在跑：这期间逐条按钮锁住，免得同一条被两条路同时提交。 */
+  const [bulkRunning, setBulkRunning] = useState(false)
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' })
@@ -55,6 +58,17 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
   useEffect(() => {
     void load()
   }, [load])
+
+  /** 批量跳过成功的条目移出列表，理由同 `decide`：真相在服务端，这里只更新缓存。 */
+  function removeResolved(resolved: ReviewItem[]) {
+    const gone = new Set(resolved.map(reviewKey))
+    setState((prev) => {
+      if (prev.kind !== 'ok') return prev
+      const items = prev.items.filter((i) => !gone.has(reviewKey(i)))
+      onCountChange?.(items.length)
+      return { kind: 'ok', items }
+    })
+  }
 
   async function decide(item: ReviewItem, action: 'import' | 'skip') {
     const batchId = item.batchId
@@ -144,6 +158,8 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
 
   const visible = state.items.filter((i) => !deferred.includes(i.fileName))
   const single = state.items.length === 1
+  // 只算眼前看得见的：「稍后再说」是用户明说的「先别动」，不该被一键操作顺手带走
+  const zeroCandidates = zeroDistanceCandidates(visible)
 
   // 「稍后再说」全按掉之后不要变成空白页——那会让人以为队列出问题了
   if (visible.length === 0) {
@@ -187,6 +203,11 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
           超过 {REVIEW_TTL_DAYS} 天未处理的条目会被服务端连同暂存文件一起清理。
           「稍后再说」不会丢，它只是留在这里等你。
         </p>
+        <SkipZeroDistance
+          candidates={zeroCandidates}
+          onResolved={removeResolved}
+          onRunningChange={setBulkRunning}
+        />
       </header>
 
       <ul className="flex flex-col gap-4">
@@ -195,6 +216,7 @@ export function ReviewQueue({ onCountChange }: { onCountChange?: (n: number) => 
             <ReviewCard
               item={item}
               busy={busy === item.fileName}
+              locked={bulkRunning}
               error={rowError[item.fileName] ?? null}
               onDecide={(action) => void decide(item, action)}
               onLater={() => setDeferred((prev) => [...prev, item.fileName])}

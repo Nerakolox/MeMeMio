@@ -32,7 +32,7 @@
 
 **能力边界必须诚实。** 浏览器剪贴板只保证 `image/png`，动图写不进去。UI 必须按 `isAnimated` 分流，**不能让用户点了 GIF 之后发现没反应**。见 [clipboard-share.md](agents/rules/clipboard-share.md)。
 
-**导入不弹中途确认框。** 上千张图时每张都弹窗体验会崩掉。近似重复攒进待确认队列，队列只有 1 条时呈现成即时弹窗——**同一个接口，不同的呈现形式**，不为单张上传另做一套。见 [import-ux.md](agents/rules/import-ux.md)。
+**导入不弹中途确认框。** 上千张图时每张都弹窗体验会崩掉。近似重复里视觉模型拿不准的攒进待确认队列（[SPEC §9.33](../spec/09-decisions.md)），队列只有 1 条时呈现成即时弹窗——**同一个接口，不同的呈现形式**，不为单张上传另做一套。见 [import-ux.md](agents/rules/import-ux.md)。
 
 **设置页的警告文案是契约。** 「你的打标结果会进入公共库」这类文案不能删、不能弱化——它是共享库代价在界面上的唯一体现。见 [settings-ux.md](agents/rules/settings-ux.md)。
 
