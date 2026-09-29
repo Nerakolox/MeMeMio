@@ -176,6 +176,8 @@ GET /memes?emotions=无语&tags=猫&isAnimated=true&favorited=true&uploader=me&c
 | `favorited` | `true` 时只返回当前用户收藏的 |
 | `uploader` | `me` 或用户 id |
 | `tagStatus` | 仅本人或 admin 可用，用于「待处理」列表（[§6.6.2](#662-待处理列表)） |
+| `person` | **`proposed`**（[§6.7](#67-人物与系列)）。人物 id，**单值**：一张图至多归一个人物，两个人物取 AND 恒为空，重复传返回 `VALIDATION_FAILED`。不存在的 id 返回空列表 |
+| `series` | **`proposed`**（同上）。系列 id，单值；返回其下所有人物的图。与 `person` 同时给时取 AND |
 | `limit` | 单页条数，默认 40、最大 100。`random=true` 时它同时是**抽样条数** |
 | `random` | `true` 时随机抽样，见下 |
 
@@ -360,6 +362,8 @@ GET /search?q=今天真的不想上班&limit=50
 | POST | `/config/embed/test` | admin |
 | POST | `/admin/reindex` | admin |
 | GET | `/admin/reindex/status` | admin |
+
+图片向量（人物用）的配置与重算是另一份全站配置，**`proposed`**，见 [§6.7.5](#675-图片向量配置与重算)。
 
 ### §6.5.1 测试连接是这里最重要的接口
 
@@ -580,3 +584,181 @@ GET /api/v1/memes?uploader=me&tagStatus=needs_manual&limit=50
 **不要在 §6.4 之外另造一个「重试」端点**，那会让同一个语义有两条实现。`retag` 已实现（[§6.4.3](#643-post-memesretag-的语义)），所以 `needs_manual` 的图现在是**两条路都通**：人工用 `PATCH` 补，或按当前提示词重跑模型。**但人工编辑过的图会被 `retag` 跳过**——那是 [§6.4.3](#643-post-memesretag-的语义) 写下的取舍，不是这一节能替代的：一旦人补过标签，这张图就只会走人工那条路。
 
 **「进度」不另做端点。** 重打没有自己的任务表，跑完库里也没有「这张被重打过」的痕迹，专门造一个进度接口只能把 [§6.6.1](#661-汇总) 的计数换个地方再说一遍。界面轮询 `GET /memes/tag-status?scope=all` 即可。
+
+## §6.7 人物与系列
+
+> **状态：`proposed`**（2026-09-29）。新增能力，数据模型见 [§5.7](05-data-models.md)，取舍见 [§9.34](09-decisions.md)，任务见[人物识别与聚类](../joint-tasks/2026-09-29-人物识别与聚类.md)。两端读过并确认后转 `accepted`。
+
+| 方法 | 路径 | 权限 | 说明 |
+|---|---|---|---|
+| GET | `/persons` | 所有人 | 人物列表，[§6.7.3](#673-列表详情与合并建议) |
+| GET | `/persons/{id}` | 所有人 | 单个 |
+| PATCH | `/persons/{id}` | 所有人 | 改名、归系列、设封面、隐藏 |
+| GET | `/persons/{id}/suggestions` | 所有人 | 「可能是同一个」 |
+| POST | `/persons/{id}/merge` | 所有人 | 把别的人物并进这一个 |
+| POST | `/persons/{id}/rejections` | 所有人 | 「不是同一个」 |
+| POST | `/persons/assignments` | 所有人 | 把几张图放进 / 拆出 / 移出人物 |
+| GET / POST | `/series` | 所有人 | 系列列表 / 新建 |
+| GET / PATCH | `/series/{id}` | 所有人 | 单个 / 改名、改成员 |
+| DELETE | `/series/{id}` | 创建者或 `admin` | 删系列，人物不动 |
+| GET / PUT | `/config/image-embed` | admin | 图片向量配置，[§6.7.5](#675-图片向量配置与重算) |
+| POST | `/config/image-embed/test` | admin | 测试连接 |
+| POST | `/admin/persons/reindex` | admin | 补算 / 重算人物向量 |
+| GET | `/admin/persons/reindex/status` | admin | 进度 |
+
+浏览页按人物 / 系列筛不在这里，是 [§6.3.2](#632-浏览) 的两个参数 `person` / `series`。
+
+### §6.7.1 权限与留痕
+
+**人物与系列的写操作对所有人开放，与编辑标签同一个理由**（[§9.1](09-decisions.md)）：谁认出了这是谁，起个名字对所有人都是净收益。人物跨越许多上传者的图，「上传者本人」在这里没有对应物，收窄只剩「仅 admin」一条路，那等于把全站的命名压在一个人身上。
+
+**这些写操作都不调 AI。** 合并建议从已存的向量算，改名、合并、移图只动表，所以开放编辑不会开出一条烧钱的路径（对比 [§9.19](09-decisions.md) 为什么不让编辑触发重算）。
+
+留痕是防滥用的唯一手段（[§3.3](03-auth-permission.md)）：`persons.updated_by` / `series.updated_by` 与内容在同一条语句里写；逐图的归属写进 `meme_subjects.assigned_by`。
+
+**逐图的操作按 `edit` 过 `assertCanMutate`**（[§3.4](03-auth-permission.md)）。它写的不是 `memes` 表，但要的是同一样东西：先带 `deleted_at is null` 查到那张图，查不到就 `NOT_FOUND`（[§6.4.2](#642-delete-memesid-的语义) 那条「软删记录连 `PATCH` 也够不着」）。不另写一套判断。
+
+**删除系列限创建者或 `admin`**，与删图同一个不对称：删掉的是别人挑选人物的工作，而且不可撤销。其余操作都能被下一个人改回来。
+
+**并发是最后写入者赢**，不做冲突检测，理由同 [§6.4.1](#641-patch-memesid-的语义)。
+
+### §6.7.2 对外表示
+
+Person：
+
+```
+{
+  id,
+  name,                    // null 表示未命名
+  seriesId, seriesName,    // 不属于任何系列时两者都是 null
+  isHidden,
+  memeCount,               // 未软删的图数，恒 ≥ 1（为 0 的人物不出现，§5.7.4）
+  cover: { memeId, thumbUrl },
+  updatedBy?, updatedAt?
+}
+```
+
+Series：
+
+```
+{
+  id, name,
+  personCount,             // 图数 ≥ 1 的人物数
+  memeCount,               // 其下人物图数之和
+  cover: { memeId, thumbUrl } | null,   // 取图数最多那个人物的封面；空系列为 null
+  createdBy, createdAt, updatedBy?, updatedAt?
+}
+```
+
+**Meme 的对外表示不变**，[§5.2.6](05-data-models.md) 不加「属于哪个人物」。这个信息只在人物语境里用得到：按人物筛的时候，客户端已经知道当前筛的是谁，「不是他」「设为封面」都能直接带上那个 id。
+
+**不返回任何相似度数值**，包括合并建议。阈值与口径归 `api`，数值一旦外露，前端就会长出第二套阈值。
+
+### §6.7.3 列表、详情与合并建议
+
+```
+GET /persons?q=塞西&series=none&named=true&minCount=2&cursor=…&limit=40
+```
+
+| 参数 | 说明 |
+|---|---|
+| `q` | 名字包含，去首尾空白、不区分大小写；空串按不传 |
+| `series` | 系列 id，或 `none`（不属于任何系列） |
+| `named` | `true` 只要有名字的，`false` 只要未命名的；不传两种都要 |
+| `hidden` | `true` 只要隐藏的；**不传或 `false` 只要没隐藏的** |
+| `minCount` | 图数下限，默认 1 |
+
+**`named` / `hidden` 只认 `true` / `false`，别的值 `VALIDATION_FAILED`。** 这与 [§6.3.2](#632-浏览) 的 `isAnimated`（非 `true` 一律当 false）刻意不同：那边当 false 是无害的保守取值，这边把 `hidden=yes` 当没传，等于**静默放宽**——隐藏的人物会铺满 modal，而客户端看不出自己传错了。
+
+`minCount` 的默认值 1 与「不传 = 全返」是同一件事，因为人物的图数恒 ≥ 1（[§5.7.4](05-data-models.md)）。**服务端不替客户端兜更高的下限**：modal 默认只看够两张的，那是界面的选择（[任务](../joint-tasks/2026-09-29-人物识别与聚类.md) §2 第 5 条），换一个客户端可以要别的。
+
+排序固定为 `memeCount desc, id`，游标分页（[§1.3](01-http.md)）。**图数在翻页途中变了，可能重复或漏一格**——不做快照，这是一个浏览面，不是检索。
+
+`GET /series` 接受 `q`（同上），排序同上。`GET /persons/{id}`、`GET /series/{id}` 返回单个；人物的图全被软删时是 `NOT_FOUND`（[§5.7.4](05-data-models.md)），系列不论空不空都在。
+
+`GET /persons/{id}/suggestions`：
+
+```
+{ items: [ Person ] }      // 最多 3 条，最像的在前；可以为空
+```
+
+不含隐藏的人物，不含与它点过「不是同一个」的人物。**建议按组给，不做全站的「待合并清单」**：探测里按组给几乎全对，排成一张全站清单时拖尾要点掉几十条错的才收得全（[§9.34](09-decisions.md)）。所以界面上只在某个人物的语境里问「这一组可能和谁是同一个」，不承诺「把待合并的清空」。
+
+### §6.7.4 写操作
+
+**请求体里引用别的实体时，错误码看这个 id 在请求里是什么角色：**
+
+- **它是这次要操作的对象**（`memeIds`、`sourceIds`、`assignments` 的 `personId`）→ 不存在**或不可见**都是 `NOT_FOUND`。客户端手里的 id 过期了（那张图被删了、那个人物被合并或被移空），正确反应是重拉列表，不是改请求。
+- **它是某个字段的取值**（`seriesId`、`coverMemeId`、`name`）→ `VALIDATION_FAILED`。请求本身不成立，重发一次也一样。
+
+人物那一侧的「不可见」指图全被软删（[§5.7.4](05-data-models.md)）：`GET` 返回 `NOT_FOUND` 的人物，`assignments` 也放不进去，两处同一个判据。
+
+**状态码一律 200，除了本节明确写成 `204` 的两处**（`rejections` 与 `DELETE /series/{id}`），与 [§1.1](01-http.md) 一致：写操作返回被修改后的资源，删除返回 `204`。**`POST /series` 不是 `201`**——SPEC 只在需要的地方写明状态码，仓库里 `POST /admin/invites`、`POST /auth/register` 的 `201` 是 SPEC 未收录的历史行为，不作为新端点的依据。
+
+**`PATCH /persons/{id}`** 只接受 `name` / `seriesId` / `coverMemeId` / `isHidden` 四个字段，部分更新，未知字段 `VALIDATION_FAILED`（[§0.4](00-overview.md)）。
+
+- `name`：去首尾空白后 1–40 字、不含控制字符；`null` 清空（回到未命名）。**不要求唯一**：同一个角色碎成两组、各被起了同一个名字，是很正常的中间态，那是合并的信号，不是冲突。
+- `seriesId`：`null` 移出系列；指向不存在的系列 `VALIDATION_FAILED`。
+- `coverMemeId`：必须是这个人物下未软删的图，否则 `VALIDATION_FAILED`；`null` 回到自动取封面。
+
+响应是更新后的 Person。
+
+**`POST /persons/{id}/merge`**：`{ sourceIds: string[] }`（1–20 个）。`sourceIds` 里各人物的图全部归到 `{id}`，然后删除这些来源人物。
+
+- 名字、系列、封面、隐藏**用目标的**；目标未命名时取 `sourceIds` 里第一个有名字的，系列同理。所以「留哪个名字」由客户端选谁当目标来决定。
+- 来源身上的「不是同一个」**转到目标上**，否则同一条错建议会在合并后换个身份回来。目标与某个来源之间的「不是同一个」丢弃：人刚刚明确说了它们是同一个。
+- `sourceIds` 含 `{id}` 或有重复：`VALIDATION_FAILED`。任何一个人物不存在：`NOT_FOUND`，**整个请求不生效**（一个事务）。
+- **不可撤销。** 合错了的出路是把图移出来（下面的 `assignments`）。界面的确认框必须说出这一点和涉及的图数。
+
+响应是合并后的目标 Person。
+
+**`POST /persons/{id}/rejections`**：`{ otherId }`，记一条「不是同一个」，204，幂等。`otherId` 等于 `{id}`：`VALIDATION_FAILED`。
+
+**`POST /persons/assignments`**：把几张图放到哪。请求体**三种形状恰好给一种**，都给、都不给、给两种都是 `VALIDATION_FAILED`：
+
+| 形状 | 含义 |
+|---|---|
+| `{ memeIds, personId }` | 放进这个人物 |
+| `{ memeIds, newPerson: { name? } }` | 拆出来成一个新人物 |
+| `{ memeIds, none: true }` | 不属于任何人物 |
+
+- `memeIds` 1–100 个、不重复。任何一张不存在或已软删：`NOT_FOUND`，整个请求不生效。
+- `personId` 指向不存在**或图全被软删**的人物：同样 `NOT_FOUND`（本节开头的规则），整个请求不生效。图全被软删的人物收不了图——它此刻对客户端本来就不存在；要在这个前提下归拢，用 `newPerson` 新建一个，之后人再合并。
+- 写 `assigned_by = 调用者`，此后机器不再改这几张的归属（[§5.7.2](05-data-models.md)）。还没算过向量的图也能放，向量以后补算，归属不动。
+- 被移空的人物当场删除（[§5.7.4](05-data-models.md)）。
+
+```
+{ movedCount: 3, person: Person | null }    // none 时为 null
+```
+
+**`POST /series`**：`{ name, personIds? }`；**`PATCH /series/{id}`**：`{ name?, personIds? }`。
+
+- `name` 规则同人物名，但**全站唯一**（去首尾空白、不区分大小写），重复返回 `CONFLICT`（[§2.3](02-errors.md)）。系列是人手建的、数量少，同名两个只会让人不知道往哪个里放。
+- **系列的 `name` 不接受 `null`**（`VALIDATION_FAILED`），人物的 `name: null` 才是「回到未命名」。两者的差别是有意的：人物可以没有名字——机器刚成组时本来就没有，人再慢慢起；系列没有名字就什么都不剩，它是一个完完全全由人建出来的东西。
+- `personIds` 是**这个系列的完整成员**，不是增量：没列出的原成员移出系列，列出的若原本属于别的系列就改到这里来。界面上是「勾选哪些人物属于它」，整份提交与之对应。
+- `personIds` 里**允许**出现图全被软删的人物（客户端看不到它，但行还在）。软删是可逆的（[§5.7.4](05-data-models.md)），人做过的系列成员关系不该因为一次临时删除被机器抹掉；那些图恢复之后，人物会带着原来的系列回来。系列的人物数与图数只数可见的，所以这种成员在界面上暂时不计数。
+- 响应是 Series。
+
+**`DELETE /series/{id}`**：204；不是创建者也不是 admin 返回 `FORBIDDEN`。已删的再删一次 `NOT_FOUND`，理由同 [§6.4.2](#642-delete-memesid-的语义)。
+
+### §6.7.5 图片向量配置与重算
+
+**`/config/image-embed` 与 `/config/embed` 同构**：先测后存、测试记录由服务端保存、按 baseUrl + model + key 指纹匹配、`EMBED_DIM_TOO_SMALL`、密钥只回显 `"****" + 后四位`、空配置回退部署方环境变量（[§6.5.1](#651-测试连接是这里最重要的接口)–[§6.5.3](#653-配置的对外表示)、[§3.5](03-auth-permission.md)）。环境变量名与 `DEFAULT_EMBED_*` 并列，写进 [`docs/environments.md`](../docs/environments.md) 与 `.env.example`。
+
+它是**全站一份**，不是每人一份：人物向量要能互相比，全站必须是同一个模型、同一个口径，这与文本 embedding 归部署方是同一个约束（[§9.6](09-decisions.md)）。花的是部署方的额度。
+
+⚠️ **回退到部署方环境变量时没有测试连接记录，`imageInputWorks` 无处可查。** 上游把图静默丢掉时，表现是所有人物的向量慢慢并成一团，**不报错**（下面那个探测就是为它设的）。所以那三个变量只在自己就是上游、且**手工验过**时才填；`.env.example` 里写了这一条。这是 §6.7.5 唯一一条「配置生效但没被验过」的通路。
+
+测试响应在 embedding 那份之外多一个字段：
+
+```
+{ ok, nativeDim, dimParamWorks, willTruncate, imageInputWorks, rawError }
+```
+
+**`imageInputWorks` 是这份配置最重要的探测。** 测试时送两张明显不同的图，两份向量几乎一样（或上游报的图片 token 为 0）就判 `false`，`ok` 随之为 `false`。探测时见过上游把图**静默丢掉**、照样回一个向量（[任务](../joint-tasks/2026-09-29-人物识别与聚类.md) §9.1）；这种配置存进来，每张图都会被编码成差不多的向量，所有人物会慢慢并成一团，**不报错**。
+
+换模型且库里已有人物向量时，`PUT` 要带 `confirmReindex: true`，否则 `EMBED_MODEL_CHANGED`；响应同样带 `reindexTriggered` / `reindexEnqueuedCount`。**已有的归属不动**（[§5.7.2](05-data-models.md)），重算只换向量。
+
+**第一次配好不自动补跑。** 存量补跑由管理员点 `POST /admin/persons/reindex`：它把所有未软删、没有当前口径向量的图排进队列，**幂等**，响应 `{ enqueuedCount, ...status }`。与 `/admin/reindex` 不同的是它**每张图都是一次付费调用**，界面上点之前要说清条数和花谁的钱。配好之后新进来的图自动算，不用点。
+
+`GET /admin/persons/reindex/status` 与 [§6.5.4](#654-重建索引) 的状态同形：`{ running, total, done, stale, failed }`，来自库里的真实计数。**人物向量的重算不影响 `degraded`**——那个字段只说检索的向量路，人物不参与检索召回。

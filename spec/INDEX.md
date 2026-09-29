@@ -11,7 +11,7 @@
 | 2 | [02-errors.md](02-errors.md) | 错误结构、错误码与消费行为 |
 | 3 | [03-auth-permission.md](03-auth-permission.md) | 会话、角色、权限矩阵与软删边界 |
 | 4 | [04-vocabulary.md](04-vocabulary.md) | 固定标签词表的规则与变更流程 |
-| 5 | [05-data-models.md](05-data-models.md) | User、Meme、Favorite、AI 配置 |
+| 5 | [05-data-models.md](05-data-models.md) | User、Meme、Favorite、AI 配置、导入批次、运行参数、人物与系列 |
 | 6 | [06-endpoints.md](06-endpoints.md) | 业务 API 及输入输出 |
 | 7 | [07-naming.md](07-naming.md) | 通信、数据库与代码命名 |
 | 8 | [08-collaboration.md](08-collaboration.md) | 契约变更、任务与归档 |
@@ -30,5 +30,6 @@
 | 复制 / 分享 / 发送 | §5.2.2、§9.2 |
 | 模型配置与测试连接 | §5.3、§6.5、§9.3、§9.7；动 embedding 配置或重建索引另读 §9.6 |
 | 删除、编辑与收藏 | §3.3、§3.4、§4.5、§5.4、§6.4（含 §6.4.1 / §6.4.2）、§9.1、§9.19 |
+| 人物与系列 | §3.3、§3.4、§5.7、§6.3.2、§6.7、§9.6、§9.34 |
 
 引用使用文件名与稳定章节号。本文只作路由，不能只看关键词表推断契约细节。

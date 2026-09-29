@@ -29,6 +29,8 @@
 | 近似重复 | near duplicate | similar（`similarTo` 字段名是历史例外，见下） |
 | 待确认队列 | review | confirm、pending（`pending` 已被 `tagStatus` 占用） |
 | 固定标签词表 | vocabulary / vocab | taxonomy、词典、标签库 |
+| 一组被认为是同一个角色 / 人的 meme（[§5.7](05-data-models.md)） | person | character、face、cluster |
+| 人工挑选人物组成的父级 | series | work、franchise、ip、collection |
 
 `uploader` 不叫 `owner`，是刻意的。库是共享的，上传者不拥有这张图，只是对它有写权限——命名如果暗示所有权，会把「多租户隔离」的直觉带回代码里。见 [§0.1](00-overview.md)。
 

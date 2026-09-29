@@ -261,3 +261,101 @@ runtime_config(
 ⚠️ **这里的每一个数都是「每个服务进程」的，不是全站的。** 多副本时实际全局上限 = 配置值 × 进程数。这与 [queue.md §1](../api/agents/rules/queue.md)「不假设单副本」相邻但不冲突：那张规则管的是**正确性**（不重复消费），这里的并发数管的是**节流**；改成真正的全局上限需要分布式限流，而本项目不引入 Redis（[§9.11](09-decisions.md)）。接口文案与界面措辞都必须按「每个服务进程」说。
 
 生效**不是事务性的「立即」**：打标 worker 在下一轮 tick 读到新值，而那一轮可能正卡在等一个在途任务完成上；导入按批次读一次，已经在跑的批次整批用旧值。见 [§6.5.5](06-endpoints.md)。
+
+## §5.7 人物与系列
+
+> **状态：`proposed`**（2026-09-29）。新增能力，见[人物识别与聚类](../joint-tasks/2026-09-29-人物识别与聚类.md)。两端读过并确认后转 `accepted`；取舍理由见 [§9.34](09-decisions.md)，端点见 [§6.7](06-endpoints.md)。
+
+**人物**是一组被认为是同一个角色 / 同一个人的 meme，由机器自动成组、由人命名与修正。**系列**是人物的父级（通常是一部作品），只由人挑选人物组成。
+
+两层都是**开集**，不进 [§4](04-vocabulary.md) 的词表，`memes` 上也不加字段——理由与梗名相同（[§9.18](09-decisions.md)）：闭集存在的意义是让不同模型的输出可比，而人物每加一张图都可能多一个。
+
+```sql
+-- 一张图一行：整图算一个向量，至多归一个人物
+meme_subjects(
+  meme_id       uuid primary key,
+  embedding     vector(1024),     -- 可空：人先归了类、向量还没算，或还没轮到
+  embed_model   text,             -- 模型标识 + 预处理口径，见 §5.7.1
+  person_id     uuid,             -- 可空：还没分配，或人判定它不属于任何人物
+  assigned_by   uuid,             -- null = 机器分配；非空 = 人放进 / 移出过，机器不再改
+  assigned_at   timestamptz
+);
+
+persons(
+  id             uuid primary key,
+  name           text,            -- null = 未命名；不要求唯一
+  series_id      uuid,            -- 至多属于一个系列
+  cover_meme_id  uuid,            -- 人指定的封面，可空
+  hidden_at      timestamptz,     -- 非空 = 隐藏（「这组不是人物」），新图照挂
+  created_at     timestamptz not null,
+  updated_by     uuid,            -- 最后一次人工改动
+  updated_at     timestamptz
+);
+
+series(
+  id          uuid primary key,
+  name        text not null,      -- 去首尾空白后全站唯一，不区分大小写
+  created_by  uuid not null,
+  created_at  timestamptz not null,
+  updated_by  uuid,
+  updated_at  timestamptz
+);
+
+-- 人点过的「这两个不是同一个」：合并建议不再给这一对
+person_rejections(
+  person_id        uuid not null,  -- 两个 id 里较小的那个
+  other_person_id  uuid not null,
+  created_by       uuid not null,
+  created_at       timestamptz not null,
+  primary key (person_id, other_person_id)
+);
+
+-- 全站单行表，与 embed_config 同构，多一个探测字段
+image_embed_config(
+  id                 int primary key default 1 check (id = 1),
+  base_url           text,
+  api_key_enc        bytea,
+  model              text,
+  native_dim         int,
+  dim_param_works    boolean,
+  image_input_works  boolean,       -- 图真的被编码了，不是被静默丢掉，见 §6.7.5
+  verified_at        timestamptz
+);
+```
+
+### §5.7.1 人物向量
+
+**整图一个向量，不裁剪、不画框。** 送之前缩放到固定长边，截到 1024 维并重新 L2 归一化。长边的具体值与挂人物的相似度阈值是 `api` 的实现约束，留在代码常量里（[§9.26](09-decisions.md)）。动图取代表帧，与近似重复判定同一取法。
+
+**一张图多个角色同框时，只归一个人物。** 这是整图方案的已知代价，见 [§9.34](09-decisions.md)。
+
+**预处理口径是向量空间的一部分。** 同一张图换一个长边送进去，两份向量的相似度可能比两个不同角色还低（[任务](../joint-tasks/2026-09-29-人物识别与聚类.md) §9.1 发现 1）。所以 `embed_model` 记的是「模型 + 预处理口径」，**改长边与换模型同等对待**：存量全部重算，比较只在同一口径的向量之间做——与 [§9.20](09-decisions.md) 同一条道理，不同空间的余弦相似度是噪声。
+
+**它与 `memes.embedding` 是两个空间，不能混比。** 后者由 `search_text` 算、属于文本向量（[§5.2.4](#524-embedding)），前者是图片向量。两份向量由两份配置管，**换文本 embedding 模型不重算人物向量，反之亦然**。
+
+### §5.7.2 分配
+
+**新图入库后异步算向量、挂人物，不挡入库也不挡打标。** 没配图片向量、调用失败、这一步整个出问题，图照样入库、打标、能被搜到，只是暂时不属于任何人物。人物是附加能力，不能挡核心路径（[§9.27](09-decisions.md) 同一条原则）。
+
+挂的规则：离已有的某个人物足够近就挂上，否则自成一个新的未命名人物。隐藏的人物照样参与——否则被隐藏的那组会在下一张图进来时重新长出来。
+
+**机器只「挂」，不「并」。** 两个已有人物之间，机器最多给合并建议（[§6.7.3](06-endpoints.md)），合不合由人点。误合并比碎片伤人：误合并会让按人物筛混进别的角色，碎片只是多一格。
+
+**分配只发生一次。** 已经分配过的行，重算只换向量、不重新分配。`assigned_by` 非空的行，不论 `person_id` 是某个人物还是 null，任何后续的重算、补跑都不碰它的归属——**人做过的决定，机器不改**。被人移出的图若被机器重新挂回去，表现是「我明明说了不是他，过两天又回来了」，不报错。
+
+### §5.7.3 系列
+
+**系列是父级，人物是子级，一个人物至多属于一个系列。** 机器不生成系列，全靠人从人物里挑；系列可以是空的（刚建、还没挑）。
+
+删除系列只删 `series` 这一行，其下人物的 `series_id` 置空，人物与图都不动。
+
+### §5.7.4 软删与计数
+
+人物的图数、封面、成员，**一切读路径都带 `memes.deleted_at is null`**（[§3.4](03-auth-permission.md)）。
+
+- **图数**：该人物下未软删的图。
+- **封面**：`cover_meme_id`；为 null 或那张已软删时，取成员里 `created_at` 最新的一张。
+- **图全被软删的人物不出现**在任何列表里，`GET /persons/{id}` 返回 `NOT_FOUND`。行保留：图被恢复时人物跟着回来，与收藏不级联是同一个道理（[§5.4](#54-收藏)）。
+- 物理删除时级联删 `meme_subjects` 那一行；人物因此一张图都不剩时，连同它的 `person_rejections` 一起删。
+- 人把一个人物的图全部移走（含被合并掉）时，该人物当场删除。
+- **系列**的图数 = 其下人物图数之和；人物数只数图数 ≥ 1 的。
