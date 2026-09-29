@@ -294,12 +294,13 @@ export type ReviewQueueEntry = {
   width: number | null
   height: number | null
   distance: number | null
-  existingId: string
-  existingUploaderName: string
-  existingSizeBytes: bigint
+  /** 被比中的那张已被软删（或 `similar_to` 为空）时为 null，条目仍在。 */
+  existingId: string | null
+  existingUploaderName: string | null
+  existingSizeBytes: bigint | null
   existingWidth: number | null
   existingHeight: number | null
-  existingCreatedAt: Date
+  existingCreatedAt: Date | null
 }
 
 /**
@@ -309,7 +310,8 @@ export type ReviewQueueEntry = {
  * `needs_review` 不清理」那条规则（image-pipeline.md §6）的落点：条目是用户的待办，
  * 不是导入日志。跟着批次一起清掉的表现是「用户的待确认队列凭空消失」。
  *
- * 关联的 `existing` 必须是**未软删**的图，否则用户会看到一个已经删掉的对比对象。
+ * 关联的 `existing` 必须是**未软删**的图，否则用户会看到一个已经删掉的对比对象；
+ * 但软删了**条目照样返回**，只是 `existing*` 全为 null（见下面的 leftJoin）。
  */
 export async function listReviewQueue(
   userId: string,
@@ -335,9 +337,15 @@ export async function listReviewQueue(
     })
     .from(importItems)
     .innerJoin(importBatches, eq(importItems.batchId, importBatches.id))
-    .innerJoin(memes, eq(importItems.similarTo, memes.id))
-    .innerJoin(users, eq(memes.uploaderId, users.id))
-    .where(and(eq(importBatches.userId, userId), eq(importItems.result, 'needs_review'), isNull(memes.deletedAt)))
+    // ⚠️ 软删过滤在 **ON 条件里**，不在 where：被比中的那张一旦软删，条目要留在队列里、
+    //    `existing` 为 null（SPEC §6.2.3「不删除条目」）。写进 where 会把整行滤掉——
+    //    用户的待办凭空消失，而且不报错。软删过滤本身仍然一条不少。
+    .leftJoin(
+      memes,
+      and(eq(importItems.similarTo, memes.id), isNull(memes.deletedAt)),
+    )
+    .leftJoin(users, eq(memes.uploaderId, users.id))
+    .where(and(eq(importBatches.userId, userId), eq(importItems.result, 'needs_review')))
     .orderBy(asc(importItems.batchId), asc(importItems.fileName))
 
   return rows

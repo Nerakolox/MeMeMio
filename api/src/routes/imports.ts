@@ -241,8 +241,10 @@ export const importRoutes = new Hono<{ Variables: Vars }>()
 
     const items = await Promise.all(
       entries.map(async (entry) => {
-        // existing 用完整的 meme 序列化结果，前端并排展示两侧用的是同一套字段
-        const existing = await getMemeById(entry.existingId, actor.id)
+        // existing 用完整的 meme 序列化结果，前端并排展示两侧用的是同一套字段。
+        // 被比中的那张已软删时 `existingId` 为 null，条目仍在、`existing` 为 null（SPEC §6.2.3）
+        const existing =
+          entry.existingId === null ? null : await getMemeById(entry.existingId, actor.id)
         return {
           batchId: entry.batchId,
           fileName: entry.fileName,

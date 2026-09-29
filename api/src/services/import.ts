@@ -14,8 +14,10 @@ import { enqueueTagJob } from '../data/tag-jobs.js'
 import { detectFormat, isIngestible, SNIFF_BYTES, type DetectedFormat } from '../lib/magic-bytes.js'
 import { AppError, isAppError } from '../lib/app-error.js'
 import { log } from '../logger.js'
+import { judgeNearDuplicate } from '../ai/dup-judge.js'
+import { resolveVisionConfig } from '../ai/vision.js'
 import { FFMPEG_CONCURRENCY, MAX_FILE_BYTES, NEAR_DUP_DISTANCE } from '../image/constants.js'
-import { computePhash, readSize, toThumbnail } from '../image/decode.js'
+import { computePhash, readSize, toAiPng, toThumbnail } from '../image/decode.js'
 import { isAnimatedByFrames } from '../image/frames.js'
 import { extractFramePng, probeMetadata, setFfmpegConcurrency } from '../image/probe.js'
 import { withTempFile } from '../image/temp-file.js'
@@ -36,11 +38,17 @@ import { publish } from './import-events.js'
  *
  *     magic bytes 探测真实格式（不信扩展名）
  *       → SHA-256 查库 → 精确命中 → exact_dup，静默跳过，删除暂存对象
- *       → pHash 计算 → 全库 Hamming 扫描 → 近似命中 → needs_review，不阻塞批次，不打标
- *       → 两关都过 → 写入 memes（tag_status = pending）→ 进打标队列
+ *       → pHash 计算 → 全库 Hamming 扫描 → 命中则按距离分三档（SPEC §9.33）：
+ *           距离 0        → exact_dup（留痕：memeId / distance / reason），不调 AI
+ *           距离 1…阈值   → 问上传者的视觉通道：same → exact_dup（留痕）；
+ *                           different → 继续往下入库；
+ *                           unsure / 调用失败 / 没配通道 → needs_review，不阻塞批次，不打标
+ *       → 都过 → 配额 → 写入 memes（tag_status = pending）→ 进打标队列
  *
  * **去重在调 AI 之前。** 表情包库重复率极高，先去重直接省掉相应比例的 AI 调用；
  * 用户自带 key 之后，这是在省用户自己的钱。不要为了「快点看到标签」把顺序调过来。
+ * 近似判定那一档**是**一次视觉调用，但它只发生在 pHash 命中的少数文件上，
+ * 而且发生在打标之前：判为重复的那些，连打标的钱也省了。
  */
 
 /**
@@ -354,8 +362,86 @@ type PipelineResult = {
   memeId?: string
   /** `needs_review` 时指向库里那张相似的图，以及汉明距离。待确认队列靠它并排对比。 */
   similarTo?: string
+  /** `needs_review` 与自动判重的 `exact_dup`（SPEC §9.33 留痕）都带。 */
   distance?: number
   reason?: string
+}
+
+type NearNeighbor = { meme: { id: string; storageKey: string; isAnimated: boolean }; distance: number }
+
+type NeighborJudgement =
+  | { kind: 'same'; reason: string }
+  | { kind: 'different' }
+  | { kind: 'unsure' }
+
+/**
+ * 一张图变成送 AI 的**一张 PNG**。动图取中间帧：判重要的是「两边取同一个位置」，
+ * 而不是哪一帧最有代表性——完整的多帧比对是更贵的另一件事，模型拿不准会回落到人。
+ * 一律 PNG，不送 GIF（image-pipeline.md）。
+ */
+async function toComparisonPng(bytes: Buffer, label: string, isAnimated: boolean): Promise<Buffer> {
+  if (!isAnimated) return toAiPng(bytes)
+  const frame = await withTempFile(bytes, label, async (filePath) => {
+    const metadata = await probeMetadata(filePath)
+    return extractFramePng(filePath, Math.floor((metadata.frameCount - 1) / 2))
+  })
+  return toAiPng(frame)
+}
+
+/**
+ * 距离 1…阈值的近似命中：问上传者的视觉通道（与打标同一解析），拿一个三态结论。
+ *
+ * ⚠️ **这个函数永不抛异常。** 任何一步出问题——没配通道、取库里那张失败、抽帧失败、
+ *    超时、输出不合规——都落成 `unsure`，即原来的待确认队列。不能让模型的问题
+ *    把条目变成 `failed`（用户会以为文件坏了），更不能悄悄入库（SPEC §9.33）。
+ *    每种降级都记日志，「静默降级」和「吞错误」的区别只在有没有这一条。
+ *
+ * 库里那张从 R2 按 `storageKey` 取，命中时它已被 `findNearestByPhash` 过滤过软删。
+ */
+async function judgeAgainstNeighbor(
+  userId: string,
+  bytes: Buffer,
+  neighbor: NearNeighbor,
+): Promise<NeighborJudgement> {
+  try {
+    const config = await resolveVisionConfig(userId)
+    if (config === null) {
+      log.info({ userId, similarTo: neighbor.meme.id }, '近似命中但没有可用的视觉通道，交给人确认')
+      return { kind: 'unsure' }
+    }
+
+    const freshIsAnimated = await withTempFile(bytes, 'dup-probe', async (filePath) =>
+      isAnimatedByFrames(await probeMetadata(filePath)),
+    )
+    const [fresh, existing] = await Promise.all([
+      toComparisonPng(bytes, 'dup-fresh', freshIsAnimated),
+      getObject(neighbor.meme.storageKey).then((stored) =>
+        toComparisonPng(stored, 'dup-existing', neighbor.meme.isAnimated),
+      ),
+    ])
+
+    const result = await judgeNearDuplicate(fresh, existing, config)
+    if (result.kind === 'unavailable') {
+      log.warn(
+        { userId, similarTo: neighbor.meme.id, why: result.why },
+        '近似重复判定没有拿到有效结论，交给人确认',
+      )
+      return { kind: 'unsure' }
+    }
+
+    const { verdict, reason } = result.judgement
+    log.info(
+      { userId, similarTo: neighbor.meme.id, distance: neighbor.distance, verdict },
+      '近似重复判定完成',
+    )
+    return verdict === 'same' ? { kind: 'same', reason } : { kind: verdict }
+  } catch (error) {
+    log.warn(
+      { err: error, userId, similarTo: neighbor.meme.id },
+      '近似重复判定过程出错，交给人确认',
+    )
+    return { kind: 'unsure' }
+  }
 }
 
 /**
@@ -404,19 +490,54 @@ async function runPipeline(
     const size = await readSize(bytes)
     const phash = await computePhash(bytes)
 
-    // ⑤ pHash 全库扫描。命中就攒进待确认队列，**不打标** —— 等用户确认「仍然导入」
-    //    之后才进队列，否则被判重复的那些白花钱（SPEC §6.2.2）。
+    // ⑤ pHash 全库扫描，命中后按距离三档分流（SPEC §9.33）：
+    //      距离 0            → 直接判重复，不问任何人、不调 AI
+    //      距离 1…阈值       → 问上传者的视觉通道：same 判重复 / different 继续入库 / 其余回落到人
+    //      超过阈值          → 没命中，往下走
+    //    **仍在配额之前、入库之前**：三种结局都不占空间，也都不打标。
     const neighbor = await findNearestByPhash(phash, NEAR_DUP_DISTANCE)
     if (neighbor !== null) {
-      // `similarTo` / `distance` **必须带到条目上**：待确认队列接口要给用户并排对比
-      // （`listReviewQueue` 靠 `similar_to` 关联出 existing，靠 `distance` 显示相似度）。
-      // 只在 `reason` 那句话里写「距离 7」是不够的——那是给人看的文本，程序读不出来。
-      return {
-        result: 'needs_review',
-        similarTo: neighbor.meme.id,
-        distance: neighbor.distance,
-        reason: `库里已有一张相近的图（距离 ${neighbor.distance}）`,
+      if (neighbor.distance === 0) {
+        await deleteObject(file.tempKey)
+        return {
+          result: 'exact_dup',
+          memeId: neighbor.meme.id,
+          distance: 0,
+          reason: '画面完全相同（距离 0）',
+        }
       }
+
+      const judged = await judgeAgainstNeighbor(userId, bytes, neighbor)
+      if (judged.kind === 'same') {
+        // 自动判重是**不可撤销**的（暂存对象在这里删掉），所以必须留痕：
+        // `memeId` 指向被比中的那张，`distance` 与 `reason` 让人事后能回答「为什么没进库」
+        await deleteObject(file.tempKey)
+        return {
+          result: 'exact_dup',
+          memeId: neighbor.meme.id,
+          distance: neighbor.distance,
+          reason:
+            judged.reason === ''
+              ? '视觉模型判定为同一张'
+              : `视觉模型判定为同一张：${judged.reason}`,
+        }
+      }
+      if (judged.kind === 'unsure') {
+        // `similarTo` / `distance` **必须带到条目上**：待确认队列接口要给用户并排对比
+        // （`listReviewQueue` 靠 `similar_to` 关联出 existing，靠 `distance` 显示相似度）。
+        // 只在 `reason` 那句话里写「距离 7」是不够的——那是给人看的文本，程序读不出来。
+        return {
+          result: 'needs_review',
+          similarTo: neighbor.meme.id,
+          distance: neighbor.distance,
+          reason: `库里已有一张相近的图（距离 ${neighbor.distance}）`,
+        }
+      }
+      // `different`：模型认为是另一张图，落到下面走正常入库。
+      log.info(
+        { fileName: file.fileName, similarTo: neighbor.meme.id, distance: neighbor.distance },
+        '近似命中但视觉模型判定为不同的图，按新图入库',
+      )
     }
 
     // ⑥ 配额按**实际字节**查（SPEC §3.6）。放在这里而不是读字节之前：上面两条去重路径

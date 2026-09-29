@@ -253,6 +253,23 @@ describe('待确认队列（GET /reviews）', () => {
     )
   })
 
+  it('被比中的那张已软删：条目仍在队列里，existing 为 null（SPEC §6.2.3）', async () => {
+    const alice = await signIn()
+    const { batchId, fileName } = await makeReviewItem(alice)
+
+    // 直接软删库里那张。原来 innerJoin + where 过滤会让整条条目消失——用户的待办凭空没了
+    await db.update(memes).set({ deletedAt: new Date() }).where(eq(memes.originalFilename, 'near-resized.png'))
+
+    const items = await listReviews(alice)
+    expect(items).toHaveLength(1)
+    expect(items[0]?.batchId).toBe(batchId)
+    expect(items[0]?.fileName).toBe(fileName)
+    expect(items[0]?.existing).toBeNull()
+    // 条目自己的字段不受影响：用户仍能看见新图、仍能选「仍然导入」
+    expect(items[0]?.tempUrl).toContain(`temp/${batchId}/${fileName}`)
+    expect(items[0]?.distance).toBe(7)
+  })
+
   it('跨批次汇总，并且只列自己的', async () => {
     const alice = await signIn({ name: 'alice' })
     const bob = await signIn({ name: 'bob' })

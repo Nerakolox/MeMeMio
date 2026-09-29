@@ -413,7 +413,10 @@ describe('精确重复（SHA-256 命中）', () => {
 // ── 近似重复 ──────────────────────────────────────────────────────
 
 describe('近似重复（pHash 命中）', () => {
-  it('距离低于阈值时进待确认队列，不打标、保留 temp 对象', async () => {
+  // 本文件的 DEFAULT_VISION_* 是空的、用户也没配视觉通道，所以这一条同时就是
+  // SPEC §9.33 的「没配通道 → 落回 needs_review」。有通道时的三态判定见
+  // import-near-dup-judge.test.ts（env 在首次 import 时冻结，只能分文件）。
+  it('距离低于阈值且没有视觉通道时进待确认队列，不打标、保留 temp 对象', async () => {
     const alice = await signIn()
 
     // near-resized 先入库（它和 near-jpeg 实测距离 7，低于 NEAR_DUP_DISTANCE = 8）
