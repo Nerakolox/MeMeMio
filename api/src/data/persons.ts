@@ -1,8 +1,8 @@
 import { eq, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
-import { LIVE_MEME } from './memes.js'
-import { memeSubjects } from './schema.js'
+import { assertCanMutate, LIVE_MEME, type Actor } from './memes.js'
+import { memeSubjects, persons } from './schema.js'
 import { AppError } from '../lib/app-error.js'
 import { containsPattern } from '../lib/like.js'
 import { isUuid } from '../lib/uuid.js'
@@ -747,4 +747,477 @@ function toVectorLiteral(embedding: number[]): string {
     }
   }
   return `[${embedding.join(',')}]`
+}
+
+// ── 写操作（SPEC §6.7.4） ──────────────────────────────────────────
+//
+// 改名 / 合并 / 移图，以及系列的增删改。三条共同形状：
+//
+// 1. **先判「还在」再改，判据与读路径是同一份。** 人物的「还在」是图数 ≥ 1
+//    （`findPersonById`，§5.7.4），图的「还在」是 `LIVE_MEME`。两边都不另写一套。
+// 2. **多步改动必须一个事务。** merge 要搬图 + 转「不是同一个」+ 删来源，assignments
+//    要写归属 + 删被移空的人物。中途失败留下的半合并状态不会报错。
+// 3. **留痕和内容在同一条 update 里**（§6.7.1）：`updated_by` / `updated_at` 不单独发
+//    一条语句——那样会出现「内容改了、留痕没写」，而留痕是这些写接口唯一防滥用的手段。
+
+/** uuid 的 IN 列表。空数组必须由调用方挡掉：`in ()` 是语法错误，不是空集。 */
+function uuidList(ids: string[]): SQL {
+  return sql.join(
+    ids.map((id) => sql`${id}::uuid`),
+    sql`, `,
+  )
+}
+
+/**
+ * 系列名的比较口径，**逐字对齐唯一索引 `series_name_key`**：`lower(btrim(name))`。
+ *
+ * 写成一个常量而不是一个 `(name) => sql` 的函数：那个函数的类型是合法的，
+ * 但写成 `where ${f(name)} = lower(btrim(${name}))` 时**两边是同一个参数**，
+ * 等于恒真——预检查会把「已经有这个系列了」套在每一行上（第一次建系列就报名字被占），
+ * 而且不报 SQL 错，看着只是业务规则不对。常量放在关系那一边，值放在参数那一边，
+ * 这类错就写不出来。
+ */
+const SERIES_NAME_KEY = sql`lower(btrim(name))`
+
+/** Postgres 的唯一约束冲突（`unique_violation`）。并发插入时预检查会漏，这一条兜底。 */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: unknown }).code === '23505'
+  )
+}
+
+/** 人改人物时能改的四个字段。`undefined` = 不改，`null` = 清空（§6.7.4）。 */
+export type PersonPatch = {
+  name?: string | null
+  seriesId?: string | null
+  coverMemeId?: string | null
+  isHidden?: boolean
+}
+
+/**
+ * `PATCH /persons/{id}`。返回更新后的人物；**图全被软删时返回 null**
+ * （那个人物对客户端不存在，写也写不到它身上，§5.7.4）。
+ *
+ * 两处引用校验都在改之前做完，报 `VALIDATION_FAILED` 而不是让外键去炸：
+ *
+ * - `seriesId` 指向不存在的系列 → 400。**不能靠 `persons_series_id_series_id_fk`**：
+ *   那个报错是 23503，`app.onError` 把非 `AppError` 一律当 INTERNAL，客户端拿到的是
+ *   「服务器内部错误」，而它能修的是「这个系列被删了，重新选一个」。
+ * - `coverMemeId` 必须是**这个人物下、还活着**的图。只判「图存在」不够：封面指向
+ *   别人的图时，那个人物会显示一张不属于它的封面，**不报错**（§6.7.2 的 `cover`
+ *   是非空的，客户端没有机会发现它不对）。
+ *
+ * `isHidden` 为 true 时把 `hidden_at` 推到当前时刻、false 清空。重复隐藏会刷新这个
+ * 时间戳——它对外只表示「隐藏了」（§6.7.2 是布尔值），所以刷新没有可观察的后果。
+ */
+export async function updatePerson(
+  id: string,
+  patch: PersonPatch,
+  actor: Actor,
+  db: Db = defaultDb,
+): Promise<PersonSummary | null> {
+  return db.transaction(async (tx) => {
+    if ((await findPersonById(id, tx)) === null) return null
+
+    if (patch.seriesId !== undefined && patch.seriesId !== null) {
+      const rows = await tx.execute<{ id: string }>(sql`
+        select id from series where id = ${patch.seriesId}::uuid limit 1
+      `)
+      if (rows.length === 0) throw new AppError('VALIDATION_FAILED', '这个系列不存在')
+    }
+
+    if (patch.coverMemeId !== undefined && patch.coverMemeId !== null) {
+      const rows = await tx.execute<{ meme_id: string }>(sql`
+        select ms.meme_id
+        from meme_subjects ms
+        join memes on memes.id = ms.meme_id
+        where ms.person_id = ${id}::uuid
+          and ms.meme_id = ${patch.coverMemeId}::uuid
+          and ${LIVE_MEME}
+        limit 1
+      `)
+      if (rows.length === 0) {
+        throw new AppError('VALIDATION_FAILED', '封面必须是这个人物下还在的图')
+      }
+    }
+
+    const set: Partial<typeof persons.$inferInsert> = {
+      updatedBy: actor.id,
+      updatedAt: new Date(),
+    }
+    if (patch.name !== undefined) set.name = patch.name
+    if (patch.seriesId !== undefined) set.seriesId = patch.seriesId
+    if (patch.coverMemeId !== undefined) set.coverMemeId = patch.coverMemeId
+    if (patch.isHidden !== undefined) set.hiddenAt = patch.isHidden ? new Date() : null
+
+    await tx.update(persons).set(set).where(eq(persons.id, id))
+
+    return findPersonById(id, tx)
+  })
+}
+
+/**
+ * `POST /persons/{id}/merge`：把 `sourceIds` 各人物的图全部归到 `{id}`，再删掉它们。
+ *
+ * 名字、系列、封面、隐藏**用目标的**（封面与隐藏不需要做什么，目标那两列本来就留着）；
+ * 目标未命名时取 `sourceIds` 里**第一个**有名字的，系列同理——两个字段各算各的，
+ * 「留哪个名字」由客户端选谁当目标决定（§6.7.4）。
+ *
+ * `sourceIds` 含重复或含目标本身由路由挡掉（那是形状问题，400）；这里只管存在性，
+ * 任何一个对客户端不存在就 `NOT_FOUND`，且**整个请求不生效**（一个事务）。
+ * 「不存在」用的是读路径那个判据：图全被软删的人物不可见，也就不该能被合并。
+ *
+ * ## 「不是同一个」怎么转
+ *
+ * 先**插入**转移过来的那批、再删来源人物（外键是 `on delete cascade`，来源身上剩下的
+ * 拒绝行跟着消失）。顺序反过来的话，转移用的数据源已经被级联删掉了。
+ *
+ * 转移后哪些会被丢掉，全在 `where` 里：
+ *
+ * - 一条拒绝的两个端点都是来源 → `side` 也落在来源里，丢弃。它们马上都是同一个人了。
+ * - 一端是来源、一端是目标 → `side` 是目标，丢弃。人刚刚明确说了它们是同一个。
+ * - 一端是来源、一端是别人 → 记成「目标 × 别人」，`on conflict do nothing` 保证不重复。
+ *
+ * 目标自己原有的拒绝行不动。
+ */
+export async function mergePersons(
+  targetId: string,
+  sourceIds: string[],
+  actor: Actor,
+  db: Db = defaultDb,
+): Promise<PersonSummary | null> {
+  return db.transaction(async (tx) => {
+    const target = await findPersonById(targetId, tx)
+    if (target === null) return null
+
+    const found = await findPersonSummariesByIds(sourceIds, tx)
+    const byId = new Map(found.map((s) => [s.id, s]))
+    const sources: PersonSummary[] = []
+    for (const sourceId of sourceIds) {
+      const summary = byId.get(sourceId)
+      if (summary === undefined) {
+        throw new AppError('NOT_FOUND', '有的人物不存在，整个请求没有生效')
+      }
+      sources.push(summary)
+    }
+
+    // 「第一个有名字的」必须**按 sourceIds 的顺序**挑，不能按数据库回来的顺序：
+    // 后者不保证顺序（`findPersonSummariesByIds` 的注释），照它取会让同一个请求
+    // 两次调用得到不同的名字。
+    const name = target.name ?? sources.find((s) => s.name !== null)?.name ?? null
+    const seriesId = target.seriesId ?? sources.find((s) => s.seriesId !== null)?.seriesId ?? null
+
+    const list = uuidList(sourceIds)
+
+    // 已软删的图也一起搬：`meme_subjects` 那一行要等物理删除才级联，
+    // 留在来源人物上的话，那张图被恢复时会出现一个本该已经被合掉的人物。
+    await tx.execute(sql`
+      update meme_subjects set person_id = ${targetId}::uuid where person_id in (${list})
+    `)
+
+    await tx.execute(sql`
+      insert into person_rejections (person_id, other_person_id, created_by, created_at)
+      select least(t.id, t.other), greatest(t.id, t.other), t.created_by, t.created_at
+      from (
+        select ${targetId}::uuid as id, r.created_by, r.created_at,
+               case when r.person_id in (${list}) then r.other_person_id else r.person_id end as other
+        from person_rejections r
+        where r.person_id in (${list}) or r.other_person_id in (${list})
+      ) t
+      where t.other <> ${targetId}::uuid
+        and t.other not in (${list})
+      on conflict do nothing
+    `)
+
+    await tx
+      .update(persons)
+      .set({ name, seriesId, updatedBy: actor.id, updatedAt: new Date() })
+      .where(eq(persons.id, targetId))
+
+    // 来源人物连同它身上剩下的拒绝行一起消失
+    await tx.execute(sql`delete from persons where id in (${list})`)
+
+    return findPersonById(targetId, tx)
+  })
+}
+
+/**
+ * `POST /persons/{id}/rejections`：记一条「不是同一个」，**幂等**（§6.7.4）。
+ *
+ * 两个人物都要**此刻可见**，否则 `NOT_FOUND`。这个判断在 SPEC 里只对 merge 写明了
+ * （「任何一个人物不存在：`NOT_FOUND`」），这里照同一条办：表上有指向 `persons` 的
+ * 外键，不判的话一个不存在的 id 会让外键报 23503，客户端拿到的是 500。
+ *
+ * 库里按**较小的 id 在前**存（§5.7：主键是那一对），所以这里用 `least`/`greatest`
+ * 对齐。反着存的话「A 点了不是 B」在查 B 时查不到，而那个建议会一直挂在列表上。
+ */
+export async function addPersonRejection(
+  personId: string,
+  otherId: string,
+  actor: Actor,
+  db: Db = defaultDb,
+): Promise<void> {
+  const found = await findPersonSummariesByIds([personId, otherId], db)
+  if (found.length < 2) throw new AppError('NOT_FOUND', '有的人物不存在')
+
+  await db.execute(sql`
+    insert into person_rejections (person_id, other_person_id, created_by)
+    values (least(${personId}::uuid, ${otherId}::uuid),
+            greatest(${personId}::uuid, ${otherId}::uuid),
+            ${actor.id}::uuid)
+    on conflict do nothing
+  `)
+}
+
+/** `POST /persons/assignments` 的三种去处，**恰好给一种**（§6.7.4）。 */
+export type AssignmentTarget =
+  | { kind: 'person'; personId: string }
+  | { kind: 'new'; name: string | null }
+  | { kind: 'none' }
+
+export type AssignmentOutcome = {
+  /** 这次请求涉及几张图。同一张图重复放回原处也算，报的是请求的范围而不是改动行数。 */
+  movedCount: number
+  /**
+   * 这几张图现在挂在哪，`none` 时是 `null`（SPEC §6.7.4 的响应形状）。
+   *
+   * 事务内就取出来，不留给调用方再查一次：两次查询之间这个人物**可能被移空而消失**，
+   * 那时响应里的 `person` 会变成 `null`——而它明明刚刚还在，客户端会以为移出成功了。
+   */
+  person: PersonSummary | null
+}
+
+/**
+ * `POST /persons/assignments`：把几张图放进一个人物 / 拆成新人物 / 移出。
+ *
+ * **每一张图都必须还在**（未软删），任何一张不在就 `NOT_FOUND`、整个请求不生效。
+ * 图的「还在」沿用 `memes` 的那一份判断，不另写。逐图还按 `edit` 过一遍
+ * `assertCanMutate`（§6.7.4）：`edit` 对登录用户全放行，所以它此刻不拦任何人，
+ * 但「这张图能不能改」只该有一个出处——将来 `edit` 收紧时，这里自动跟上。
+ *
+ * 写的是 `assigned_by = 调用者`，此后机器不再改这几张的归属（§5.7.2）。**还没算过
+ * 向量的图也能放**：`embedding` / `embed_model` 两列不碰，向量以后补算时那一行已经
+ * `assigned_by` 非空，补算只换向量、不动归属。
+ *
+ * 最后删掉**被移空的人物**（§5.7.4）——判据是「一张成员都不剩」，不是「没有未软删的
+ * 成员」：图全被软删的人物要留着行，图被恢复时它跟着回来。留着行的话，人物详情又
+ * 查不到它（图数 0 不可见），两边并不矛盾。
+ */
+export async function assignMemes(
+  memeIds: string[],
+  target: AssignmentTarget,
+  actor: Actor,
+  db: Db = defaultDb,
+): Promise<AssignmentOutcome> {
+  return db.transaction(async (tx) => {
+    const list = uuidList(memeIds)
+
+    const memes = await tx.execute<{ id: string; uploader_id: string }>(sql`
+      select id, uploader_id from memes where id in (${list}) and ${LIVE_MEME}
+    `)
+    if (memes.length !== memeIds.length) {
+      throw new AppError('NOT_FOUND', '有图不存在或已删除，整个请求没有生效')
+    }
+    for (const meme of memes) {
+      assertCanMutate({ uploaderId: meme.uploader_id }, actor, 'edit')
+    }
+
+    let personId: string | null
+    if (target.kind === 'none') {
+      personId = null
+    } else if (target.kind === 'new') {
+      const created = await tx.execute<{ id: string }>(sql`
+        insert into persons (name, updated_by, updated_at)
+        values (${target.name}, ${actor.id}::uuid, now())
+        returning id
+      `)
+      const row = created[0]
+      if (row === undefined) throw new AppError('INTERNAL', '创建人物失败')
+      personId = row.id
+    } else {
+      // 要放进去的人物必须可见：选不到的人物（图全被软删）不该能接收图。
+      // 报 400 而不是 404——它是请求体里的字段，与 `seriesId` 同一个口径。
+      if ((await findPersonById(target.personId, tx)) === null) {
+        throw new AppError('VALIDATION_FAILED', '这个人物不存在')
+      }
+      personId = target.personId
+    }
+
+    // 搬走之前先记下它们原本在谁名下，之后按这个找「被移空的人物」
+    const before = await tx.execute<{ person_id: string }>(sql`
+      select distinct person_id from meme_subjects
+      where meme_id in (${list}) and person_id is not null
+    `)
+
+    await tx.execute(sql`
+      insert into meme_subjects (meme_id, person_id, assigned_by, assigned_at)
+      values ${sql.join(
+        memeIds.map((memeId) => sql`(${memeId}::uuid, ${personId}::uuid, ${actor.id}::uuid, now())`),
+        sql`, `,
+      )}
+      on conflict (meme_id) do update set
+        person_id = excluded.person_id,
+        assigned_by = excluded.assigned_by,
+        assigned_at = excluded.assigned_at
+    `)
+
+    const emptied = before
+      .map((row) => row.person_id)
+      .filter((oldPersonId) => oldPersonId !== personId)
+    if (emptied.length > 0) {
+      await tx.execute(sql`
+        delete from persons p
+        where p.id in (${uuidList(emptied)})
+          and not exists (select 1 from meme_subjects ms where ms.person_id = p.id)
+      `)
+    }
+
+    const person = personId === null ? null : await findPersonById(personId, tx)
+    return { movedCount: memeIds.length, person }
+  })
+}
+
+// ── 系列（改写，SPEC §6.7.4） ──────────────────────────────────────
+
+/** 名字撞车时的统一说法。**不是 `VALIDATION_FAILED`**：字面没问题，是这个值已经被占了。 */
+function seriesNameConflict(name: string): AppError {
+  return new AppError('CONFLICT', `已经有叫「${name}」的系列了`)
+}
+
+/** `personIds` 里的 id 必须都是真实存在的人物，否则 `VALIDATION_FAILED`（与 `seriesId` 同口径）。 */
+async function assertPersonsExist(personIds: string[], tx: Db): Promise<void> {
+  if (personIds.length === 0) return
+  const rows = await tx.execute<{ id: string }>(sql`
+    select id from persons where id in (${uuidList(personIds)})
+  `)
+  if (rows.length !== personIds.length) {
+    throw new AppError('VALIDATION_FAILED', '有的人物不存在')
+  }
+}
+
+/**
+ * 把 `personIds` 设成这个系列的**完整成员**（§6.7.4：不是增量）。
+ *
+ * 两条 update 的顺序有讲究：先移出、再纳入。反过来的话，一个同时出现在「原成员」和
+ * 「新名单」里的人物会被先设成本系列、再被移出——**结果是它掉出了这个系列**，而请求
+ * 里明明列着它。写成一个 `case` 也能对，但两条分开写更容易看出「整份提交」的语义。
+ */
+async function setSeriesMembers(
+  seriesId: string,
+  personIds: string[],
+  actor: Actor,
+  tx: Db,
+): Promise<void> {
+  await assertPersonsExist(personIds, tx)
+
+  // 空名单 = **全部移出**，所以是 `true` 不是 `false`
+  const keep = personIds.length === 0 ? sql`true` : sql`id not in (${uuidList(personIds)})`
+  await tx.execute(sql`update persons set series_id = null where series_id = ${seriesId}::uuid and ${keep}`)
+
+  if (personIds.length > 0) {
+    await tx.execute(sql`
+      update persons set series_id = ${seriesId}::uuid, updated_by = ${actor.id}::uuid, updated_at = now()
+      where id in (${uuidList(personIds)})
+    `)
+  }
+}
+
+/**
+ * `POST /series`：新建，可选带上第一批成员。
+ *
+ * 名字**全站唯一**（去首尾空白、不区分大小写，§6.7.4）。先查一次是为了给出能读懂的话，
+ * 真正的闸门是唯一索引——两个请求同时建同名系列时，预检查两边都会说「没占用」，
+ * 那时只有索引拦得住，所以 `23505` 也要接住并转成同一个 `CONFLICT`。
+ *
+ * `updated_by` / `updated_at` 留空：创建这件事由 `created_by` / `created_at` 记着，
+ * 「最后一次人工改动」指的是一次**改动**。
+ */
+export async function createSeries(
+  name: string,
+  personIds: string[],
+  actor: Actor,
+  db: Db = defaultDb,
+): Promise<SeriesSummaryWithCoverPerson> {
+  try {
+    return await db.transaction(async (tx) => {
+      const taken = await tx.execute<{ id: string }>(sql`
+        select id from series where ${SERIES_NAME_KEY} = lower(btrim(${name})) limit 1
+      `)
+      if (taken.length > 0) throw seriesNameConflict(name)
+
+      const created = await tx.execute<{ id: string }>(sql`
+        insert into series (name, created_by) values (${name}, ${actor.id}::uuid) returning id
+      `)
+      const row = created[0]
+      if (row === undefined) throw new AppError('INTERNAL', '创建系列失败')
+
+      await setSeriesMembers(row.id, personIds, actor, tx)
+
+      const summary = await findSeriesById(row.id, tx)
+      if (summary === null) throw new AppError('INTERNAL', '刚建的系列查不到')
+      return summary
+    })
+  } catch (error) {
+    if (isUniqueViolation(error)) throw seriesNameConflict(name)
+    throw error
+  }
+}
+
+/** `PATCH /series/{id}`：改名、改成员，两者都可以只给一个。不存在返回 null。 */
+export async function updateSeries(
+  id: string,
+  patch: { name?: string; personIds?: string[] },
+  actor: Actor,
+  db: Db = defaultDb,
+): Promise<SeriesSummaryWithCoverPerson | null> {
+  try {
+    return await db.transaction(async (tx) => {
+      if ((await findSeriesById(id, tx)) === null) return null
+
+      if (patch.name !== undefined) {
+        const taken = await tx.execute<{ id: string }>(sql`
+          select id from series
+          where ${SERIES_NAME_KEY} = lower(btrim(${patch.name})) and id <> ${id}::uuid
+          limit 1
+        `)
+        if (taken.length > 0) throw seriesNameConflict(patch.name)
+
+        await tx.execute(sql`
+          update series set name = ${patch.name}, updated_by = ${actor.id}::uuid, updated_at = now()
+          where id = ${id}::uuid
+        `)
+      }
+
+      if (patch.personIds !== undefined) {
+        await setSeriesMembers(id, patch.personIds, actor, tx)
+      }
+
+      return findSeriesById(id, tx)
+    })
+  } catch (error) {
+    // 只有改名那一步能撞唯一索引；成员那两条改的是外键，不是唯一约束
+    if (isUniqueViolation(error) && patch.name !== undefined) throw seriesNameConflict(patch.name)
+    throw error
+  }
+}
+
+/**
+ * `DELETE /series/{id}`：**只删这一行**，其下人物的 `series_id` 由外键置空
+ * （`set null`），人物与图都不动（§5.7.3）。
+ *
+ * 权限是**创建者或 admin**，与删图同一个不对称（§6.7.1）：删掉的是别人挑选人物的
+ * 工作，而且不可撤销；其余操作都能被下一个人改回来。已删的再删一次是 `NOT_FOUND`
+ * ——它不是幂等接口，理由同 §6.4.2。
+ */
+export async function deleteSeries(id: string, actor: Actor, db: Db = defaultDb): Promise<void> {
+  const existing = await findSeriesById(id, db)
+  if (existing === null) throw new AppError('NOT_FOUND', '这个系列不存在')
+
+  if (actor.role !== 'admin' && existing.createdBy !== actor.id) {
+    throw new AppError('FORBIDDEN', '只有创建者或管理员才能删除系列')
+  }
+
+  await db.execute(sql`delete from series where id = ${id}::uuid`)
 }

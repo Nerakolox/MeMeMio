@@ -1,19 +1,28 @@
 import {
+  addPersonRejection,
+  assignMemes,
+  createSeries,
   decodePersonListCursor,
+  deleteSeries,
   findPersonById,
   findPersonSummariesByIds,
   findSeriesById,
   listPersons,
   listSeries,
   listSuggestedPersonIds,
+  mergePersons,
   resolvePersonCovers,
+  updatePerson,
+  updateSeries,
+  type AssignmentTarget,
   type LiveCover,
   type PersonListParams,
+  type PersonPatch,
   type PersonSummary,
   type SeriesListParams,
   type SeriesSummaryWithCoverPerson,
 } from '../data/persons.js'
-import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT } from '../data/memes.js'
+import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, type Actor } from '../data/memes.js'
 import { log } from '../logger.js'
 import { serializePerson, serializeSeries } from '../serialize/person.js'
 import type { SerializedPerson, SerializedSeries } from '../serialize/person.js'
@@ -129,6 +138,96 @@ export async function getSeries(id: string): Promise<SerializedSeries | null> {
 
   const [serialized] = await withSeriesCovers([summary])
   return serialized ?? null
+}
+
+// ── 写路径编排（SPEC §6.7.4） ──────────────────────────────────────
+//
+// 写接口的编排比读接口少一层：数据层已经把「不存在」表达成 `null`（人物）或
+// 抛 `AppError`（引用校验），服务层只剩**把结果补上封面并序列化**。所以这一节里
+// 每个函数都只有几行，那几行里唯一有内容的是 `serializeOne` 的取舍，见它自己的注释。
+
+/**
+ * 把一个人物序列化出去，**补不上封面时返回 null**。
+ *
+ * 写接口的响应与 `GET /persons/{id}` 用同一条口径：`Person.cover` 非空
+ * （§6.7.2），凑不出封面就说明这个人物对客户端不存在，调用方报 `NOT_FOUND`。
+ * 正常的写路径**不会**走到那一支（能改能合并的人物至少有 1 张还在的图，§5.7.4），
+ * 走到就是「改的这一刻它最后一张图被软删了」——那正是该说 404 的时候。
+ */
+async function serializeOne(summary: PersonSummary | null): Promise<SerializedPerson | null> {
+  if (summary === null) return null
+  const [serialized] = await withCovers([summary])
+  return serialized ?? null
+}
+
+/** `PATCH /persons/{id}`。`null` = 这个人物不存在或已空（§5.7.4）。 */
+export async function patchPerson(
+  id: string,
+  patch: PersonPatch,
+  actor: Actor,
+): Promise<SerializedPerson | null> {
+  return serializeOne(await updatePerson(id, patch, actor))
+}
+
+/** `POST /persons/{id}/merge`。目标是 `null` 时整个请求在数据层就抛了 `NOT_FOUND`。 */
+export async function mergePersonsInto(
+  targetId: string,
+  sourceIds: string[],
+  actor: Actor,
+): Promise<SerializedPerson | null> {
+  return serializeOne(await mergePersons(targetId, sourceIds, actor))
+}
+
+/** `POST /persons/{id}/rejections`。**没有返回值**，路由固定给 204（§6.7.4）。 */
+export async function rejectPersonPair(
+  id: string,
+  otherId: string,
+  actor: Actor,
+): Promise<void> {
+  await addPersonRejection(id, otherId, actor)
+}
+
+/**
+ * `POST /persons/assignments`（§6.7.4）。
+ *
+ * ⚠️ 数据层返回的 `person` 已经是在**那个事务里**读出来的，所以这里只补封面。
+ *    让路由拿着 `movedCount` 和 `person` 直接组响应，中间不再查库。
+ */
+export async function assignMemesTo(
+  memeIds: string[],
+  target: AssignmentTarget,
+  actor: Actor,
+): Promise<{ movedCount: number; person: SerializedPerson | null }> {
+  const outcome = await assignMemes(memeIds, target, actor)
+  return { movedCount: outcome.movedCount, person: await serializeOne(outcome.person) }
+}
+
+/** `POST /series`。系列永远序列化得出来（封面可空），所以不返回 `null`。 */
+export async function createNewSeries(
+  name: string,
+  personIds: string[],
+  actor: Actor,
+): Promise<SerializedSeries> {
+  const [serialized] = await withSeriesCovers([await createSeries(name, personIds, actor)])
+  if (serialized === undefined) throw new Error('系列序列化失败')
+  return serialized
+}
+
+/** `PATCH /series/{id}`。`null` = 不存在。 */
+export async function patchSeries(
+  id: string,
+  patch: { name?: string; personIds?: string[] },
+  actor: Actor,
+): Promise<SerializedSeries | null> {
+  const summary = await updateSeries(id, patch, actor)
+  if (summary === null) return null
+  const [serialized] = await withSeriesCovers([summary])
+  return serialized ?? null
+}
+
+/** `DELETE /series/{id}`：权限与「已删」都在数据层，`FORBIDDEN` / `NOT_FOUND` 由它抛。 */
+export async function removeSeries(id: string, actor: Actor): Promise<void> {
+  await deleteSeries(id, actor)
 }
 
 // ── 封面 ───────────────────────────────────────────────────────────
