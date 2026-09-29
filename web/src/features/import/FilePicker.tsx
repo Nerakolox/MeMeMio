@@ -8,12 +8,9 @@ import { TOUCH } from '../../lib/touch'
 import { cn } from '../../lib/utils'
 import {
   IMAGE_ACCEPT,
-  classify,
-  dedupe,
-  fileKey,
   filesFromClipboard,
   filesFromDataTransfer,
-  uniqueName,
+  mergePicked,
   type PickedFile,
 } from './file-picker'
 
@@ -61,29 +58,16 @@ export function FilePicker({
 
   function addFiles(files: File[], sourceLabel: string) {
     if (files.length === 0) return
-    // 文件名在批次内是条目标识（commit / SSE item / reviews 决策都用它），
-    // 所以同名文件在**加入队列时**就改名，而不是等对不上再回退。见 file-picker.ts
+    // 先去重、再给重名的改名（文件名在批次内是条目标识），顺序反了去重就永远不生效。
+    // 两件事都在 mergePicked 里，见 file-picker.ts
     setPicked((prev) => {
-      const taken = new Set(prev.map((p) => p.file.name))
-      const fresh: PickedFile[] = []
-      for (const raw of classify(files)) {
-        const candidate = { ...raw, file: raw.file }
-        if (taken.has(raw.file.name)) {
-          candidate.file = new File([raw.file], uniqueName(raw.file.name, taken), {
-            type: raw.file.type,
-          })
-        }
-        taken.add(candidate.file.name)
-        fresh.push(candidate)
-      }
-      const deduped = dedupe(fresh, new Set(prev.map((p) => fileKey(p.file))))
-      const skipped = fresh.length - deduped.length
+      const { next, added, skipped } = mergePicked(prev, files)
       setNote(
         skipped > 0
-          ? `${sourceLabel}：加入 ${deduped.length} 个，跳过 ${skipped} 个重复项`
-          : `${sourceLabel}：加入 ${deduped.length} 个文件`,
+          ? `${sourceLabel}：加入 ${added} 个，跳过 ${skipped} 个重复项`
+          : `${sourceLabel}：加入 ${added} 个文件`,
       )
-      return [...prev, ...deduped]
+      return next
     })
   }
 
@@ -213,7 +197,8 @@ export function FilePicker({
           <ScrollArea className="h-72 rounded-2xl border">
             <ul className="divide-y">
               {picked.map((p) => (
-                <li key={fileKey(p.file)} className="flex items-center gap-3 px-3 py-2">
+                // 去重就是按 sourceKey 做的，所以它在列表内必然唯一
+                <li key={p.sourceKey} className="flex items-center gap-3 px-3 py-2">
                   {/* `truncate` + `title`：文件名可能很长，而一行一个文件才是这个列表的用途。
                       换行（旧写法 `overflow-wrap: anywhere`）会让行高参差、几十个文件就翻不到底。 */}
                   <span className="min-w-0 flex-1 truncate text-sm" title={p.file.name}>

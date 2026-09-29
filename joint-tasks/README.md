@@ -101,6 +101,7 @@
 - ~~首页「复制地址」是临时实现~~ —— 已换成 `lib/clipboard.ts` 的真流程（[浏览页图片操作](../_archive/joint-tasks/2026-09-19-browse-meme-actions.md)）。
 - ~~「全站重建索引已排队 N 条」那句话没人在浏览器里见过~~ —— 同卡另一句已验（1264 / 390 两档）；`EmbedSettings` 那句走的 `PUT /config/embed` 回执仍没在浏览器里见过。
 - ~~两端 typecheck 口径不一致~~ —— 已对齐（2026-09-16）：`api/tsconfig.json` 也开着 `noUnusedLocals` + `noUnusedParameters`。**闸门始终是 `cd web && npm run typecheck`**，因为 `web` 的类型链会把 `api/src/` 一起编译；任何一端单方面加严格开关，又会回到「api 自查全绿、闸门红」。
+- ~~导入选文件：拖多张只认一张、同一张图能进两次~~ —— 已修（2026-09-29，issue #1）。前者是 `webkitGetAsEntry()` 写在 `await` 之后（外部 PR #2，`1473475`）；后者是**先改名再去重**，改名后的身份永远对不上，去重从没生效过。两条都不报错、只是数字不对。现在去重比改名前的 `sourceKey`（名字 + 大小 + 修改时间），见 `file-picker.ts` 的 `mergePicked`。
 
 ## 仍然开着的遗留项
 
