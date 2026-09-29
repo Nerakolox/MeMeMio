@@ -51,6 +51,35 @@ function requireUuidId(raw: string | undefined): string {
   return raw
 }
 
+/**
+ * 单值 uuid 查询参数（`person` / `series`，SPEC §6.3.2）。**重复传就是请求写错了。**
+ *
+ * 这两个参数是单值不是多值：一张图至多归一个人物，传两个人物取 AND 恒为空。
+ * 静默取第一个的后果是「地址栏里明明有第二个筛选，列表却是空的」——客户端看不出
+ * 自己传错了，只会以为库里没有。所以判的是**有没有传第二个**，不是第一个是什么。
+ *
+ * 空串按「不传」处理，与 `q` 同一个口径（前端清掉筛选时可能留下一个空键）。
+ * 形状合法但不存在的 uuid **不在这里报错**：那不存在的意思是「没有图挂在它下面」，
+ * 对客户端就是空列表（§6.3.2）。
+ */
+function readSingleUuidQuery(
+  c: { req: { queries: (key: string) => string[] | undefined } },
+  field: 'person' | 'series',
+): string | undefined {
+  const values = c.req.queries(field)
+  if (values === undefined || values.length === 0) return undefined
+
+  if (values.length > 1) throw new AppError('VALIDATION_FAILED', `${field} 只能有一个值`)
+
+  const value = values[0]?.trim() ?? ''
+  if (value === '') return undefined
+  if (!isUuid(value)) {
+    // 不挡的话 `eq(…, 'abc')` 会撞 Postgres 的 uuid 报错，那是 500
+    throw new AppError('VALIDATION_FAILED', `${field} 必须是 uuid`)
+  }
+  return value
+}
+
 // ── PATCH /memes/:id 的请求体（SPEC §6.4.1） ───────────────────────
 //
 // 校验写在这里而不是通用中间件：字段少，而「缺字段就当空」那种写法会让
@@ -324,6 +353,25 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
       }
     }
 
+    /*
+     * `person` / `series`（SPEC §6.3.2，`proposed`）——**单值**。
+     *
+     * 一张图至多归一个人物，传两个人物取 AND 恒为空；那不是一个「筛选」，是一个
+     * 一定会得到空结果的手误。所以**重复传报 `VALIDATION_FAILED`**，不静默取第一个
+     * （取了哪个都是客户端看不出错的空列表）。`series` 同理。
+     *
+     * 与七个维度、`uploader` 一样，这两个参数**在带 `q` 时同样生效**，而且生效位置是
+     * 「三路召回之前」：它进的是 `MemeFilter`，`data/search.ts` 的候选集里就会带上
+     * （§6.3.1 先过滤后召回）。
+     *
+     * ⚠️ **形状先挡掉**：`filter.person = 'abc'` 会让 Postgres 报
+     *    `invalid input syntax for type uuid`（500，不是「查不到」）。这里是查询参数，
+     *    所以报 `VALIDATION_FAILED`。**形状合法但不存在的人物返回空列表**，
+     *    不是 404——「没有图挂在它下面」和「没有这个人物」在这里的结果一样（§6.3.2）。
+     */
+    const person = readSingleUuidQuery(c, 'person')
+    const series = readSingleUuidQuery(c, 'series')
+
     const cursor = c.req.query('cursor') ?? undefined
 
     // 非 `true` 一律当 false，与 isAnimated / favorited 同一个口径。
@@ -338,7 +386,15 @@ export const memesRoutes = new Hono<{ Variables: Vars }>()
       }
     }
 
-    const filter: MemeFilter = { ...labels, isAnimated, favorited, uploader, tagStatus }
+    const filter: MemeFilter = {
+      ...labels,
+      isAnimated,
+      favorited,
+      uploader,
+      tagStatus,
+      person,
+      series,
+    }
 
     /*
      * ⚠️ **`q` 去空白后为空走「无 `q`」分支，不报错。** 用户清空搜索框是常规操作，

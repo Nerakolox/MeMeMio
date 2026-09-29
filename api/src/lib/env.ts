@@ -39,6 +39,17 @@ export type Env = {
   defaultVision: ProviderDefaults | null
   /** 部署方默认 embedding 配置。可以为 null —— 那时搜索降级为两路，degraded: true。 */
   defaultEmbed: ProviderDefaults | null
+  /**
+   * 部署方默认图片向量配置。可以为 null —— 那时**一切照旧**：导入、打标、搜索
+   * 与今天逐字一致，人物接口返回空列表（SPEC §5.7.2 / 任务 §5.1 第 1 条）。
+   *
+   * ⚠️ 它比另外两组多一层风险：这个通道**每张图都是一次付费调用**（§6.7.5），
+   *    而它对图上没有测试连接记录——`image_input_works` 是 null。上游把图静默丢掉
+   *    时，表现是所有人物慢慢并成一团，**不报错**。所以部署方默认值只该在
+   *    「自己就是那个上游、且已经手工验过」时配置，生产环境走管理员的
+   *    `PUT /config/image-embed`（它强制先测后存）。
+   */
+  defaultImageEmbed: ProviderDefaults | null
 }
 
 export type ParseEnvResult =
@@ -113,6 +124,7 @@ export function parseEnv(source: Record<string, string | undefined>): ParseEnvRe
 
   const defaultVision = optionalProvider(source, 'DEFAULT_VISION', errors)
   const defaultEmbed = optionalProvider(source, 'DEFAULT_EMBED', errors)
+  const defaultImageEmbed = optionalProvider(source, 'DEFAULT_IMAGE_EMBED', errors)
 
   if (errors.length > 0) return { ok: false, errors }
 
@@ -129,6 +141,7 @@ export function parseEnv(source: Record<string, string | undefined>): ParseEnvRe
       r2PublicBaseUrl,
       defaultVision,
       defaultEmbed,
+      defaultImageEmbed,
     },
   }
 }

@@ -6,8 +6,10 @@ import { requestId, type RequestIdVariables } from './middleware/request-id.js'
 import { healthRoutes } from './routes/health.js'
 import { authRoutes } from './routes/auth.js'
 import { adminRoutes } from './routes/admin.js'
-import { embedConfigRoutes, visionConfigRoutes } from './routes/config.js'
+import { embedConfigRoutes, imageEmbedConfigRoutes, visionConfigRoutes } from './routes/config.js'
 import { memesRoutes } from './routes/memes.js'
+import { personsRoutes } from './routes/persons.js'
+import { seriesRoutes } from './routes/series.js'
 import { searchRoutes } from './routes/search.js'
 import { importRoutes } from './routes/imports.js'
 import { MAX_FILES_PER_BATCH } from './data/imports.js'
@@ -59,6 +61,9 @@ export const app = new Hono<{ Variables: RequestIdVariables }>()
   // 权限由中间件表达，一个组只挂一套——理由写在 routes/config.ts 的文件头
   .route('/api/v1/config/vision', visionConfigRoutes)
   .route('/api/v1/config/embed', embedConfigRoutes)
+  .route('/api/v1/config/image-embed', imageEmbedConfigRoutes)
+  .route('/api/v1/persons', personsRoutes)
+  .route('/api/v1/series', seriesRoutes)
   .route('/api/v1/memes', memesRoutes)
   .route('/api/v1/search', searchRoutes)
   .route('/api/v1/imports', importRoutes)

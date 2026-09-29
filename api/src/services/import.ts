@@ -11,13 +11,16 @@ import {
 } from '../data/imports.js'
 import { loadRuntimeConfig } from '../data/runtime-config.js'
 import { enqueueTagJob } from '../data/tag-jobs.js'
+import { enqueuePersonVectorJobs } from '../data/person-vector-jobs.js'
 import { detectFormat, isIngestible, SNIFF_BYTES, type DetectedFormat } from '../lib/magic-bytes.js'
 import { AppError, isAppError } from '../lib/app-error.js'
 import { log } from '../logger.js'
 import { judgeNearDuplicate } from '../ai/dup-judge.js'
 import { resolveVisionConfig } from '../ai/vision.js'
+import { isImageEmbedConfigured } from '../ai/image-embedder.js'
 import { FFMPEG_CONCURRENCY, MAX_FILE_BYTES, NEAR_DUP_DISTANCE } from '../image/constants.js'
-import { computePhash, readSize, toAiPng, toThumbnail } from '../image/decode.js'
+import { computePhash, readSize, toThumbnail } from '../image/decode.js'
+import { representativePng } from '../image/representative.js'
 import { isAnimatedByFrames } from '../image/frames.js'
 import { extractFramePng, probeMetadata, setFfmpegConcurrency } from '../image/probe.js'
 import { withTempFile } from '../image/temp-file.js'
@@ -378,14 +381,12 @@ type NeighborJudgement =
  * 一张图变成送 AI 的**一张 PNG**。动图取中间帧：判重要的是「两边取同一个位置」，
  * 而不是哪一帧最有代表性——完整的多帧比对是更贵的另一件事，模型拿不准会回落到人。
  * 一律 PNG，不送 GIF（image-pipeline.md）。
+ *
+ * ⚠️ **取帧和缩放都别在这里重写**：同一件事（动图 → 代表性 PNG）在人物向量那条路上
+ *    也要做一遍，实现只有 `image/representative.ts` 一份。这里多出来的是一个参数。
  */
 async function toComparisonPng(bytes: Buffer, label: string, isAnimated: boolean): Promise<Buffer> {
-  if (!isAnimated) return toAiPng(bytes)
-  const frame = await withTempFile(bytes, label, async (filePath) => {
-    const metadata = await probeMetadata(filePath)
-    return extractFramePng(filePath, Math.floor((metadata.frameCount - 1) / 2))
-  })
-  return toAiPng(frame)
+  return representativePng(bytes, label, isAnimated, 'ai')
 }
 
 /**
@@ -676,6 +677,25 @@ export async function persistBytes(params: {
     log.warn({ err: error, storageKey }, '缩略图生成失败，稍后可重建')
   }
 
+  /*
+   * 人物向量要不要现在入队，**在事务之前问一次**（`loadImageEmbedCredentials` 是
+   * 单行主键读，很便宜）。
+   *
+   * ⚠️ **这一步不是优化，是「第一次配好不自动补跑」的唯一实现**（SPEC §6.7.5）。
+   *    无条件入队的话，没配通道期间导入的每一张图都会攒下一条 `pending` 任务，
+   *    而 worker 的空转判断是「现在配没配」——管理员配好通道的那一刻，几万条早就
+   *    排着的任务会同时变得可跑，**一次性扣掉部署方一大笔额度**，而且他什么都没点。
+   *    带这道判断之后，存量补跑只由 `POST /admin/persons/reindex` 触发，那是一次
+   *    有意识的动作。
+   *
+   * 代价是导入期间多一次单行读，以及**先判断后写入**之间配置可能刚好被清掉——
+   * 那时会留下一条任务，而 worker 取任务前也会查一次配置，它不会跑，
+   * 一直等到配置回来或者被人显式补触发。这个方向是安全的（不会白花钱）。
+   *
+   * 与打标**刻意不同**：打标任务无条件入队，因为它按上传者解析配置，而且它不额外花钱。
+   */
+  const wantsPersonVector = await isImageEmbedConfigured()
+
   // ⚠️ 「写 memes + 入队打标」必须在同一个事务里（agents/rules/database.md §5）。
   // 这是不用 Redis 换来的最大好处：「图片入库了但队列任务丢了」不可能发生。
   try {
@@ -700,6 +720,16 @@ export async function persistBytes(params: {
       // userId 取 createMeme 的返回行，不另外传参：入队用的两个 id 都来自 `data/memes.ts`
       // 的查询结果，队列表因此永远不需要 join memes（queue.md §8）
       await enqueueTagJob(row.id, row.uploaderId, tx)
+
+      /*
+       * 人物向量是**另一条队列**（SPEC §5.7.2：不挂在打标任务上，打标失败、没配视觉
+       * 通道都不能连带人物）。
+       *
+       * 同在事务里，理由与打标那句逐字相同：分两次写的话，「图入库了、人物任务却没
+       * 排上」会静默发生——那张图的向量要等到下一次有人手动补跑才有，而 `stale`
+       * 只会让它变成一个没人知道该去看的数字。
+       */
+      if (wantsPersonVector) await enqueuePersonVectorJobs([row.id], tx)
       return row
     })
     return { id: meme.id, exactDup: false }

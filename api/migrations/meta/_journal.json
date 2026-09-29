@@ -71,6 +71,13 @@
       "when": 1790363098140,
       "tag": "0009_create_search_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790698282177,
+      "tag": "0010_add_persons_and_series",
+      "breakpoints": true
     }
   ]
 }

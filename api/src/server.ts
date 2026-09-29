@@ -6,6 +6,7 @@ import { env } from './env.js'
 import { log } from './logger.js'
 import { assertRuntimeFilesPresent, WEB_DIST_DIR } from './paths.js'
 import { startCleanupJob, stopCleanupJob } from './queue/cleanup.js'
+import { startPersonVectorWorker, stopPersonVectorWorker } from './queue/person-vector-worker.js'
 import { startReindexWorker, stopReindexWorker } from './queue/reindex-worker.js'
 import { startTagWorker, stopTagWorker } from './queue/worker.js'
 import { installProcessErrorHandlers, installShutdownHandlers } from './shutdown.js'
@@ -90,6 +91,11 @@ async function main(): Promise<void> {
   // 管理员在界面上配好之后不用重启进程，重建就会自己开始动
   startReindexWorker()
 
+  // 人物向量 worker 是**第三个** worker（SPEC §5.7.2：不挂在打标任务上，打标失败、
+  // 没配视觉通道都不能连带人物）。同样无条件起：没配图片向量通道时它空转，
+  // 管理员在界面上配好之后不用重启进程，新图和补算就会自己开始动
+  startPersonVectorWorker()
+
   // 定时清理（queue.md §6）。目前只有一条：删过期的检索快照。它不消费队列，
   // 所以不是 worker，但同样无条件起——它不依赖任何外部通道
   startCleanupJob()
@@ -105,7 +111,12 @@ async function main(): Promise<void> {
 
   installShutdownHandlers({
     closeServer: () => closeHttpServer(server),
-    stopWorkers: () => [stopTagWorker(), stopReindexWorker(), stopCleanupJob()],
+    stopWorkers: () => [
+      stopTagWorker(),
+      stopReindexWorker(),
+      stopPersonVectorWorker(),
+      stopCleanupJob(),
+    ],
     exit: (code) => process.exit(code),
   })
 }

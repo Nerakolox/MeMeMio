@@ -9,6 +9,7 @@ import {
   type MemeFilter,
   type MemeRow,
 } from './memes.js'
+import { containsPattern } from '../lib/like.js'
 
 /**
  * 检索的**三条通路**（SPEC §9.10）。
@@ -221,7 +222,7 @@ export async function ocrPathCandidates(
   if (query.trim().length < TRGM_MIN_QUERY_LENGTH) return []
 
   const depth = options.depth ?? PATH_LIMIT
-  const pattern = `%${escapeLike(query)}%`
+  const pattern = containsPattern(query)
 
   // 阈值只能在事务里改：`%` 读的是会话变量，而会话是**连接池共享**的。
   // setLocalGuc 用 is_local = true，事务结束即还原；写成会话级的话，
@@ -250,11 +251,6 @@ export async function ocrPathCandidates(
 
     return rows.map((r) => r.id)
   })
-}
-
-/** LIKE 里的 % 和 _ 是元字符，用户搜「100%」时必须当成字面量。 */
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (m) => `\\${m}`)
 }
 
 /**

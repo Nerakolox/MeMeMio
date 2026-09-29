@@ -1,5 +1,5 @@
 import sharp from 'sharp'
-import { AI_LONG_EDGE, MAX_INPUT_PIXELS, THUMB_LONG_EDGE } from './constants.js'
+import { AI_LONG_EDGE, MAX_INPUT_PIXELS, PERSON_LONG_EDGE, THUMB_LONG_EDGE } from './constants.js'
 import { HASH_HEIGHT, HASH_WIDTH, dHashFromGray } from '../lib/phash.js'
 import { AppError } from '../lib/app-error.js'
 import { log } from '../logger.js'
@@ -143,6 +143,30 @@ export async function toAiPng(bytes: Buffer): Promise<Buffer> {
       .toBuffer()
   } catch (error) {
     throw asImageError(error, '生成 PNG')
+  }
+}
+
+/**
+ * 人物向量归一化：长边缩到 `PERSON_LONG_EDGE`（768）的 PNG。**大图缩小、小图放大。**
+ *
+ * ⚠️ **和 `toAiPng` 的「只缩不放」是两套口径，不要合并**（各有一条实测依据）：
+ *    打标那条路上放大只会让模型把插值糊出来的笔画猜成文字（image-pipeline.md §4），
+ *    所以只缩不放；人物向量这边，向量模型对**输入分辨率本身**敏感，同一张图缩放
+ *    到不同长边算出的 cosine 只有 0.66–0.94，比很多不同角色的对子还低
+ *    （任务 §9.1 发现 1）——不归一化，小图永远归不到它该在的那个人物上。
+ *
+ * 所以这里必须**显式给宽高 + `fit: 'inside'`**（不给 `withoutEnlargement`），
+ * 让长边恒等于 768；改这个目标尺寸就是把向量空间换掉（`image/constants.ts`
+ * 的 `PERSON_LONG_EDGE`）。
+ */
+export async function toPersonPng(bytes: Buffer): Promise<Buffer> {
+  try {
+    return await sharp(bytes, SHARP_INPUT_OPTS)
+      .resize({ width: PERSON_LONG_EDGE, height: PERSON_LONG_EDGE, fit: 'inside' })
+      .png()
+      .toBuffer()
+  } catch (error) {
+    throw asImageError(error, '生成人物向量输入图')
   }
 }
 

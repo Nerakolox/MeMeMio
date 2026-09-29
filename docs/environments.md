@@ -23,6 +23,9 @@ R2_PUBLIC_BASE_URL=https://pub-xxxx.r2.dev   # ← 必填，不带末尾 /，也
 # 部署方提供的默认模型配置（用户未配置时使用）
 DEFAULT_VISION_BASE_URL / DEFAULT_VISION_API_KEY / DEFAULT_VISION_MODEL
 DEFAULT_EMBED_BASE_URL  / DEFAULT_EMBED_API_KEY  / DEFAULT_EMBED_MODEL
+# 图片向量（人物识别）。⚠️ 每张图都是一次付费调用，且这条路没有测试连接记录，
+# 见 §5 与 SPEC §6.7.5
+DEFAULT_IMAGE_EMBED_BASE_URL / DEFAULT_IMAGE_EMBED_API_KEY / DEFAULT_IMAGE_EMBED_MODEL
 ```
 
 > 🔴 **`CONFIG_ENC_KEY` 丢失 = 所有用户配置的 API Key 全部永久解不开。**
@@ -119,7 +122,10 @@ DETAIL: 建库时用的 collation 版本是 2.41，当前 OS 提供 2.36
 
 - 不配 `DEFAULT_VISION_*` 时导入仍然可用，图片入库为 `tagStatus = pending`，这是[产品明确要求的行为](product.md)
 - 不配 `DEFAULT_EMBED_*` 时搜索降级为 OCR + 标签，响应带 `degraded: true`
+- 不配 `DEFAULT_IMAGE_EMBED_*` 时一切照旧，人物与系列接口返回空列表（[SPEC §5.7.2](../spec/05-data-models.md)）
 
 **这两条降级路径不是为开发准备的便利，是生产也要走的真实路径**，所以本地跑在降级态是有价值的——它天天在验证降级没坏。
+
+⚠️ `DEFAULT_IMAGE_EMBED_*` **不建议在共享部署里配**：它没有测试连接记录，而图片向量这条路最大的风险是上游**把图静默丢掉**——`image_input_works` 探测不到的时候，所有人物会慢慢并成一团，且不报错。走管理员的 `PUT /config/image-embed`（强制先测后存）才是给他人部署时的正路。
 
 需要真实调用时（改提示词、跑评测集），用自己的 key 配进用户设置页，不要改环境变量。

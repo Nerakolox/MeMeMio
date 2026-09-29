@@ -13,6 +13,12 @@ import {
   testEmbedConfig,
   testVisionConfig,
 } from '../services/ai-config.js'
+import {
+  getImageEmbedConfig,
+  resolveImageEmbedKey,
+  saveImageEmbedConfigChecked,
+  testImageEmbedConfig,
+} from '../services/image-embed-config.js'
 
 /**
  * `/api/v1/config/*` —— 模型配置与测试连接（SPEC §6.5）。
@@ -156,4 +162,61 @@ export const embedConfigRoutes = new Hono<{ Variables: AuthVariables }>()
     const apiKey = await resolveEmbedKey(raw.apiKey)
 
     return c.json(await testEmbedConfig({ ...raw, apiKey }))
+  })
+
+// ── 图片向量：管理员（SPEC §6.7.5） ─────────────────────────────────
+
+/**
+ * `/config/image-embed`。**第三个 Hono 实例**，权限与 embedding 那份一样是 admin
+ * ——为什么不并进 `embedConfigRoutes`：它的路径是另一个前缀，而 `app.ts` 那条链
+ * 要求每个 `.route()` 挂一个完整前缀的实例。合并的代价是把 `/config/embed` 与
+ * `/config/image-embed` 两条路径塞进同一个 handler 里用字符串分流，那正是
+ * `config.ts` 开头说的「把路由判断写回业务代码」。
+ *
+ * 请求体、响应形状、`confirmReindex` 的语义都与 `/config/embed` 同构（§6.7.5），
+ * 所以下面所有解析函数都是上面那两个的直接复用——**没有一处为它复制一份**。
+ */
+export const imageEmbedConfigRoutes = new Hono<{ Variables: AuthVariables }>()
+  .use('*', requireAdmin)
+
+  .get('/', async (c) => {
+    const config = await getImageEmbedConfig()
+    return c.json({ ...config, verifiedAt: toIsoSecondsOrNull(config.verifiedAt) })
+  })
+
+  .put('/', async (c) => {
+    const body = await readJson(c)
+    const { raw } = readProviderInput(body)
+
+    const confirmReindex = body['confirmReindex']
+    if (confirmReindex !== undefined && typeof confirmReindex !== 'boolean') {
+      throw new AppError('VALIDATION_FAILED', 'confirmReindex 必须是布尔值')
+    }
+
+    const apiKey = await resolveImageEmbedKey(raw.apiKey)
+    const outcome = await saveImageEmbedConfigChecked({ ...raw, apiKey }, confirmReindex === true)
+
+    const config = await getImageEmbedConfig()
+    return c.json({
+      ...config,
+      verifiedAt: toIsoSecondsOrNull(config.verifiedAt),
+      // ⚠️ 与 §6.5.3 同名同义：这里是**全站每张图再花一次部署方的钱**
+      reindexTriggered: outcome.modelChanged,
+      reindexEnqueuedCount: outcome.reindexEnqueuedCount,
+    })
+  })
+
+  /**
+   * 图片向量的测试连接。响应比 embedding 那份多一个 `imageInputWorks`（§6.7.5），
+   * 而它是这份配置**唯一**的硬闸门：送两张明显不同的图，向量几乎一样就判 `false`，
+   * `ok` 随之也是 `false`，于是存不进来。
+   *
+   * 同样**不通过也是 200**，`rawError` 要原样带回——上游把图丢掉时，那是不看日志的
+   * 管理员唯一能拿到的线索。
+   */
+  .post('/test', async (c) => {
+    const { raw } = readProviderInput(await readJson(c))
+    const apiKey = await resolveImageEmbedKey(raw.apiKey)
+
+    return c.json(await testImageEmbedConfig({ ...raw, apiKey }))
   })

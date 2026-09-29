@@ -4,7 +4,7 @@ import { AppError } from '../lib/app-error.js'
 import { decryptSecret, encryptSecret, fingerprintSecret } from '../lib/config-crypto.js'
 import { isMaskedApiKey, maskApiKey } from '../lib/redact.js'
 import { db as defaultDb, type Db } from './db.js'
-import { configTests, embedConfig, userAiConfigs } from './schema.js'
+import { configTests, embedConfig, imageEmbedConfig, userAiConfigs } from './schema.js'
 
 /**
  * `user_ai_configs` / `embed_config` / `config_tests` 的访问方法（SPEC §5.3、§6.5）。
@@ -59,6 +59,17 @@ export type EmbedProbeResult = {
   dimParamWorks: boolean | null
 }
 
+/**
+ * 图片向量的探测结果。**这里是数据层存得下的那几个字段**，报告里另外两个
+ * （`willTruncate` / `rawError`）是给界面看的，不落库——同 `EmbedProbeResult` 的分工。
+ */
+export type ImageEmbedProbeResult = {
+  ok: boolean
+  nativeDim: number | null
+  dimParamWorks: boolean | null
+  imageInputWorks: boolean | null
+}
+
 /** `GET /config/vision` `GET /config/embed` 的对外形状里属于「已保存配置」的那部分（SPEC §6.5.3）。 */
 export type VisionConfigView = {
   baseUrl: string
@@ -98,6 +109,33 @@ export type StoredEmbedCredentials = {
   model: string
   nativeDim: number | null
   dimParamWorks: boolean | null
+}
+
+/** `GET /config/image-embed` 的「已保存配置」部分（SPEC §6.7.5）。 */
+export type ImageEmbedConfigView = {
+  baseUrl: string
+  model: string
+  maskedApiKey: string | null
+  verifiedAt: Date | null
+  nativeDim: number | null
+  dimParamWorks: boolean | null
+  imageInputWorks: boolean | null
+}
+
+/**
+ * 图片向量的运行时凭据。
+ *
+ * ⚠️ `imageInputWorks` **只会是 true**：`loadImageEmbedCredentials` 在 SQL 层就把
+ *    不为 true 的行滤掉了（部署方默认值那一支不走这里，见 `ai/image-embedder.ts`）。
+ *    这个字段留在类型里是为了让「它确实是探过的」这件事在调用点上可见。
+ */
+export type StoredImageEmbedCredentials = {
+  baseUrl: string
+  apiKey: string
+  model: string
+  nativeDim: number | null
+  dimParamWorks: boolean | null
+  imageInputWorks: boolean
 }
 
 // ── 内部：加解密的唯一绑定点 ────────────────────────────────────────
@@ -331,6 +369,141 @@ export async function saveEmbedConfig(input: ProviderInput, db: Db = defaultDb):
 export type VisionTestRecord = VisionProbeResult & { testedAt: Date }
 export type EmbedTestRecord = EmbedProbeResult & { testedAt: Date }
 
+/** 图片向量的测试记录，比 embedding 那份多一个 `imageInputWorks`。 */
+export type ImageEmbedTestRecord = {
+  ok: boolean
+  nativeDim: number | null
+  dimParamWorks: boolean | null
+  imageInputWorks: boolean | null
+  testedAt: Date
+}
+
+// ── 图片向量配置（全站单行，SPEC §5.7 / §6.7.5） ────────────────────
+
+/**
+ * 图片向量配置在**能力位**上与文本 embedding 有一处硬差别，就一处：
+ * `image_input_works` 是硬闸门。
+ *
+ * 少了它，一个「把图静默丢掉、照样回向量」的上游能存进来，此后每张图都被编码成
+ * 差不多的向量，所有人物慢慢并成一团——**不报错**（§6.7.5）。
+ * 所以这里不是「有测试记录就放行」，而是「图真的被编码过才放行」。
+ */
+export async function getImageEmbedConfigView(db: Db = defaultDb): Promise<ImageEmbedConfigView | null> {
+  const [row] = await db.select().from(imageEmbedConfig).where(eq(imageEmbedConfig.id, 1)).limit(1)
+  if (row === undefined) return null
+  if (!complete(row.baseUrl, row.model, row.apiKeyEnc)) return null
+
+  return {
+    baseUrl: row.baseUrl ?? '',
+    model: row.model ?? '',
+    maskedApiKey: row.apiKeyEnc === null ? null : maskApiKey(decrypt(row.apiKeyEnc)),
+    verifiedAt: row.verifiedAt,
+    nativeDim: row.nativeDim,
+    dimParamWorks: row.dimParamWorks,
+    imageInputWorks: row.imageInputWorks,
+  }
+}
+
+/**
+ * 运行时用的那份。**比 `loadEmbedCredentials` 多两道过滤**：
+ *
+ * 1. `verified_at` 非空——测试过（同文本那份）
+ * 2. `image_input_works = true`——**探到图真的被编码过**
+ *
+ * 第 2 条是这里的全部理由：这一行要是漏过去，`resolveImageEmbedConfig` 就会返回一份
+ * 「以为能用」的配置，而它的失败方式是静默的（所有人并成一团）。SQL 层挡比运行时
+ * 每个调用点判一次可靠得多——判断只有一处，就不可能漏。
+ */
+export async function loadImageEmbedCredentials(
+  db: Db = defaultDb,
+): Promise<StoredImageEmbedCredentials | null> {
+  const [row] = await db.select().from(imageEmbedConfig).where(eq(imageEmbedConfig.id, 1)).limit(1)
+  if (row === undefined) return null
+  if (row.verifiedAt === null) return null
+  if (row.imageInputWorks !== true) return null
+  if (!complete(row.baseUrl, row.model, row.apiKeyEnc)) return null
+
+  return {
+    baseUrl: row.baseUrl ?? '',
+    apiKey: decrypt(row.apiKeyEnc as Buffer),
+    model: row.model ?? '',
+    nativeDim: row.nativeDim,
+    dimParamWorks: row.dimParamWorks,
+    imageInputWorks: row.imageInputWorks,
+  }
+}
+
+/** 当前生效的图片向量模型名。口径比对（换模型 / 换长边）用它，不需要解密。 */
+export async function getImageEmbedModel(db: Db = defaultDb): Promise<string | null> {
+  const [row] = await db
+    .select({ model: imageEmbedConfig.model })
+    .from(imageEmbedConfig)
+    .where(eq(imageEmbedConfig.id, 1))
+    .limit(1)
+  const model = row?.model ?? null
+  return model === '' ? null : model
+}
+
+/**
+ * 脱敏串 → 库里那把明文。与 `resolveSubmittedEmbedKey` 逐字同理：用户看到的是
+ * `****1234`，原样提交回来时不能当成新 key 去测连接。
+ */
+export async function resolveSubmittedImageEmbedKey(
+  submitted: string,
+  db: Db = defaultDb,
+): Promise<string> {
+  if (!isMaskedApiKey(submitted)) return submitted
+
+  const [row] = await db
+    .select({ enc: imageEmbedConfig.apiKeyEnc })
+    .from(imageEmbedConfig)
+    .where(eq(imageEmbedConfig.id, 1))
+    .limit(1)
+  if (row === undefined || row.enc === null) {
+    throw new AppError('VALIDATION_FAILED', '此前没有保存过 API Key，需要填写完整的 key')
+  }
+  return decrypt(row.enc)
+}
+
+/**
+ * `PUT /config/image-embed`。单行表、upsert，理由与 `saveEmbedConfig` 逐字相同。
+ *
+ * ⚠️ **这里仍然是「签名即约束」那一套**：入参只有 `ProviderInput` 三个字段，
+ *    `image_input_works` 不是从参数抄的，是回查测试记录抄的。想改它只有一条路——
+ *    重跑 `POST /config/image-embed/test`。
+ */
+export async function saveImageEmbedConfig(
+  input: ProviderInput,
+  db: Db = defaultDb,
+): Promise<void> {
+  const test = await findImageEmbedTest(input, db)
+  if (test === null || !test.ok) {
+    throw new AppError('CONFIG_TEST_REQUIRED', '保存前需要先通过测试连接')
+  }
+
+  const values = {
+    baseUrl: input.baseUrl,
+    model: input.model,
+    apiKeyEnc: encrypt(input.apiKey),
+    nativeDim: test.nativeDim,
+    dimParamWorks: test.dimParamWorks,
+    imageInputWorks: test.imageInputWorks,
+    verifiedAt: test.testedAt,
+  }
+  await db
+    .insert(imageEmbedConfig)
+    .values({ id: 1, ...values })
+    .onConflictDoUpdate({ target: imageEmbedConfig.id, set: values })
+}
+
+/**
+ * 三个 scope。**`image_embed` 与 `embed` 是两条独立的记录**，哪怕 baseUrl / model /
+ * key 完全一样也不共用：它们的探测位不同（`image_input_works` 只有前者有），
+ * 而「这份配置能不能存」正是靠探测位判的。共用一条记录会出现「测过文本那份，
+ * 图片这份就自动放行」——那等于把这个硬闸门拆了（§6.7.5）。
+ */
+type TestScope = 'vision' | 'embed' | 'image_embed'
+
 /**
  * 匹配三要素：**baseUrl + model + key 指纹**（SPEC §6.5.2）。
  *
@@ -338,7 +511,7 @@ export type EmbedTestRecord = EmbedProbeResult & { testedAt: Date }
  * 指纹在 SQL 里比对是安全的——它本身就是公开可算的摘要，不是秘密；
  * `fingerprintEquals` 的常数时间比对留给需要防侧信道的场景，这里走索引。
  */
-function testScopeWhere(scope: 'vision' | 'embed', userId: string | null, input: ProviderInput) {
+function testScopeWhere(scope: TestScope, userId: string | null, input: ProviderInput) {
   return and(
     eq(configTests.scope, scope),
     userId === null ? isNull(configTests.userId) : eq(configTests.userId, userId),
@@ -399,16 +572,49 @@ export async function recordEmbedTest(
   }, db)
 }
 
+export async function findImageEmbedTest(
+  input: ProviderInput,
+  db: Db = defaultDb,
+): Promise<ImageEmbedTestRecord | null> {
+  const [row] = await db
+    .select()
+    .from(configTests)
+    .where(testScopeWhere('image_embed', null, input))
+    .limit(1)
+  if (row === undefined) return null
+  return {
+    ok: row.ok,
+    nativeDim: row.nativeDim,
+    dimParamWorks: row.dimParamWorks,
+    imageInputWorks: row.imageInputWorks,
+    testedAt: row.testedAt,
+  }
+}
+
+export async function recordImageEmbedTest(
+  input: ProviderInput,
+  probe: ImageEmbedProbeResult,
+  db: Db = defaultDb,
+): Promise<Date> {
+  return recordTest('image_embed', null, input, {
+    ok: probe.ok,
+    nativeDim: probe.nativeDim,
+    dimParamWorks: probe.dimParamWorks,
+    imageInputWorks: probe.imageInputWorks,
+  }, db)
+}
+
 type ProbeColumns = {
   ok: boolean
   jsonModeWorks?: boolean | null
   multiImage?: boolean | null
   nativeDim?: number | null
   dimParamWorks?: boolean | null
+  imageInputWorks?: boolean | null
 }
 
 async function recordTest(
-  scope: 'vision' | 'embed',
+  scope: TestScope,
   userId: string | null,
   input: ProviderInput,
   probe: ProbeColumns,

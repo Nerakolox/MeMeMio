@@ -11,6 +11,10 @@ import { isUuid } from '../lib/uuid.js'
 import { toIsoSecondsOrNull } from '../serialize/meme.js'
 import { enqueueAllStale, getReindexStatus } from '../services/ai-config.js'
 import {
+  enqueueAllStalePersonVectors,
+  getPersonReindexStatus,
+} from '../services/person-vectors.js'
+import {
   getRuntimeConfig,
   saveRuntimeConfigChecked,
   type RuntimeConfigView,
@@ -177,6 +181,36 @@ export const adminRoutes = new Hono<{ Variables: AuthVariables }>()
 
   .get('/reindex/status', async (c) => {
     return c.json(await getReindexStatus())
+  })
+
+  /**
+   * 补齐 / 重算人物向量（SPEC §6.7.5）。与 `/admin/reindex` 同形：**幂等**，
+   * 响应 `{ enqueuedCount, ...status }`，字段名带 `Count` 的理由逐字相同。
+   *
+   * ⚠️ **它比文本那条贵得多，而这是契约，不只是实现细节。** 每张图是一次付费的
+   *    图片编码调用，花的是部署方的额度；`enqueuedCount` 在这里的含义是「这一下
+   *    要花多少钱」。所以界面点之前必须说清条数（§6.7.5），api 这边能做的就是
+   *    把它如实返回、**不偷偷替用户补跑**：第一次配好配置不会自动排存量。
+   *
+   * ⚠️ 同样**不清 failed 行**（清 failed 只发生在换模型开启新一轮时，
+   *    `PUT /config/image-embed` 带 `confirmReindex`）。
+   *
+   * ⚠️ 也**不影响 `degraded`**：人物向量不参与检索召回（§6.7.5）。
+   */
+  .post('/persons/reindex', async (c) => {
+    const enqueuedCount = await enqueueAllStalePersonVectors()
+    return c.json({ enqueuedCount, ...(await getPersonReindexStatus()) })
+  })
+
+  /**
+   * 人物向量的进度。五个字段与 `GET /admin/reindex/status` 同形同义，全部来自库里的
+   * 真实计数。
+   *
+   * ⚠️ 它**没有**也**不该有**「谁在跑、还剩多久」这类信息：`running` 的口径是
+   *    「队列里还有任务」，与文本那条一致。
+   */
+  .get('/persons/reindex/status', async (c) => {
+    return c.json(await getPersonReindexStatus())
   })
 
   /**

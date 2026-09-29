@@ -234,6 +234,33 @@ export const embedConfig = pgTable(
 )
 
 /**
+ * 图片向量配置，全站单行、仅 `admin` 可改（SPEC §5.7 / §6.7.5）。
+ *
+ * 与 `embedConfig` 同构，多一个 `imageInputWorks`。它是**全站一份**的理由与文本
+ * embedding 相同（§9.6）：人物之间要能互相比较，模型与预处理口径必须全站一致。
+ * 花的是部署方的额度。
+ *
+ * ⚠️ `imageInputWorks` 是这份配置最重要的探测位（§6.7.5）：上游把图**静默丢掉**、
+ *    照样回一个向量时，`verified_at` 非空、每张图都能算出向量，而所有人物会慢慢
+ *    并成一团——**不报错**。所以写配置时它是硬闸门，见 `data/ai-configs.ts`。
+ */
+export const imageEmbedConfig = pgTable(
+  'image_embed_config',
+  {
+    id: integer('id').primaryKey().default(1),
+    baseUrl: text('base_url'),
+    apiKeyEnc: bytea('api_key_enc'),
+    model: text('model'),
+    nativeDim: integer('native_dim'),
+    dimParamWorks: boolean('dim_param_works'),
+    /** 图真的被编码了，不是被静默丢掉。见上面的警告与 §6.7.5。 */
+    imageInputWorks: boolean('image_input_works'),
+    verifiedAt: timestamptz('verified_at'),
+  },
+  (table) => [check('image_embed_config_singleton', sql`${table.id} = 1`)],
+)
+
+/**
  * 运行参数，全站单行、仅 `admin` 可改（SPEC §5.6 / §6.5.5 / §9.26）。
  *
  * 装的是**保护机器**的那四个并发上限——`NULL` = 用代码里的默认值，空表是正常状态不是
@@ -280,11 +307,12 @@ export const configTests = pgTable(
   'config_tests',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /** vision | embed */
+    /** vision | embed | image_embed */
     scope: text('scope').notNull(),
     /**
-     * 视觉配置是每人一份，embedding 配置是全站一份（§5.2.4）——
-     * 所以 embed 的记录 user_id 为 null，那是「全站」而不是「不知道谁测的」。
+     * 视觉配置是每人一份，embedding 配置是全站一份（§5.2.4），图片向量配置同样是全站
+     * 一份（§5.7）——所以 embed / image_embed 的记录 user_id 为 null，
+     * 那是「全站」而不是「不知道谁测的」。
      */
     userId: uuid('user_id').references(() => users.id),
     baseUrl: text('base_url').notNull(),
@@ -298,6 +326,8 @@ export const configTests = pgTable(
     /** embed 探测位；vision 记录上为 null */
     nativeDim: integer('native_dim'),
     dimParamWorks: boolean('dim_param_works'),
+    /** 只有 image_embed 记录会写它（§6.7.5）；vision / embed 记录上为 null */
+    imageInputWorks: boolean('image_input_works'),
     testedAt: timestamptz('tested_at').notNull().defaultNow(),
   },
   (table) => [
@@ -518,4 +548,186 @@ export const searchSnapshots = pgTable(
   },
   // 清理任务唯一的查询条件就是它。不建 userId 索引：按 id 取（主键）已经够了
   (table) => [index('search_snapshots_expires_at_idx').on(table.expiresAt)],
+)
+
+// ── §5.7 人物与系列 ────────────────────────────────────────────────
+
+/**
+ * 系列：人物的父级，**只由人挑选组成，机器不生成**（SPEC §5.7.3）。
+ *
+ * 它是开集，不进 §4 的词表，`memes` 上也不加字段——理由与梗名相同（§9.18）。
+ *
+ * ⚠️ `name` 的唯一性是**去首尾空白后不区分大小写**（§5.7），所以唯一索引建在
+ *    表达式 `lower(btrim(name))` 上，不建在 `name` 上。写库时的重名判定与这条
+ *    索引必须同时存在：只靠应用层判重，两个人同时建同名系列会各建一个。
+ */
+export const series = pgTable(
+  'series',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    /** 最后一次人工改动。留痕是防滥用的唯一手段（§6.7.1）。 */
+    updatedBy: uuid('updated_by').references(() => users.id),
+    updatedAt: timestamptz('updated_at'),
+  },
+  (table) => [
+    uniqueIndex('series_name_key').on(sql`lower(btrim(${table.name}))`),
+    // 列表按名字过滤（§6.7.3 的 `q`）走 trgm；系列数量少，但同名的前缀搜索会全表扫
+    index('series_name_trgm_idx').using('gin', sql`${table.name} gin_trgm_ops`),
+  ],
+)
+
+/**
+ * 人物：一组被认为是同一个角色 / 同一个人的 meme（SPEC §5.7）。
+ *
+ * 机器自动成组、人命名与修正。图数为 0 的人物**行保留但不出现在任何列表里**
+ * （§5.7.4）——图被恢复时人物跟着回来，与收藏不级联是同一个道理。
+ *
+ * ⚠️ `series_id` 是 `on delete set null`：删系列只删 `series` 这一行，
+ *    其下人物与图都不动（§5.7.3），这条外键就是那句话的落点。
+ * ⚠️ `cover_meme_id` 同样 `set null`：物理删除一张图时，别让人物的封面指向一个
+ *    已经不存在的 id（软删的封面由 `§5.7.4` 的读路径回落，不归外键管）。
+ */
+export const persons = pgTable(
+  'persons',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** null = 未命名。**不要求唯一**：同名两组是合并的信号，不是冲突（§6.7.4）。 */
+    name: text('name'),
+    seriesId: uuid('series_id').references(() => series.id, { onDelete: 'set null' }),
+    /** 人指定的封面。为 null 或那张已软删时取成员里最新的一张（§5.7.4）。 */
+    coverMemeId: uuid('cover_meme_id').references(() => memes.id, { onDelete: 'set null' }),
+    /** 非空 = 隐藏（「这组不是人物」）。**新图照挂**（§5.7.2）。 */
+    hiddenAt: timestamptz('hidden_at'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+    updatedBy: uuid('updated_by').references(() => users.id),
+    updatedAt: timestamptz('updated_at'),
+  },
+  (table) => [
+    // 列表按系列筛（`series=<id>`）与 series 的成员计数都走它
+    index('persons_series_id_idx').on(table.seriesId),
+    index('persons_name_trgm_idx').using('gin', sql`${table.name} gin_trgm_ops`),
+  ],
+)
+
+/**
+ * 一张图一行：整图算一个向量，至多归一个人物（SPEC §5.7）。
+ *
+ * 三列可为空各有含义：`embedding` 为空 = 人先归了类、向量还没算；
+ * `person_id` 为空 = 还没分配，或人判定它不属于任何人物；
+ * `assigned_by` 非空 = **人放进 / 移出过，机器不再改**（§5.7.2）。
+ *
+ * ⚠️ `embed_model` 存的是「模型 + 预处理口径」（如 `Qwen/…@768`），不是裸模型名。
+ *    改长边等于换模型、存量要重算（§5.7.1），比较只在同一口径的向量之间做——
+ *    这个字段就是那个口径的唯一落点，拼接见 `ai/image-embedder.ts`。
+ *
+ * ⚠️ `person_id` 的外键**不加 `on delete cascade`**：人物行只在「一张图都不剩」
+ *    时被删除，那一刻不该还有行指着它。真有行指着却被删掉，要的是当场报错
+ *    （约束冲突），而不是安静地把归属抹成 null——后者正是「人说了不是他、
+ *    过两天又回来了」的温床。
+ */
+export const memeSubjects = pgTable(
+  'meme_subjects',
+  {
+    memeId: uuid('meme_id')
+      .primaryKey()
+      .references(() => memes.id, { onDelete: 'cascade' }),
+    embedding: vector('embedding', { dimensions: 1024 }),
+    embedModel: text('embed_model'),
+    personId: uuid('person_id').references(() => persons.id),
+    assignedBy: uuid('assigned_by').references(() => users.id),
+    assignedAt: timestamptz('assigned_at'),
+  },
+  (table) => [
+    // 质心、成员列表、图数：全都按 person_id 分组或过滤，这是本表最热的一路
+    index('meme_subjects_person_id_idx').on(table.personId),
+    /**
+     * 向量。**分配那一步不走它**（和每个人物的质心比，是一次 `group by` 聚合），
+     * 走它的是合并建议：两组之间的相似度取「两组里最像的那一对图」（§6.7.3），
+     * 那是逐成员找最近邻，正是 HNSW 的形状。SPEC §5.7 也明写了要建。
+     */
+    index('meme_subjects_embedding_hnsw_idx').using(
+      'hnsw',
+      table.embedding.op('vector_cosine_ops'),
+    ),
+  ],
+)
+
+/**
+ * 人点过的「这两个不是同一个」：合并建议不再给这一对（SPEC §5.7）。
+ *
+ * ⚠️ **较小的 id 放前面**（§5.7.4 与 §6.7.4 都写了）。不这么做的话
+ * `(A,B)` 与 `(B,A)` 会各存一条，而查建议时只按一个方向过滤，
+ * 表现是「点了不是同一个，建议里它还在」——不报错。
+ * 落点在 `data/persons.ts`，那里是唯一的写入路径。
+ *
+ * 人物被删时级联删除：合并会把来源人物删掉，合并前那对「不是同一个」正是要丢掉的
+ * （§6.7.4：「人刚刚明确说了它们是同一个」）。
+ */
+export const personRejections = pgTable(
+  'person_rejections',
+  {
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => persons.id, { onDelete: 'cascade' }),
+    otherPersonId: uuid('other_person_id')
+      .notNull()
+      .references(() => persons.id, { onDelete: 'cascade' }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.personId, table.otherPersonId] }),
+    // 主键前缀是 person_id，查「和 X 有关的拒绝」时另一侧用不上，这里补一个
+    index('person_rejections_other_idx').on(table.otherPersonId),
+  ],
+)
+
+// ── 人物向量队列（SPEC §5.7.2 / §6.7.5） ───────────────────────────
+
+/**
+ * 算人物向量的队列。**独立于 `tag_jobs`**（§5.7.2：人物是附加能力，
+ * 不能挡入库也不能挡打标），也独立于 `reindex_jobs`（那个装的是文本向量、
+ * 口径与重试语义都不同）：
+ *
+ * 1. `tag_jobs` 上 `meme_id` 有唯一索引——一条人物向量任务和同一张图的待打标任务
+ *    会互相踢掉，而「打标失败不能连带人物」正是本任务的一条硬要求
+ * 2. 打标并发按人分组（一个人导入一千张不该堵住别人），而人物向量**花的是部署方
+ *    的钱、全站一份配置**，与 `reindex_jobs` 同属运维口径，所以本表没有 `user_id`
+ * 3. 终局失败**只记在本表的行上**，不动 `memes.tag_status`
+ *
+ * 和另外两张队列一样：入队的 `meme_id` 必须来自 `data/memes.ts` 的查询结果，
+ * **不许在本表上 join `memes`**（queue.md §8）。
+ */
+export const personVectorJobs = pgTable(
+  'person_vector_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    memeId: uuid('meme_id')
+      .notNull()
+      .references(() => memes.id, { onDelete: 'cascade' }),
+    /** pending | running | failed */
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    runAfter: timestamptz('run_after').notNull().defaultNow(),
+    lastError: text('last_error'),
+    createdAt: timestamptz('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    index('person_vector_jobs_claim_idx').on(table.status, table.runAfter),
+    /**
+     * 幂等的落点：导入时入队（可能被重放）与 `POST /admin/persons/reindex`
+     * 的手动补触发都靠 onConflictDoNothing 撞它变成空操作。
+     *
+     * ⚠️ 完成时**删行而不是留 done**，理由与 `reindex_jobs_meme_id_key` 逐字相同：
+     *    留着会让这张图在下一次换口径时静默入不了队。
+     */
+    uniqueIndex('person_vector_jobs_meme_id_key').on(table.memeId),
+  ],
 )

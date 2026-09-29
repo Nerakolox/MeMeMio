@@ -1,9 +1,12 @@
+import { PERSON_EMBED_DIM } from '../image/constants.js'
 import { redactSecret } from '../lib/redact.js'
-import { EMBED_DIM } from '../lib/vector.js'
+import { cosineSimilarity, EMBED_DIM } from '../lib/vector.js'
 import { interpretVisionContent } from '../lib/vision-output.js'
 import { vocabAdapter } from '../vocab.js'
 import { callEmbeddings } from './embedder.js'
+import { callImageEmbeddings, readImageTokens } from './image-embedder.js'
 import { probeImagePng } from './probe-image.js'
+import { probeImageBPng } from './probe-image-b.js'
 import type { ProviderCredentials } from './provider.js'
 import { callVision } from './vision.js'
 
@@ -226,5 +229,118 @@ export async function probeEmbed(credentials: ProviderCredentials): Promise<Embe
     // 成功时没有错误可带。不要把成功的响应体塞进来——那里面是 1024 个浮点数，
     // 对用户没有任何信息量，只会把界面撑爆
     rawError: null,
+  }
+}
+
+// ── 图片向量 ────────────────────────────────────────────────────────
+
+/** SPEC §6.7.5 的图片向量测试响应：embedding 那份 + `imageInputWorks`。 */
+export type ImageEmbedProbeReport = {
+  ok: boolean
+  nativeDim: number | null
+  dimParamWorks: boolean | null
+  willTruncate: boolean | null
+  /**
+   * 图**真的被编码了**，不是被上游静默丢掉。null = 没测出来（不是「不支持」）。
+   *
+   * 它是这份配置最重要的探测位：判 false 时 `ok` 也是 false，所以一份「把图丢掉」
+   * 的配置**存不进来**（§6.7.5）。不这么挡的话，每张图都会被编码成差不多的向量，
+   * 所有人物慢慢并成一团，**不报错**。
+   */
+  imageInputWorks: boolean | null
+  rawError: string | null
+}
+
+/**
+ * 两张明显不同的图算出的向量，余弦超过这个数就认为**上游没在看图**。
+ *
+ * 取 0.99 的依据：正常工作时的两张图（一张平涂插画、一张风景渐变）相似度在 0.3–0.8
+ * 这一带；上游把图丢掉时，回的是同一个与图无关的向量，两份**逐位相同**，
+ * 余弦是 1.0。中间那一大段空档让这个阈值不需要校准——它判的是「是不是同一个向量」，
+ * 不是「有多像」。
+ */
+const PROBE_IMAGE_DISTINCT_MAX_COSINE = 0.99
+
+/**
+ * 跑一遍图片向量探测。**最多三次调用**，且后两次只在第一次成功时才发。
+ *
+ * 比文本那份多出来的是第三步：**送第二张明显不同的图**，看两份向量有没有拉开距离。
+ * 拿同一张图复制两份去测等于没测——上游把图丢掉照样通过。
+ *
+ * 两个判据，任一中招就是 `false`：
+ *
+ * 1. 上游自己报了 `usage.image_tokens: 0`（探测里真见过的形态）
+ * 2. 两份向量的余弦 ≥ `PROBE_IMAGE_DISTINCT_MAX_COSINE`
+ *
+ * ⚠️ 第二次调用打不通（超时、网络）时**不猜**：`imageInputWorks` 给 null、
+ *    `ok` 给 false，理由在 `rawError` 里。给 true 等于把一条没测过的配置放进来，
+ *    而它的失败方式恰好是静默的。
+ */
+export async function probeImageEmbed(
+  credentials: ProviderCredentials,
+): Promise<ImageEmbedProbeReport> {
+  const probeA = probeImagePng()
+  const native = await callImageEmbeddings(probeA, credentials, null)
+  if (!native.ok) {
+    return {
+      ok: false,
+      nativeDim: null,
+      dimParamWorks: null,
+      willTruncate: null,
+      imageInputWorks: null,
+      rawError: redactSecret(native.raw, credentials.apiKey),
+    }
+  }
+
+  const nativeDim = native.vector.length
+
+  const withParam = await callImageEmbeddings(probeA, credentials, PERSON_EMBED_DIM)
+  const dimParamWorks = withParam.ok && withParam.vector.length === PERSON_EMBED_DIM
+
+  // 第二张图**按真正会走的那条路取维度**：dimensions 生效就带参数，否则走原生。
+  // 两份向量必须同维同口径，否则余弦是噪声（SPEC §5.7.1）
+  const second = await callImageEmbeddings(
+    probeImageBPng(),
+    credentials,
+    dimParamWorks ? PERSON_EMBED_DIM : null,
+  )
+
+  const base = {
+    nativeDim,
+    dimParamWorks,
+    willTruncate: !dimParamWorks && nativeDim > PERSON_EMBED_DIM,
+  }
+
+  if (!second.ok) {
+    return {
+      ...base,
+      ok: false,
+      imageInputWorks: null,
+      rawError: redactSecret(second.raw, credentials.apiKey),
+    }
+  }
+
+  // 第一张的那个向量也要取同一口径的那一份：dimensions 生效时用带参数的结果，
+  // 否则用原生的。拿原生 4096 维和截过的 1024 维比会得到一个没有意义的数
+  const vectorA = dimParamWorks && withParam.ok ? withParam.vector : native.vector
+  const imageTokens = readImageTokens(second.raw)
+
+  const similarity = cosineSimilarity(vectorA, second.vector)
+  const imageInputWorks =
+    imageTokens !== 0 && Number.isFinite(similarity) && similarity < PROBE_IMAGE_DISTINCT_MAX_COSINE
+
+  return {
+    ...base,
+    // **图片没真的被编码 = 这份配置不能用**，见 §6.7.5
+    ok: imageInputWorks,
+    imageInputWorks,
+    // 失败时把上游原话带上（用户唯一能用来判断「是模型不行还是我填错了」的东西）；
+    // 成功时不带，理由同文本那份：响应体里是几千个浮点数
+    rawError: imageInputWorks
+      ? null
+      : redactSecret(
+          imageTokens === 0 ? `上游报告 image_tokens = 0：图被丢掉了。\n${second.raw}` : second.raw,
+          credentials.apiKey,
+        ),
   }
 }

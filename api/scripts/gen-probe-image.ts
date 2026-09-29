@@ -34,6 +34,19 @@ import sharp from 'sharp'
  * 它同时还是一张**合规**的图：纯矢量、无人脸、无版权素材，不会撞上任何供应商的
  * 内容策略——探测图被判 `AI_REFUSED` 的话，整个测试连接就废了。
  *
+ * ## 第二张图（probe-image-b.ts）：图片向量探测专用
+ *
+ * `imageInputWorks` 要**两张明显不同的图**（SPEC §6.7.5）：上游把图静默丢掉时，
+ * 两张图会算出几乎一样的向量（甚至报 `image_tokens: 0`），而那正是所有人物慢慢
+ * 并成一团的成因。拿第一张图复制两份去测，这个探测永远通过——等于没测。
+ *
+ * 所以第二张图刻意与第一张**处处相反**：暖色 vs 冷色、粗描边 vs 无描边、
+ * 居中特写 vs 全景、有文字 vs **一个字都没有**。
+ *
+ * ⚠️ **第二张不含任何文字**，这是有意的：第一张的字幕走 SVG `<text>` + 系统字体，
+ *    换台机器重跑就是另一个 sha256（脚本不报错，只是产物悄悄变了）。第二张纯图形，
+ *    跨机器确定性，重跑不漂。
+ *
  * 用法：`npx tsx scripts/gen-probe-image.ts`。改了图必须重跑，然后把生成的
  * `src/ai/probe-image.ts` 一起提交。
  *
@@ -114,3 +127,68 @@ export const PROBE_IMAGE_SHA256 = '${sha256}'
 
 writeFileSync(OUT, header, 'utf-8')
 process.stdout.write(`probe-image.ts 已生成：${png.byteLength} 字节，sha256 ${sha256}\n`)
+
+// ── 第二张：图片向量探测专用 ────────────────────────────────────────
+//
+// 冷色、无描边、全景、一个字都没有。与第一张（暖色、粗描边、居中特写、带字幕）
+// 处处相反，两边的向量才拉得开——`imageInputWorks` 判的就是「两份向量有没有
+// 拉开距离」。纯图形不依赖字体，跨机器确定性。
+
+const SVG_B = `<svg xmlns="http://www.w3.org/2000/svg" width="384" height="384" viewBox="0 0 384 384">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0b2a6b"/>
+      <stop offset="55%" stop-color="#3f7fd6"/>
+      <stop offset="100%" stop-color="#a9d6f5"/>
+    </linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f6b45"/>
+      <stop offset="100%" stop-color="#0d3a26"/>
+    </linearGradient>
+  </defs>
+  <rect width="384" height="384" fill="url(#sky)"/>
+  <circle cx="286" cy="92" r="38" fill="#ffe9a8"/>
+  <circle cx="286" cy="92" r="58" fill="#ffe9a8" opacity="0.25"/>
+  <ellipse cx="96" cy="128" rx="54" ry="26" fill="#ffffff" opacity="0.85"/>
+  <ellipse cx="140" cy="140" rx="42" ry="20" fill="#ffffff" opacity="0.7"/>
+  <path d="M0 250 q96 -70 192 -6 q96 64 192 -10 L384 384 L0 384 Z" fill="url(#hill)"/>
+  <path d="M0 320 q120 -44 240 6 q72 30 144 4 L384 384 L0 384 Z" fill="#0a2b1c"/>
+</svg>`
+
+const OUT_B = join(import.meta.dirname, '..', 'src', 'ai', 'probe-image-b.ts')
+
+const pngB = await sharp(Buffer.from(SVG_B)).png({ compressionLevel: 9, palette: true }).toBuffer()
+const sha256B = createHash('sha256').update(pngB).digest('hex')
+
+const base64B = pngB.toString('base64')
+const chunksB: string[] = []
+for (let i = 0; i < base64B.length; i += 96) chunksB.push(`  '${base64B.slice(i, i + 96)}'`)
+
+const headerB = `/**
+ * 图片向量探测用的**第二张**内置探测图。**本文件由 scripts/gen-probe-image.ts 生成，不要手改。**
+ *
+ * 为什么需要两张、以及它为什么一个字都没有，写在生成脚本的文件头注释里。
+ * 一句话：\`imageInputWorks\` 判的是「两张明显不同的图算出的向量有没有拉开距离」，
+ * 拿同一张图复制两份去测，上游把图静默丢掉也照样通过（SPEC §6.7.5）。
+ *
+ * 与 \`probe-image.ts\` 同一套理由编译成常量：Dockerfile 只 COPY dist / migrations
+ * 等几个目录，新开 assets/ 不会进镜像，而改 Dockerfile 属部署事项。
+ *
+ * PNG ${pngB.byteLength} 字节，384×384，sha256 ${sha256B}
+ */
+
+const BASE64 = [
+${chunksB.join(',\n')},
+].join('')
+
+/** 每次调用返回一个新 Buffer，理由同 \`probe-image.ts\` 的同名函数。 */
+export function probeImageBPng(): Buffer {
+  return Buffer.from(BASE64, 'base64')
+}
+
+/** 第二张探测图的 sha256，测试里用来断言「编进去的还是那张图」。 */
+export const PROBE_IMAGE_B_SHA256 = '${sha256B}'
+`
+
+writeFileSync(OUT_B, headerB, 'utf-8')
+process.stdout.write(`probe-image-b.ts 已生成：${pngB.byteLength} 字节，sha256 ${sha256B}\n`)

@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import { db as defaultDb, type Db } from './db.js'
-import { memes, users, userFavorites } from './schema.js'
+import { memeSubjects, memes, persons, users, userFavorites } from './schema.js'
 import { splitHash } from '../lib/phash.js'
 import { buildSearchText } from '../lib/vision-output.js'
 import type { VocabField } from '../lib/vision-output.js'
@@ -439,6 +439,23 @@ export async function hasEmbeddedMemes(db: Db = defaultDb): Promise<boolean> {
 /** 翻页游标。`(created_at, id)` 的**全序**，两个字段都返回是为了让调用方能接着翻。 */
 export type StaleEmbeddingCursor = { createdAt: Date; id: string }
 
+/**
+ * 库里有没有**算过人物向量**的图。`PUT /config/image-embed` 换模型时用它决定要不要
+ * `EMBED_MODEL_CHANGED`——没数据就没必要拦（§6.7.5，与 `hasEmbeddedMemes` 逐字同理）。
+ *
+ * 存在性查询，不是 count。**软删过滤照旧**：只剩一堆已删的图有向量时，拦下这次换模型
+ * 只会让人困惑——真的没有东西需要重算。
+ */
+export async function hasPersonVectors(db: Db = defaultDb): Promise<boolean> {
+  const rows = await db
+    .select({ memeId: memeSubjects.memeId })
+    .from(memes)
+    .innerJoin(memeSubjects, eq(memeSubjects.memeId, memes.id))
+    .where(and(LIVE_MEME, sql`${memeSubjects.embedding} is not null`))
+    .limit(1)
+  return rows.length > 0
+}
+
 /** 一行过期记录。`createdAt` 是翻页用的，不是给业务看的。 */
 export type StaleEmbeddingRow = { id: string; createdAt: Date }
 
@@ -646,6 +663,109 @@ export async function countEmbeddingProgress(
   return { total: row?.total ?? 0, done: row?.done ?? 0, stale: row?.stale ?? 0 }
 }
 
+// ── 人物向量的进度与补跑候选（SPEC §5.7.2 / §6.7.5） ────────────────
+//
+// 与上面那对「文本向量」的函数是**两套并行的口径**，刻意不合并：两份向量是两个空间、
+// 两份配置、两个 `vector(1024)` 列（§5.7.1），共用一套函数就会把「换文本 embedding 模型」
+// 和「换人物向量模型」绑成一件事。
+//
+// 与文本侧的三处实质差别：
+//
+// 1. **没有 `search_text is not null` 这个前提。** 文本向量是「从 search_text 算出来的」，
+//    没有文本就没得算；人物向量是**对图本身**算的，每张未软删的图都是候选（§6.7.5
+//    「把所有未软删、没有当前口径向量的图排进队列」）。
+// 2. **「当前口径」不是当前模型名**，是 `模型@长边`（§5.7.1）。拼接口径的那一处实现
+//    在 `ai/image-embedder.ts` 的 `personEmbedModelKey`，这里只拿它去比。
+// 3. **候选行未必有 `meme_subjects` 行。** 文本侧的问句是「`embed_model` 对不对」，
+//    这边是「**有没有**一行带着当前口径」——所以判据是 NOT EXISTS，不是列比较。
+
+export type PersonVectorProgress = { total: number; done: number; stale: number }
+
+/**
+ * `GET /admin/persons/reindex/status` 的 `total` / `done` / `stale`。
+ *
+ * 三个数**一次扫表算完**，理由与 `countEmbeddingProgress` 逐字相同：分三次查的话
+ * 三个数各自是不同时刻的快照，管理员会看到 `done + stale > total` 这种自相矛盾的进度。
+ *
+ * `total` 是**未软删的图数**（不是「有向量的图数」）：人物向量对每一张图都该有，
+ * 一张图没有就是差的。这也是它与文本侧 `total` 口径不同的地方——那边的分母是
+ * 「有 search_text 的图」。
+ *
+ * ⚠️ `stale` 的口径必须和 `listStalePersonVectorMemeIds` 的 WHERE **逐字一致**，
+ *    理由同文本侧：两边写岔的表现是进度条停在某个数不动，而队列其实已经空了。
+ *
+ * @param currentModelKey `personEmbedModelKey(...)` 的结果。**没配通道时传空串**——
+ *        `embed_model = ''` 不命中任何行，于是 done = 0、stale = 全部，那正是
+ *        「还没配图片向量」该显示的样子（同 `getReindexStatus` 的处理）。
+ */
+export async function countPersonVectorProgress(
+  currentModelKey: string,
+  db: Db = defaultDb,
+): Promise<PersonVectorProgress> {
+  const hasCurrentVector = sql`exists (select 1 from ${memeSubjects}
+    where ${memeSubjects.memeId} = ${memes.id}
+      and ${memeSubjects.embedModel} = ${currentModelKey})`
+
+  const [row] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      done: sql<number>`count(*) filter (where ${hasCurrentVector})::int`,
+      stale: sql<number>`count(*) filter (where not ${hasCurrentVector})::int`,
+    })
+    .from(memes)
+    .where(isNull(memes.deletedAt))
+  return { total: row?.total ?? 0, done: row?.done ?? 0, stale: row?.stale ?? 0 }
+}
+
+/** 翻页游标，形状与 `StaleEmbeddingCursor` 相同（见那边对「为什么是复合键」的完整推导）。 */
+export type StalePersonVectorCursor = { createdAt: Date; id: string }
+
+export type StalePersonVectorRow = { id: string; createdAt: Date }
+
+/**
+ * 人物向量需要算 / 重算的记录：未软删，且**没有一行带着当前口径的向量**
+ * （含「一行都没有」和「有一行但口径不对」两种，§6.7.5）。
+ *
+ * **只取 id 和翻页键**，理由同 `listStaleEmbeddingMemeIds`：一次补算几万条，
+ * 把图的东西拉进内存没有意义，worker 取到任务后按 id 单条回查。
+ *
+ * ⚠️ **keyset 翻页，不是 `OFFSET`**，理由逐字同 `listStaleEmbeddingMemeIds`：
+ *    入队与消费同时发生，算完的行会掉出 WHERE 集合，offset 因此漏行——表现是
+ *    「补算跑完了，但那批图永远没有向量」，不报错。
+ *
+ * ⚠️ 这条 SQL **一次付费调用的候选集**（§6.7.5）。它只负责挑出候选，
+ *    真正花不花钱由调用方（`POST /admin/persons/reindex` 是人点的）决定。
+ */
+export async function listStalePersonVectorMemeIds(
+  currentModelKey: string,
+  cursor: StalePersonVectorCursor | null,
+  limit: number,
+  db: Db = defaultDb,
+): Promise<StalePersonVectorRow[]> {
+  const conditions: SQL[] = [
+    isNull(memes.deletedAt),
+    sql`not exists (select 1 from ${memeSubjects}
+      where ${memeSubjects.memeId} = ${memes.id}
+        and ${memeSubjects.embedModel} = ${currentModelKey})`,
+  ]
+  if (cursor !== null) {
+    // 行值比较，两边的显式 cast 与 ISO 字符串的理由见 `listStaleEmbeddingMemeIds`
+    // （那边写了完整推导：不给 cast 时 Postgres 按 text 处理 uuid 那一半；
+    //  时间那半写 `Date` 对象会在**绑定参数那一步**报
+    //  `The "string" argument must be of type string`，和这条 SQL 看起来毫无关系）
+    conditions.push(
+      sql`(${memes.createdAt}, ${memes.id}) > (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id}::uuid)`,
+    )
+  }
+
+  return await db
+    .select({ id: memes.id, createdAt: memes.createdAt })
+    .from(memes)
+    .where(and(...conditions))
+    .orderBy(memes.createdAt, memes.id)
+    .limit(limit)
+}
+
 // ── 收藏（SPEC §5.4 / §6.4） ───────────────────────────────────────
 //
 // ⚠️ **收藏是人和图的关系，不是图的属性。** 所以它写 `user_favorites`，
@@ -725,6 +845,16 @@ export type MemeFilter = Partial<Record<VocabField, string[]>> & {
    * 只有检索会传它，但它是「七个维度上的条件」，所以和其余几条放在一起构造。
    */
   exclude?: string[]
+  /**
+   * 人物 id，**单值**（SPEC §6.3.2，`proposed`）。一张图至多归一个人物，
+   * 所以两个人物取 AND 恒为空——重复传在 handler 里挡成 `VALIDATION_FAILED`，
+   * 不在这里「取最后一个」：那会让客户端看不出自己传错了。
+   *
+   * 不存在的 id 得到**空列表**，不是错误：它不是路径参数。
+   */
+  person?: string
+  /** 系列 id，单值。返回其下所有人物的图；与 `person` 同时给时取 AND。SPEC §6.3.2 */
+  series?: string
 }
 
 /**
@@ -778,8 +908,51 @@ export function memeFilterConditions(filter: MemeFilter, actorId: string | null)
   const excluded = excludeLabels(filter.exclude ?? [])
   if (excluded !== undefined) conditions.push(excluded)
 
+  /*
+   * 人物与系列（SPEC §6.3.2，`proposed`）。两条都写成 EXISTS 半连接，
+   * 理由与上面的 `favorited` 逐字相同：五类条件都得是 SQL 条件，检索三路才能
+   * 原样复用这一份（「先过滤后召回」）。
+   *
+   * ⚠️ 关系在 `meme_subjects` 上，**不在 `memes` 上**（§6.7.2：Meme 的对外表示不加
+   *    「属于哪个人物」）。所以这里必须有一条到 `meme_subjects` 的存在性判断——
+   *    不能改成 `memes.person_id = …`，那个字段不存在。
+   *
+   * ⚠️ **这里只读关联行，不判 `deleted_at`**：软删过滤已经在 `memeQueryConditions`
+   *    的第一条上了，两边都写会让这条 EXISTS 变成一个能单独被抄走的半成品。
+   *    而图被软删时 `meme_subjects` 那一行还在（级联只发生在 30 天后的物理删除），
+   *    所以漏掉那条软删条件时**已删的图照样会出现**——正是这个文件头警告的形态。
+   */
+  if (filter.person) {
+    conditions.push(
+      sql`exists (select 1 from ${memeSubjects}
+        where ${memeSubjects.memeId} = ${memes.id} and ${memeSubjects.personId} = ${filter.person})`,
+    )
+  }
+
+  if (filter.series) {
+    conditions.push(
+      sql`exists (select 1 from ${memeSubjects} ms
+        join ${persons} p on p.id = ms.person_id
+        where ms.meme_id = ${memes.id} and p.series_id = ${filter.series})`,
+    )
+  }
+
   return conditions
 }
+
+/**
+ * **「这张图还在」这个判断的唯一 SQL 源。**
+ *
+ * 软删过滤为什么会漏，见 agents/rules/database.md §1.1：漏掉的表现是「删掉的图又出现了」，
+ * 不报错、不崩溃，比漏权限检查更隐蔽（SPEC §3.4）。
+ *
+ * 绝大多数查询直接用下一个函数（`memeQueryConditions`）就够了。它被单独导出的唯一理由
+ * 是**驱动表不是 `memes` 的查询**——人物与系列的计数（`data/persons.ts`）从
+ * `meme_subjects` 出发去 join `memes`，那种查询拼不出 `memeQueryConditions`，
+ * 但**仍然必须带上这一条**。抄一份 `deleted_at is null` 到那边就等于开了第二个定义，
+ * 而两处漂移的表现正是这个文件要防的那种静默错误。
+ */
+export const LIVE_MEME: SQL = isNull(memes.deletedAt)
 
 /**
  * 读 `memes` 的**开场条件**：软删过滤 + 筛选条件。读路径一律用它。
@@ -789,7 +962,7 @@ export function memeFilterConditions(filter: MemeFilter, actorId: string | null)
  * 检查更隐蔽（agents/rules/database.md §1.1、SPEC §3.4）。
  */
 export function memeQueryConditions(filter: MemeFilter, actorId: string | null): SQL[] {
-  return [isNull(memes.deletedAt), ...memeFilterConditions(filter, actorId)]
+  return [LIVE_MEME, ...memeFilterConditions(filter, actorId)]
 }
 
 /**
