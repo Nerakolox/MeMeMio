@@ -212,9 +212,9 @@ import_items(
   batch_id          uuid not null,
   file_name         text not null,
   result            text,               -- imported | exact_dup | needs_review | failed
-  meme_id           uuid,               -- 命中或新建的记录
+  meme_id           uuid,               -- 命中或新建的记录；exact_dup 时是被比中的那张
   similar_to        uuid,               -- needs_review 时指向库里相似的那张
-  distance          int,                -- needs_review 时的 Hamming 距离
+  distance          int,                -- needs_review 时的 Hamming 距离；自动判重的 exact_dup 也写（§9.33）
   temp_storage_key  text,               -- needs_review 时文件暂存的 R2 键
   reason            text,
   primary key (batch_id, file_name)
