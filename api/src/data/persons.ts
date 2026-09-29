@@ -1038,9 +1038,12 @@ export async function assignMemes(
       personId = row.id
     } else {
       // 要放进去的人物必须可见：选不到的人物（图全被软删）不该能接收图。
-      // 报 400 而不是 404——它是请求体里的字段，与 `seriesId` 同一个口径。
+      // **不存在与不可见都是 `NOT_FOUND`**（SPEC §6.7.4 开头那条规则）：
+      // `personId` 是「这次要操作的对象」，不是某个字段的取值——和下面 `memeIds`
+      // 那张图同一个身份，客户端手里的 id 过期了就该重拉列表。与 `seriesId` /
+      // `coverMemeId` 那两处刻意不同，它们才是 400。
       if ((await findPersonById(target.personId, tx)) === null) {
-        throw new AppError('VALIDATION_FAILED', '这个人物不存在')
+        throw new AppError('NOT_FOUND', '这个人物不存在')
       }
       personId = target.personId
     }

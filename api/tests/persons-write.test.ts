@@ -563,9 +563,9 @@ describe('POST /persons/assignments', () => {
       memeIds: [loose.id],
       personId: person,
     })
-    // 与 `PATCH` 的 `seriesId` 同一个口径（请求体里的引用 → 400）：
-    // 客户端拿到的 id 来自列表，而它已经从列表上消失了
-    expect(await errorCode(res)).toBe('VALIDATION_FAILED')
+    // `personId` 是**这次要操作的对象**，和 `memeIds` 同一身份 → 404（§6.7.4 开头）：
+    // 客户端拿到的 id 来自列表，而它已经从列表上消失了，正确反应是重拉列表
+    expect(await errorCode(res)).toBe('NOT_FOUND')
     expect(await subjectCount(person)).toBe(1)
   })
 
@@ -723,7 +723,7 @@ describe('POST /persons/assignments', () => {
     expect(await errorCode(dup)).toBe('VALIDATION_FAILED')
   })
 
-  it('指向不存在的人物是 VALIDATION_FAILED（请求体里的字段，与 seriesId 同口径）', async () => {
+  it('指向不存在的人物是 NOT_FOUND，与「图全被软删」同一条判据', async () => {
     const actor = await signIn()
     const meme = await makeMeme(db, { uploaderId: actor.id })
 
@@ -731,8 +731,18 @@ describe('POST /persons/assignments', () => {
       memeIds: [meme.id],
       personId: crypto.randomUUID(),
     })
-    expect(res.status).toBe(400)
-    expect(await errorCode(res)).toBe('VALIDATION_FAILED')
+    // `personId` 是**这次要操作的对象**，不是某个字段的取值（§6.7.4 开头）：
+    // 它和 `memeIds` 那张图同一个身份，所以是 404；`seriesId` / `coverMemeId`
+    // 那两处才是 400。这一处曾经按后者判，2026-09-30 定死之后改的。
+    expect(res.status).toBe(404)
+    expect(await errorCode(res)).toBe('NOT_FOUND')
+
+    // 整个请求不生效：那张合法的图也没被写出去
+    const rows = await db
+      .select({ personId: memeSubjects.personId })
+      .from(memeSubjects)
+      .where(eq(memeSubjects.memeId, meme.id))
+    expect(rows).toEqual([])
   })
 })
 

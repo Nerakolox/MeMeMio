@@ -116,3 +116,29 @@ limit 10;
 这是[不用 Redis](../../../spec/09-decisions.md) 换来的最大好处——「图片入库了但队列任务丢了」这类不一致根本不可能发生。**别为了"性能"把它拆开**，拆开就白放弃 Redis 了。
 
 R2 的对象操作**不能**进事务（它不在数据库里）。顺序是：先写 R2，再写库；失败时留下的孤儿对象由定时清理处理。反过来会出现「库里有记录但文件不存在」，那个用户能看见。
+
+## 6. `db.execute()` 没有列类型
+
+`drizzle` 的列类型**只在 `select()` 那条路上生效**。`db.execute()` 拿到的是 Postgres 回来的**原始值**：
+
+- `timestamptz` 回来是**文本**，不是 `Date`
+- `count(*)` 的 `int8` 也是文本——所以本项目到处写 `::int`
+- `db.execute<T>()` 的 `T` **是我们自己声明的，运行时不做任何转换**。写 `updated_at: Date` 类型检查一路放行，值还是字符串
+
+⚠️ **不转的表现是一句 500，而且现场离根因很远**：`serialize/*` 拿到字符串之后调
+`date.toISOString()`，抛的是 `TypeError: date.toISOString is not a function`。
+2026-09-30 写第一批读接口时就是这么撞上的：`GET /series/{id}` 先响，因为空系列的
+`created_at` 恒非空；同类的 `GET /persons/{id}` 要等到那个人的 `updated_at` 非空
+——有人改过名字——才会响。**同一个写法，两条路径的暴露时机差很远**，所以别用
+「这条路径试过没问题」来判它没事。
+
+**做法**：走 `db.execute()` 的行类型里，时间列一律声明成 `string`（或 `string | null`），
+映射进内部类型时**显式转一次**。现成的转换在 `data/persons.ts` 的 `toDate` / `toDateOrNull`。
+转不动就报错，**不要回一个 `Invalid Date`**——它照样一路飘到 `toISOString()`，表现还是 500，只是更难查。
+
+`::text` 救不了这一处：`timestamptz::text` 本来就是文本。要么在 SQL 里 `to_char`，要么在 TS 里 `new Date(...)`。
+
+> 写这一节时，全仓**读列**的 `db.execute()` 只有 `data/persons.ts` 和 `data/migration-state.ts`
+> （后者只取 `count`，不受影响）；其余 `db.execute()` 都是不带结果集的命令
+> （`set_config`、advisory lock）。**新增一处读列的 `db.execute()` 就回来看一遍这一节**——
+> 这条清单会过期，判断依据是「这个 SQL 选出来的列里有没有时间」。
