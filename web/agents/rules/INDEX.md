@@ -11,6 +11,7 @@
 | 碰复制 / 下载 / 分享 | [clipboard-share.md](clipboard-share.md) |
 | 碰导入流程、进度、待确认队列 | [import-ux.md](import-ux.md) |
 | 碰设置页、管理页、测试连接 | [settings-ux.md](settings-ux.md) |
+| 碰 service worker、manifest、图标、缓存策略 | [pwa.md](pwa.md) |
 
 按条件读正文，已完整读过且未变化的不重复读取。不一次加载全部。
 

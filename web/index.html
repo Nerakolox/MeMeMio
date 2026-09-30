@@ -20,6 +20,39 @@
       href="/mememio-mark-dark.svg"
       media="(prefers-color-scheme: dark)"
     />
+
+    <!--
+      PWA：装到主屏、独立窗口打开（任务《2026-10-01-手机PWA》）。清单与 service worker
+      的正文都在 `public/` 下，Vite 原样复制到产物根目录——`/manifest.webmanifest` 与
+      `/sw.js` 的作用域由此正好是整站。注册那一步在 `src/lib/pwa.ts`，**只在生产跑**。
+
+      `viewport` **故意不加 `viewport-fit=cover`**：全仓至今没有一处 `env(safe-area-inset-*)`，
+      只加它是让内容顶到刘海和 Home 条下面去。安全区是另一件事，见任务 §8 第 1 条。
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- iOS 的「添加到主屏幕」不读 manifest 的图标，只认这一条；180×180，不透明底。 -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!--
+      `theme_color` 只能写字面值（manifest 是 JSON，读不到 `src/index.css` 的 token）——
+      这是 `agents/rules/styling.md`「颜色只引语义 token」的唯一例外，值的来源写在
+      `scripts/generate-pwa-icons.mjs` 的文件头，那里与这里必须一致：
+        #ffffff = :root 的 --background（浅色）      #0a0a0a = 深色那一档的 --background
+      写两条（而不是只靠 manifest 里那一条）是因为**状态栏要跟着系统配色走**：manifest
+      的 `theme_color` 只有一个值，页面里的 meta 才能带 `media`。缺了它深色模式下
+      独立窗口顶上会横着一条白带。
+    -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0a" />
+
+    <!-- 独立窗口 / 全屏的声明。`mobile-web-app-capable` 是标准那句，`apple-` 前缀那三条是
+         iOS 至今仍只认自己那套的遗留写法，**两个都要**；漏了 `apple-` 那几条的表现是
+         iOS 上加完主屏仍然带着 Safari 的地址栏。状态栏用 `default`（不透明、内容不顶上去），
+         与上面「没做安全区」是同一件事的两面：`black-translucent` 会让页面顶到状态栏底下。 -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="MeMeMio" />
   </head>
   <body>
     <div id="root"></div>

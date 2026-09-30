@@ -44,7 +44,7 @@ Hono RPC 直接消费 `api` 导出的类型，**没有代码生成步骤，不�
 
 ## 5. 样式
 
-**组件库 shadcn/ui（组件层 `radix-luma`），样式载体 Tailwind v4**，BEM 已全部迁完。新组件从 shadcn 拉、落在 `src/components/ui/`；颜色、圆角、阴影只引用 `src/index.css` 的语义 token，不写死 HEX。选型经过、token 的坑、移动优先、44×44 触摸目标、图片不裁剪、动图不自动播放、深色走 `prefers-color-scheme`，都在 [styling.md](agents/rules/styling.md)（写样式之前读）；后面这几条**不因换组件库而放松**，`src/styles.css` 只剩两条基础声明，不要再往里加。
+**组件库 shadcn/ui（组件层 `radix-luma`），样式载体 Tailwind v4**，BEM 已全部迁完。新组件从 shadcn 拉、落在 `src/components/ui/`；颜色、圆角、阴影只引用 `src/index.css` 的语义 token，不写死 HEX（**唯一例外**是 PWA 的 manifest 与 `theme-color`——那两处读不到 token，值的来源写在 `scripts/generate-pwa-icons.mjs` 文件头，见 [styling.md](agents/rules/styling.md)「PWA 的图标与 `theme-color`」）。选型经过、token 的坑、移动优先、44×44 触摸目标、图片不裁剪、动图不自动播放、深色走 `prefers-color-scheme`，都在 [styling.md](agents/rules/styling.md)（写样式之前读）；后面这几条**不因换组件库而放松**，`src/styles.css` 只剩两条基础声明，不要再往里加。
 
 ## 6. 交付
 

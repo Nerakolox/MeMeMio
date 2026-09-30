@@ -687,6 +687,31 @@ Toaster 挂在 `#root` 里（`App.tsx`），所以它的每一条提示都吃这
 
 表情包多数是浅色背景，深色模式下要给图片容器一个浅色底，否则白底图会和背景糊在一起看不出边界。
 
+## PWA 的图标与 `theme-color`：**token 规则的唯一例外**（2026-10-01）
+
+「颜色只引语义 token，不写死 HEX」这条有且只有一处例外，原因是**读不到**：
+`manifest.webmanifest` 是 JSON，`<meta name="theme-color">` 是 HTML 属性，两者都不经过
+Tailwind，拿不到 `:root` 里的 `--background`。
+
+| 字面值 | 来自 | 出现在 |
+|---|---|---|
+| `#ffffff` | `:root` 的 `--background`（`oklch(1 0 0)`） | 四个 PNG 图标的底色、manifest 的 `theme_color` / `background_color` |
+| `#0a0a0a` | 深色那一档的 `--background`（`oklch(0.145 0 0)`） | `index.html` 里**深色那条** `<meta name="theme-color">` |
+
+**例外只覆盖「值从哪来」，不覆盖「可以随手写一个颜色」**：改这两个字面值之前先改
+`index.css` 的 token，来源与口径写在 `scripts/generate-pwa-icons.mjs` 的文件头
+（那份脚本是唯一的落点，`index.html` 与 manifest 都从它对齐）。
+
+三条不能省的：
+
+- **`theme-color` 要写两条**（浅色 / 深色各一条 `media`）。manifest 里那个 `theme_color`
+  只有一个值，而独立窗口的系统状态栏跟着系统配色走——只留 manifest 那一条，深色模式下
+  顶上会横着一条白带。
+- **`apple-touch-icon` 不能透明底**，`maskable` 那份的墨迹要落在**直径 80% 的安全圆**里
+  （安全区是圆不是方，按外接矩形放会超出去、被启动器裁掉一块，而且不报错）。
+- **图标是产物、光栅化脚本不进仓库**（同一档：`verify-*.mjs`、`mock-api.mjs`）——
+  它是品牌资产的一次转换，不是构建步骤。重跑的时机只有一个：mark 换了。
+
 ## 不做的
 
 - 不做页面切换过渡动画，这个工具要快

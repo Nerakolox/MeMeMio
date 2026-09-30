@@ -36,6 +36,11 @@ docs/fixtures/images/edge/huge.png
 web/scripts/mock-api.mjs
 web/scripts/verify-*.mjs
 
+# PWA 图标的一次性光栅化脚本：**产物（四个 PNG）进仓库，脚本不进**。
+# 它是品牌资产的一次转换，不是构建步骤——输入与输出都在仓库里，不必每次构建再算一遍；
+# 重跑的时机只有一个，就是 mark 换了。理由、底色来源与留白口径都在脚本自己的文件头。
+web/scripts/generate-pwa-icons.mjs
+
 # 编辑器与系统
 .vscode/
 .idea/
