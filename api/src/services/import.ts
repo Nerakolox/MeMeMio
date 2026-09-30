@@ -33,6 +33,7 @@ import {
   thumbKeyFor,
 } from '../storage/r2.js'
 import { publish } from './import-events.js'
+import { PERSON_VECTOR_AUTO_COMPUTE } from './person-vectors.js'
 
 /**
  * 导入处理管线。SPEC §6.2.2 / image-pipeline.md §1。
@@ -693,8 +694,14 @@ export async function persistBytes(params: {
    * 一直等到配置回来或者被人显式补触发。这个方向是安全的（不会白花钱）。
    *
    * 与打标**刻意不同**：打标任务无条件入队，因为它按上传者解析配置，而且它不额外花钱。
+   *
+   * ⏸️ **暂停期间这个判断恒为 false**（`PERSON_VECTOR_AUTO_COMPUTE`，见
+   *    任务 2026-10-01-人物功能临时下线 §4 附带那条）：
+   *    人物功能整体暂停待方案，这个向量的唯一消费方是人物，配着也算、算完也没有人看，
+   *    就是每张新图一次白花的付费调用。**恢复时删掉前面那一项**——下面的守卫与注释
+   *    原样留着，它们说的是没暂停时该怎么做。
    */
-  const wantsPersonVector = await isImageEmbedConfigured()
+  const wantsPersonVector = PERSON_VECTOR_AUTO_COMPUTE && (await isImageEmbedConfigured())
 
   // ⚠️ 「写 memes + 入队打标」必须在同一个事务里（agents/rules/database.md §5）。
   // 这是不用 Redis 换来的最大好处：「图片入库了但队列任务丢了」不可能发生。

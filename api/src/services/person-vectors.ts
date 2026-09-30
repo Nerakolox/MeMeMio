@@ -11,7 +11,7 @@ import {
   countPersonVectorJobs,
   enqueuePersonVectorJobs,
 } from '../data/person-vector-jobs.js'
-import { assignPersonVector } from '../data/persons.js'
+import { writePersonVector } from '../data/persons.js'
 import { representativePng } from '../image/representative.js'
 import { log } from '../logger.js'
 import { getObject } from '../storage/r2.js'
@@ -36,7 +36,37 @@ import { ENQUEUE_CAP, ENQUEUE_PAGE } from './ai-config.js'
  *
  * 没配通道、调用失败、图取不回来——图照样入库、打标、能被搜到，只是暂时不属于任何
  * 人物（§5.7.2）。人物是附加能力。
+ *
+ * ## ⏸️ 暂停期间（2026-10-01 起）
+ *
+ * 人物功能整体暂停待方案（任务 2026-09-29-人物识别与聚类 §13），
+ * 这里是暂停期间的两处收口，依据任务 2026-10-01-人物功能临时下线 §4：
+ *
+ * 1. **算完不再做归属**——`computePersonVector` 末尾改调 `writePersonVector`，
+ *    只写向量、不挂人物、不建人物（§4 前两条）。
+ * 2. **不再入队**——`PERSON_VECTOR_AUTO_COMPUTE` 关掉后，三条能排出图片向量任务的
+ *    路（导入新图、管理员补跑、换模型重算）都不再排（§4 附带那条）。**理由**：暂停期间
+ *    这个向量的唯一消费方是人物，界面藏了、自动挂停了，它就是每张新图一次白花的
+ *    付费调用。
+ *
+ * 恢复时把 `PERSON_VECTOR_AUTO_COMPUTE` 置回 `true`、并把 `computePersonVector`
+ * 末尾换回 `assignPersonVector`；两处都在 §5 的恢复清单里。
  */
+
+/**
+ * ⏸️ **暂停期间的开关，恒 `false`。**
+ *
+ * `false` = 没有任何路径会入队算图片向量。恢复时置回 `true` 即可——`services/import.ts`
+ * 里那一项 `&&` 与下面 `enqueueAllStalePersonVectors` 的闸会自动放行。
+ *
+ * **一个常量而不是三处判断**：三条路都能排出同一批付费任务，开关散开写迟早漏一处，
+ * 而漏一处的表现是「管理员点一次换模型，几万条任务又排上了」——不报错。
+ *
+ * ⚠️ 显式标 `boolean`，不写成裸的 `false`：**它是个要被人改回 `true` 的开关，不是常量。**
+ *    字面量类型会把每一处 `if (!开关)` 在类型层折叠掉，等于这个开关在类型里已经不存在了，
+ *    而它的全部意义就是「改一行就恢复」。
+ */
+export const PERSON_VECTOR_AUTO_COMPUTE: boolean = false
 
 export type PersonVectorOutcome =
   | { kind: 'done' }
@@ -47,7 +77,7 @@ export type PersonVectorOutcome =
   | { kind: 'failed'; detail: string }
 
 /**
- * 算一张图的人物向量并挂人物。
+ * 算一张图的人物向量并落库。**暂停期间到此为止，不挂人物。**
  *
  * ⚠️ **软删过滤在 `findMemeById` 里。** 这一步是异步的，图完全可能在排队期间被删——
  *    给一张已经删掉的图算向量不只是白花钱，它还会在 `meme_subjects` 上留下一行，
@@ -95,12 +125,28 @@ export async function computePersonVector(
    *    改长边等于换模型（§5.7.1），而长边是编在函数里的常量，所以这里不需要也不该
    *    自己拼一次字符串。
    */
-  await assignPersonVector(memeId, result.vector, personEmbedModelKey(config.model))
+  /*
+   * ⏸️ **暂停期间写 `writePersonVector`，不是 `assignPersonVector`**
+   * （任务 2026-10-01-人物功能临时下线 §4）：
+   * 机器自动挂已下掉，这里只留向量。**恢复时把这一行换回
+   * `assignPersonVector(memeId, result.vector, personEmbedModelKey(config.model))`**，
+   * 别的都不用动。
+   *
+   * ⚠️ 走到这里时队列里通常**没有**任务（三条入队路径都停着），但这一行不是摆设：
+   *    残留任务、手工插的行、以后半开着恢复的时候都会走到它，而它决定了那时
+   *    会不会又长出人物来。
+   */
+  await writePersonVector(memeId, result.vector, personEmbedModelKey(config.model))
   return { kind: 'done' }
 }
 
 /**
  * 把所有**没有当前口径向量**的图排进队列。**幂等**（`onConflictDoNothing`）。
+ *
+ * ⏸️ **暂停期间恒返回 0**（`PERSON_VECTOR_AUTO_COMPUTE`），一条都不排。它同时也是
+ *    `POST /admin/persons/reindex` 与「换模型重算」两处的收口——守卫放这里而不是放
+ *    两个调用点上，是为了**只有一处**。响应形状不变（`enqueuedCount: 0`），
+ *    §2 第 4 条要求的「接口全部还在」不受影响。
  *
  * 没配图片向量模型时返回 0：没有「当前口径」就没有「过期」可言，这时候入队
  * 只会排出一批必然被 worker 删掉的空任务。
@@ -114,6 +160,14 @@ export async function computePersonVector(
  * @returns 真正插进去的条数。它小于扫到的条数时，可能是重复入队，也可能是被 cap 截断。
  */
 export async function enqueueAllStalePersonVectors(): Promise<number> {
+  // ⏸️ 暂停期间一条都不排。**记一条日志而不是静默返回**：调用方（管理员点补跑、
+  // 换模型）看到的是 `enqueuedCount: 0`，没有这条就分不出「确实没东西要算」和
+  // 「被开关挡住了」——两者长得一模一样（code-style.md：降级和吞错误看起来一样）
+  if (!PERSON_VECTOR_AUTO_COMPUTE) {
+    log.info('人物向量处于暂停（临时下线），本次没有排任何任务')
+    return 0
+  }
+
   const model = await getImageEmbedModel()
   if (model === null) return 0
   const currentModelKey = personEmbedModelKey(model)
@@ -153,10 +207,15 @@ export async function enqueueAllStalePersonVectors(): Promise<number> {
  * 必须先清：`meme_id` 上的唯一索引让「已有一条 failed 行」的图入不了队，
  * 不清的话上一轮失败的图会被整批漏掉，而进度条照样走完。详见
  * `clearFailedPersonVectorJobs` 的注释。
+ *
+ * ⏸️ 暂停期间它还剩「清 failed」这一半（换个模型仍会清，队列本来是空的，等于空转），
+ *    另一半由 `enqueueAllStalePersonVectors` 的开关挡住——这里**不再单独加一处判断**，
+ *    否则恢复时要记两处。
  */
 export async function restartPersonVectorReindex(): Promise<number> {
   const cleared = await clearFailedPersonVectorJobs()
   const enqueued = await enqueueAllStalePersonVectors()
+  // 暂停期间 enqueued 恒为 0，这句话只有在开关打开时才是字面上的意思
   log.info({ cleared, enqueued }, '换图片向量模型，全站人物向量重算入队')
   return enqueued
 }

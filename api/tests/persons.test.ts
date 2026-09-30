@@ -11,6 +11,11 @@ import { and, eq, isNull, sql as raw } from 'drizzle-orm'
  * 2. **软删过滤**：图数、封面、列表、详情、系列计数五处（§5.7.4）
  * 3. **合并建议**：不含隐藏的、不含点过「不是同一个」的（§6.7.3）
  *
+ * ⏸️ 2026-10-01 起人物功能暂停（任务 2026-10-01-人物功能临时下线 §4）：
+ * 算向量那一步改调 `writePersonVector`（只写向量），`assignPersonVector` 暂时没有
+ * 调用点。**它的测试一条都不删也不改**——那个函数原样留着，恢复自动挂就是把它接回去。
+ * 这一段下面新加的 `writePersonVector` 测的是暂停期间真正在跑的那条写路径。
+ *
  * 上游（图片向量的那次 HTTP 调用）**全部是桩**：本文件不碰任何真实 AI 通道，
  * 也不花部署方的额度——它连 `fetch` 都不 stub，因为这里没有任何一条路径该调上游。
  * 替身换回来的那一层在 `persons-api.test.ts` / `persons-image-embed.test.ts` 的文件头。
@@ -31,6 +36,7 @@ const {
   listSeries,
   listSuggestedPersonIds,
   resolvePersonCovers,
+  writePersonVector,
 } = await import('../src/data/persons.js')
 const { memeSubjects, persons, series } = await import('../src/data/schema.js')
 
@@ -75,6 +81,13 @@ async function makePerson(name: string | null = null): Promise<string> {
   return row.id
 }
 
+/**
+ * ⏸️ 这一组六条**一条都没改**，尽管函数暂停期间没有调用点。
+ *
+ * 它们测的是 `assignPersonVector` 自己的规矩（阈值、并发、不动人做过的决定）。
+ * 那个函数原样留着，规矩就没变，测试也就没理由变——**删掉它们才是退化**：
+ * 恢复自动挂时那一下接回去，靠的就是这一组还在。
+ */
 describe('机器分配（§5.7.2）', () => {
   it('阈值内挂到已有人物上', async () => {
     const user = await createUser(db)
@@ -212,6 +225,53 @@ describe('机器分配（§5.7.2）', () => {
     // 那次「不是他」的判断留在库里，不能因为重算就被抹掉
     const [row] = await db.select().from(memeSubjects).where(eq(memeSubjects.memeId, meme.id))
     expect(row?.assignedBy).toBe(user.id)
+  })
+})
+
+/**
+ * ⏸️ 暂停期间真正在跑的那条写路径（`computePersonVector` 末尾调它）。
+ *
+ * 它与上面的 `assignPersonVector` 是**同一条线上的两个版本**：同一个 upsert，
+ * 一个写归属、一个不写。所以这里的两条性质必须和那边逐字对齐——动了一边要回看另一边。
+ */
+describe('只写向量、不写归属（⏸️ 暂停期间）', () => {
+  it('新行：向量写进去，归属三列全空，也不会建人物', async () => {
+    const user = await createUser(db)
+    const meme = await makeMeme(db, { uploaderId: user.id })
+
+    await writePersonVector(meme.id, axisVector(3), MODEL_KEY, db)
+
+    const [row] = await db.select().from(memeSubjects).where(eq(memeSubjects.memeId, meme.id))
+    expect(row?.embedModel).toBe(MODEL_KEY)
+    expect(row?.personId).toBeNull()
+    expect(row?.assignedBy).toBeNull()
+    expect(row?.assignedAt).toBeNull()
+    // 机器不建人物——「136 个单图人物」就是这么长出来的（任务 §13.6 ⑦）
+    expect(await db.select().from(persons)).toHaveLength(0)
+  })
+
+  it('已有行：只换向量，人做过的归属原样留着（与 assignPersonVector 第 1 步同一个口径）', async () => {
+    const user = await createUser(db)
+    const meme = await makeMeme(db, { uploaderId: user.id })
+    const personId = await makePerson('甲')
+    await db.insert(memeSubjects).values({
+      memeId: meme.id,
+      embedding: axisVector(0),
+      embedModel: OTHER_MODEL_KEY,
+      personId,
+      assignedBy: user.id,
+      assignedAt: new Date(),
+    })
+
+    await writePersonVector(meme.id, axisVector(1), MODEL_KEY, db)
+
+    const [row] = await db.select().from(memeSubjects).where(eq(memeSubjects.memeId, meme.id))
+    // 向量换成新口径了
+    expect(row?.embedModel).toBe(MODEL_KEY)
+    // 归属一个字没动：重算不能把人做过的决定抹掉（§5.7.2）
+    expect(row?.personId).toBe(personId)
+    expect(row?.assignedBy).toBe(user.id)
+    expect(row?.assignedAt).not.toBeNull()
   })
 })
 

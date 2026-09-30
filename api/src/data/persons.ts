@@ -25,6 +25,10 @@ import { isUuid } from '../lib/uuid.js'
  * 机器只做一件事：**给还没归属的图算向量、挂到最近的人物上**（下面的
  * `assignPersonVector`）。它不合并人物、不改已有归属。人做过的决定（`assigned_by`
  * 非空）与机器自己做过的分配（`person_id` 非空）在重算时都原样保留（§5.7.2）。
+ *
+ * ⏸️ **2026-10-01 起「机器自动挂」暂停**（任务 2026-10-01-人物功能临时下线
+ * §4）：算向量那一步改调 `writePersonVector`——只写向量、不写归属，也不建人物。
+ * `assignPersonVector` 原样留着（它仍是对的，只是暂时没人调），恢复时换回去即可。
  */
 
 // ── 类型 ───────────────────────────────────────────────────────────
@@ -623,7 +627,44 @@ export type PersonAssignOutcome = {
 }
 
 /**
+ * 只写向量，**不碰归属**（暂停期间的写路径）。
+ *
+ * 依据任务 2026-10-01-人物功能临时下线 §4：
+ * 「机器自动挂」已下掉——图片向量任务算完之后不再做归属，新图不进任何人物、
+ * 也不新建人物。这张图照旧拿到向量，`person_id` / `assigned_by` / `assigned_at`
+ * 一个都不写。
+ *
+ * ⚠️ **已有行上的归属原样保留。** `on conflict` 的 `set` 里没有那三列，所以人做过的
+ *    决定（或机器此前分过的）不会被这一下抹掉——口径与下面 `assignPersonVector` 的
+ *    第 1 步逐字相同，恢复自动挂之后两条路依然一致。
+ *
+ * ⚠️ **它挂在「算向量」那一步上，不是一条独立的路。** 恢复自动挂时把
+ *    `computePersonVector` 末尾换回 `assignPersonVector` 即可；**不要**反过来把
+ *    归属写进这里——那样 `person_id` 的两条写路径就没有共同口径了。
+ */
+export async function writePersonVector(
+  memeId: string,
+  embedding: number[],
+  modelKey: string,
+  db: Db = defaultDb,
+): Promise<void> {
+  const vector = toVectorLiteral(embedding)
+  await db.execute(sql`
+    insert into meme_subjects (meme_id, embedding, embed_model)
+    values (${memeId}::uuid, ${vector}::vector, ${modelKey})
+    on conflict (meme_id) do update set
+      embedding = excluded.embedding,
+      embed_model = excluded.embed_model
+  `)
+}
+
+/**
  * 把一张图挂到最像的人物上，挂不上就自成一个新的未命名人物（§5.7.2）。
+ *
+ * ⏸️ **暂停期间没有调用点。** 算向量那一步改调 `writePersonVector` 了
+ *    （任务 2026-10-01-人物功能临时下线 §4），
+ *    这个函数与它的测试**都原样留着**——路径定了之后恢复自动挂就是把它接回去，
+ *    而不是重写一遍。**看到「没人调」时不要顺手删掉它。**
  *
  * 三步，**必须在同一个事务里**（这也是锁的边界）：
  *
