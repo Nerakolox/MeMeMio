@@ -1,5 +1,5 @@
 import type { InferResponseType } from 'hono/client'
-import { api, type RetagResult, type TagStatusSummary } from './api'
+import { api, type MemesResponse, type RetagResult, type TagStatusSummary } from './api'
 import type { ImageEmbedTestResult, ReindexTriggered, RuntimeConfig } from './api-config'
 import type {
   AssignmentsOutcome,
@@ -33,14 +33,16 @@ const _healthShape: HealthResponse = {
 void _healthShape
 
 /**
- * 搜索接口的编译期断言（SPEC §6.3.1）。
+ * 列表端点的编译期断言（SPEC §6.3）。
  *
- * 搜索结果是 `Meme & { matchedBy }`，而 `Meme` 里 `sizeBytes` 这类字段是字符串——
+ * 列表条目是 `Meme & { matchedBy }`，而 `Meme` 里 `sizeBytes` 这类字段是字符串——
  * 形状对不上时这里先炸，而不是等到运行时 UI 上出现 `undefined`。
+ *
+ * ⚠️ 落点跟着**列表端点**走。`/search` 已随检索筛选合流删掉（SPEC §9.29），`GET /memes`
+ *    是这个形状（§6.3「响应形状恒定」）现在唯一的载体，它守的仍是
+ *    「条目 = `Meme & { matchedBy }`、七个数组字段一个不少」（§4.3 / §6.3.1）。
  */
-export type SearchResponse = InferResponseType<typeof api.api.v1.search.$get>
-
-const _searchShape: SearchResponse = {
+const _memesShape: MemesResponse = {
   items: [
     {
       id: '00000000-0000-0000-0000-000000000000',
@@ -75,14 +77,17 @@ const _searchShape: SearchResponse = {
       matchedBy: ['vector', 'ocr'],
     },
   ],
-  // ⚠️ **恒为 `null`，不是「碰巧是 null」**：`/search` 不分页，它 ≡ `GET /memes?q=`
-  // 的冻结子集，新能力只加在 `/memes` 上（SPEC §6.3.3）。写成别的值这里就编译不过。
+  // ⚠️ `nextCursor` 是 **`string | null`**，不是恒为 `null`（SPEC §6.3）：检索时它指向
+  // 一次检索快照里的位置、浏览时是 `(created_at, id)` 全序上的位置，到头了才是 `null`。
+  // 这里写 `null` 只是**取了一个合法值**——它能编过，不代表真实响应里恒是它。
+  // 它是恒在的键（两个分支都给，§6.3「响应形状恒定」）：哪天它从响应里消失，这里就编译不过。
   nextCursor: null,
+  // 两个检索字段同样恒在：无 `q` 时是常量 `false` / `null`，不是「字段不存在」（§6.3）。
   degraded: false,
   rewritten: null,
 }
 
-void _searchShape
+void _memesShape
 
 /**
  * 打标汇总的编译期断言（SPEC §6.6.1）。
