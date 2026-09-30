@@ -33,15 +33,6 @@ import {
  * （`runSearch` 的 `frozen` 参数），既不调 LLM 也不重新编码。
  */
 
-/**
- * `GET /search` 缺省 `limit`。**它冻结在 50，不是 `GET /memes` 的 40。**
- *
- * SPEC §6.3.3：首页那条路径走的是 `/search` 而且**不传 `limit`**，默认值由服务端说了算；
- * 把它对齐到 §1.3 的 40 等于悄悄改掉首页看到的结果条数，而首页本轮不动（裁定 3）。
- * 「同一个实现」说的是代码路径，不是参数默认值。首页改版、这个入口删掉之后一起消失。
- */
-export const DEFAULT_SEARCH_LIMIT = 50
-
 /** 通路标识。`lib/rrf.ts` 只传字符串不认识语义，取值在这里定死，与 SPEC 示例一致。 */
 const PATH_VECTOR = 'vector'
 const PATH_OCR = 'ocr'
@@ -230,10 +221,16 @@ export async function runSearch(params: RunSearchParams): Promise<SearchRun> {
 }
 
 /**
- * 一次检索取前 `limit` 条（`GET /search` 那条路，以及测试）。
+ * 一次检索取前 `limit` 条，**不分页、不落快照**。
  *
  * `GET /memes?q=` 不走它——那条要落快照、要翻页，走 `services/search-snapshot.ts`。
  * 两者共用上面的 `runSearch` 与下面的 `findMemesForSearch`，**召回与融合只有一份实现**。
+ *
+ * ⚠️ **它现在没有端点级消费者了**：唯一的那个（冻结的 `GET /search`）已随首页改版
+ * 删掉（SPEC §9.30）。留下它是因为测试要的正是这一层——直接跑「召回 + 融合 + 取数」
+ * 而不落快照（`search-vector.test.ts` 数 HyDE 调用次数、`reindex-queue.test.ts` 看
+ * 降级判定，走 `searchFirstPage` 会平白多写一行快照、多一层清理）。**新端点不要用它**，
+ * 分页的那条路才是端点的形状。
  */
 export async function searchMemes(
   query: string,

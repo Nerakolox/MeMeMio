@@ -10,7 +10,6 @@ import { embedConfigRoutes, imageEmbedConfigRoutes, visionConfigRoutes } from '.
 import { memesRoutes } from './routes/memes.js'
 import { personsRoutes } from './routes/persons.js'
 import { seriesRoutes } from './routes/series.js'
-import { searchRoutes } from './routes/search.js'
 import { importRoutes } from './routes/imports.js'
 import { MAX_FILES_PER_BATCH } from './data/imports.js'
 
@@ -65,7 +64,6 @@ export const app = new Hono<{ Variables: RequestIdVariables }>()
   .route('/api/v1/persons', personsRoutes)
   .route('/api/v1/series', seriesRoutes)
   .route('/api/v1/memes', memesRoutes)
-  .route('/api/v1/search', searchRoutes)
   .route('/api/v1/imports', importRoutes)
 
 app.onError(onError)

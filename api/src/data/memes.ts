@@ -1005,8 +1005,8 @@ export function excludeLabels(terms: string[]): SQL | undefined {
  * 列表接口的缺省页大小与上限（SPEC §1.3）——**浏览与检索两个分支共用这一份**。
  *
  * 两处各写一个 40 / 100 的表现，是把「页大小」变成两个会各自漂移的数：改了一处，
- * 另一处只是**静静地少给几条**，不报错。`GET /search` 是唯一的例外，它的缺省冻结在
- * 50（`services/search.ts` 的 `DEFAULT_SEARCH_LIMIT`，理由见 SPEC §6.3.3）。
+ * 另一处只是**静静地少给几条**，不报错。`GET /search` 那个「缺省 50」的例外
+ * 随该端点一起删了（首页改版，SPEC §9.30），现在全站只有这一份缺省。
  */
 export const DEFAULT_LIST_LIMIT = 40
 export const MAX_LIST_LIMIT = 100

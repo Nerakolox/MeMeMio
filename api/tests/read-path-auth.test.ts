@@ -23,16 +23,14 @@ const { createSession } = await import('../src/data/auth.js')
 const { onError, onNotFound } = await import('../src/middleware/error.js')
 const { requestId } = await import('../src/middleware/request-id.js')
 const { memesRoutes } = await import('../src/routes/memes.js')
-const { searchRoutes } = await import('../src/routes/search.js')
 
 const { sql, db } = createTestDb()
 
-// 两组路由挂在同一个 app 上：它们「要求登录」这件事必须是同一套行为，
-// 分成两个 app 的话，「只有一处改对了」在测试里看不出来。
+// 浏览 / 检索现在共用一个端点（`GET /memes`，SPEC §6.3），所以这里只挂一组路由：
+// 两条读路径「要求登录」那件事是同一段代码。
 const testApp = new Hono()
   .use('*', requestId)
   .route('/api/v1/memes', memesRoutes)
-  .route('/api/v1/search', searchRoutes)
 testApp.onError(onError)
 testApp.notFound(onNotFound)
 
@@ -78,7 +76,7 @@ const UNKNOWN_UUID = '2f4a1c9e-6b3d-4a17-9f0c-8c2b5d7e1a44'
 
 describe('读路径要求登录', () => {
   /*
-   * 四条路径各来一条。**都断言 code 而不只是 401**：401 也可能是别的中间件给的，
+   * 三条读路径各来一条。**都断言 code 而不只是 401**：401 也可能是别的中间件给的，
    * 而契约里未登录就是 `UNAUTHENTICATED`（SPEC §2.2），客户端按 code 决定跳登录页。
    */
   it('GET /memes 未登录是 401 UNAUTHENTICATED', async () => {
@@ -99,12 +97,6 @@ describe('读路径要求登录', () => {
     // ⚠️ **不能是 404**：404 会让客户端以为「这张图没了」，
     // 而实际上它可能就在那儿、只是没登录。判定的顺序必须是「先登录、后存在」
     const res = await anon(`/api/v1/memes/${UNKNOWN_UUID}`)
-    expect(res.status).toBe(401)
-    expect(await errorCode(res)).toBe('UNAUTHENTICATED')
-  })
-
-  it('GET /search 未登录是 401，且不烧 embedding', async () => {
-    const res = await anon('/api/v1/search?q=%E7%8C%AB')
     expect(res.status).toBe(401)
     expect(await errorCode(res)).toBe('UNAUTHENTICATED')
   })
@@ -138,7 +130,8 @@ describe('读路径要求登录', () => {
     const list = await as(alice, '/api/v1/memes')
     expect(list.status).toBe(200)
 
-    const search = await as(alice, '/api/v1/search?q=%E7%8C%AB')
+    // 检索分支同理：未登录 401 是登录门槛给的，不是「这个查询不合法」
+    const search = await as(alice, '/api/v1/memes?q=%E7%8C%AB')
     expect(search.status).toBe(200)
   })
 })

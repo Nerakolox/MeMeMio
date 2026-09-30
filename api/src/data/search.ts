@@ -18,8 +18,8 @@ import { containsPattern } from '../lib/like.js'
  *    条件本身不再是三份手抄的——它们来自 `data/memes.ts` 的 `memeQueryConditions`
  *    （浏览与检索共用同一份，漏一个条件的表现是「我明明筛了」而不是报错）。
  *    但**每一路都要真的把它接进自己的 `.where()`**，这才是最容易只改一处的地方
- *    （agents/rules/database.md §1.1），也是 tests/search.test.ts 为每一路各留一个
- *    用例的原因。
+ *    （agents/rules/database.md §1.1），也是 `tests/search-paths.test.ts` 为每一路
+ *    各留一个用例的原因。
  *
  * 三条路都回 id 列表而不是完整行：RRF 只需要排名，融合完再按 id 取一次完整数据。
  * 让每路都 SELECT * 会把三份重复行拉进内存，还多三次 JOIN users 的代价。

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 /**
- * `GET /memes` 的分派、响应形状与游标（SPEC §6.3 / §6.3.1 / §6.3.2 / §6.3.3）。
+ * `GET /memes` 的分派、响应形状与游标（SPEC §6.3 / §6.3.1 / §6.3.2）。
  *
  * 四件事在这里被钉住：
  *
@@ -39,16 +39,12 @@ const { searchSnapshots } = await import('../src/data/schema.js')
 const { onError, onNotFound } = await import('../src/middleware/error.js')
 const { requestId } = await import('../src/middleware/request-id.js')
 const { memesRoutes } = await import('../src/routes/memes.js')
-const { searchRoutes } = await import('../src/routes/search.js')
 
 const { sql, db } = createTestDb()
 
-// 两个端点挂在同一个 app 上：`q` 的分派是「一个端点两种模式」，
-// 分成两个 app 的话，「两边的形状对不上」在测试里看不出来
 const testApp = new Hono()
   .use('*', requestId)
   .route('/api/v1/memes', memesRoutes)
-  .route('/api/v1/search', searchRoutes)
 testApp.onError(onError)
 testApp.notFound(onNotFound)
 
@@ -99,7 +95,7 @@ async function seedTagged(actor: Actor, count: number): Promise<string[]> {
   return ids
 }
 
-/** 快照表里现在有几行。`GET /search` 与「没有下一页」的检索都不该往里写。 */
+/** 快照表里现在有几行。「没有下一页」的检索不该往里写。 */
 async function snapshotCount(): Promise<number> {
   const rows = await db.select({ id: searchSnapshots.id }).from(searchSnapshots)
   return rows.length
@@ -127,8 +123,8 @@ describe('GET /memes 无 q（浏览）', () => {
     const alice = await signIn()
     const [memeId] = await seedTagged(alice, 1)
 
-    // 清空搜索框是常规操作，不是非法请求（SPEC §6.3.1）。`GET /search` 那边相反，
-    // 缺 q 就报错——**两条相反是故意的**，谁被顺手对齐都会坏掉一边
+    // 清空搜索框是常规操作，不是非法请求（SPEC §6.3.1）——曾经与 `GET /search`
+    // 的「缺 q 就报错」正好相反，那个端点已随首页改版删除（SPEC §9.30）
     const body = await bodyOf(await as(alice, '/api/v1/memes?q=%20%20'))
     expect(body.items.map((i) => i.id)).toContain(memeId)
     expect(body.degraded).toBe(false)
@@ -331,34 +327,32 @@ describe('游标的各种坏法', () => {
   })
 })
 
-describe('GET /search（冻结的兼容入口）', () => {
-  it('只认 q 与 limit，别的参数一律 400', async () => {
+describe('limit 的校验与截断', () => {
+  /*
+   * 从 `GET /search` 的接口测试里搬过来的（那个端点已随首页改版删除，SPEC §9.30）——
+   * 它当时是唯一一条从 HTTP 这一层钉住 `limit` 规则的用例，删端点不该顺手丢掉它。
+   *
+   * 校验在 `routes/memes.ts` 里两个分支共用同一段，所以两边都点一次：
+   * 只测一边的话，「校验只挂在检索那一支上」这种写法照样全绿。
+   */
+  it('非正整数直接 400；超过上限则截断而不是报错', async () => {
     const alice = await signIn()
+    await seedTagged(alice, 3)
 
-    // 静默忽略会让 `/search?tags=猫` 悄悄变成一次浏览——一个叫 /search 的地址
-    // 给出不搜的结果，是本项目最忌讳的「客户端看不出错的错误结果」
-    for (const qs of ['?q=%E7%8C%AB&tags=%E7%8C%AB', '?q=%E7%8C%AB&cursor=x']) {
-      const res = await as(alice, `/api/v1/search${qs}`)
-      expect([qs, res.status]).toEqual([qs, 400])
-      expect([qs, await errorCode(res)]).toEqual([qs, 'VALIDATION_FAILED'])
+    for (const limit of ['limit=0', 'limit=abc']) {
+      for (const q of ['', '&q=%E7%8C%AB']) {
+        const res = await as(alice, `/api/v1/memes?${limit}${q}`)
+        expect([limit, q, res.status]).toEqual([limit, q, 400])
+        expect(await errorCode(res)).toBe('VALIDATION_FAILED')
+      }
     }
-  })
 
-  it('nextCursor 恒为 null，且缺省 limit 是 50（不是 /memes 的 40）', async () => {
-    const alice = await signIn()
-    await seedTagged(alice, 45)
-
-    const body = await bodyOf(await as(alice, '/api/v1/search?q=%E7%8C%AB'))
-    // 45 条全部出来：缺省若被对齐成 40，首页会**静默**少 5 条（SPEC §6.3.3、裁定 3）
-    expect(body.items).toHaveLength(45)
-    // 它不分页。恒 null 而不是「没有下一页」——客户端看到 null 就该停止
-    expect(body.nextCursor).toBeNull()
-    expect(await snapshotCount()).toBe(0)
-
-    // 同一个实现的**跨端证据**：同样的查询，两个入口给同一串顺序。
-    // 顺序对不上就说明有人把召回或融合抄了第二份（retrieval.md §6）
-    const viaMemes = await bodyOf(await as(alice, '/api/v1/memes?q=%E7%8C%AB&limit=50'))
-    expect(viaMemes.items.map((i) => i.id)).toEqual(body.items.map((i) => i.id))
+    // 999 被压到 100（`MAX_LIST_LIMIT`），而库里只有 3 条 ——
+    // 能跑通就说明没有因为超上限而报错
+    expect((await bodyOf(await as(alice, '/api/v1/memes?limit=999'))).items).toHaveLength(3)
+    expect(
+      (await bodyOf(await as(alice, '/api/v1/memes?q=%E7%8C%AB&limit=999'))).items,
+    ).toHaveLength(3)
   })
 })
 

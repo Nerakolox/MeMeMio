@@ -11,7 +11,7 @@ q → HyDE 改写
   ├─ pg_trgm 子串匹配（ocr_text + description，外加 original_filename）  → top 50
   ├─ 标签过滤（七个维度任一命中）                  → top 50
   └─ 向量 HNSW（cosine，按 embed_model 过滤）      → top 50
-  → RRF 融合 → 前 N 条（`GET /memes` 缺省 40，`GET /search` 冻结在 50，上限都是 100）
+  → RRF 融合 → 前 N 条（缺省 40、上限 100，SPEC §1.3）
 ```
 
 每路的 `top 50` 是 `PATH_LIMIT`，**一次性检索的深度就是它**。翻页会把深度逐步放大到重扫三路，
@@ -78,8 +78,8 @@ PostgreSQL 默认的 `to_tsvector` 不分中文词，直接用等于没用。两
 `services/search-snapshot.ts`（编排）+ `data/search-snapshots.ts`（表），新表 `search_snapshots`。
 
 **「搜索不分页」这条立场 2026-09-26 已被推翻**，理由见 [SPEC §9.29](../../../spec/09-decisions.md)。
-`GET /search` 仍然不分页——它是冻结的兼容入口，`nextCursor` 恒为 `null`（§6.3.3），
-**新能力一律只加在 `GET /memes` 上**。
+`GET /memes` 是**唯一列表端点**，带 `q` 也分页（SPEC §6.3）；那个冻结的 `/search`
+兼容入口已随首页改版删除（[SPEC §9.30](../../../spec/09-decisions.md)）。
 
 ### 6.1 融合分不能当游标
 
@@ -150,8 +150,8 @@ PostgreSQL 默认的 `to_tsvector` 不分中文词，直接用等于没用。两
 搜索路径上只有 HyDE 那一次纯文本 LLM 调用，**不调视觉模型**，也不写 `memes`。
 
 **唯一会写库的地方是快照**（§6）：`GET /memes?q=` 首屏在有下一页时插一行，翻页时续一次期。
-那是分页的实现，不是检索本身——`GET /search` 不落快照（否则首页每搜一次涨一行），
-`GET /memes?q=` 没有下一页时也不落（没有游标就没有人引用它）。
+那是分页的实现，不是检索本身——`GET /memes?q=` 没有下一页时也不落
+（没有游标就没有人引用它）。
 
 语义理解的成本发生在入库。这是延迟和成本能同时压下来的关键，[产品定位](../../../docs/product.md)的核心之一。
 
