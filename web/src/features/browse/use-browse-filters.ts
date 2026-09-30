@@ -25,6 +25,20 @@ import { VOCAB_FIELDS, type VocabField } from '../../lib/vocab'
 /** 查询词在 URL 里的键名。与接口参数同名，不做第二套映射（state-navigation.md §1）。 */
 const QUERY_KEY = 'q'
 
+/**
+ * ⚠️ **2026-10-01 起人物 / 系列暂停**（产品负责人指示：聚类路径重定待定，见
+ * joint-tasks/2026-10-01-人物功能临时下线.md §3）。
+ *
+ * 这两个键**从 URL 里认到也当作没传**。藏了入口却让旧链接进得去，等于没藏干净：
+ * `?person=<id>` 会把列表筛起来，而界面上既没有那个按钮、也没有那条头部，
+ * 用户看到的是「图少了一截、还没有任何地方说得清为什么」——正是任务 §2 第 2 条
+ * 要避免的半开界面。
+ *
+ * **参数的名字与类型一个字没删**：下面 `searchParams` 那一处是本次唯一的开关点，
+ * 把它换回 `urlParams` 就整个接回来（任务 §5 的恢复清单里记着）。
+ */
+const PAUSED_FILTER_KEYS = ['person', 'series'] as const
+
 /** 把当前 query 解析成接口参数。游标在外部传入，**不放 URL**（SPEC §6.3.2，分页游标不是筛选条件）。 */
 function buildParams(sp: URLSearchParams): FetchMemesParams {
   const p: FetchMemesParams = {}
@@ -52,6 +66,9 @@ function buildParams(sp: URLSearchParams): FetchMemesParams {
   // 人物 / 系列（SPEC §6.3.2）。**单值**，不像词表那样 `getAll`——一张图至多归一个人物，
   // 也不会有两个 series 的说法，服务端对重复参数直接 `VALIDATION_FAILED`。
   //
+  // ⚠️ **暂停期间这两行取不到东西**：`sp` 是上游摘掉 `PAUSED_FILTER_KEYS` 之后那一份，
+  //    所以下面两个 `get` 恒为 null。**留着不删**——恢复就是那一个开关点的事。
+  //
   // ⚠️ **这里不校验 id 长得像不像 uuid。** 校验就要在客户端留一份格式规则，而那份规则
   //    迟早和服务端的 `isUuid` 漂；服务端对不合法的形状回 400，界面照常显示
   //    （见 `use-browse-list` 的错误态）。前端自作聪明地「先滤掉」会让一个手打错的
@@ -72,6 +89,9 @@ function buildParams(sp: URLSearchParams): FetchMemesParams {
  * `person` / `series` 进来之后，「清除」和新加的「人物」按钮上的「清除」都会清掉它们
  * （**两处清的是同一件事**，不矛盾：`person` 就是一个筛选条件）。真正要留意的是它反过来
  * 也成立——**「清除」会把人物筛选一起清掉**，所以那句话是「清除全部筛选」。
+ *
+ * ⚠️ 这两个键**暂停期间在 `searchParams` 那一层就被摘掉了**（见 `PAUSED_FILTER_KEYS`），
+ * 所以下面数不到、也清不到它们——成员原样保留，那是恢复时的事。
  */
 const SINGLE_KEYS = [
   'isAnimated',
@@ -124,7 +144,34 @@ function readLabels(sp: URLSearchParams): Record<VocabField, string[]> {
 }
 
 export function useBrowseFilters() {
-  const [searchParams, setSearchParams] = useSearchParams()
+  const [urlParams, setSearchParams] = useSearchParams()
+
+  /*
+    ⚠️ **`searchParams` 是「暂停中的键被摘掉之后」的那一份**（2026-10-01，见
+    `PAUSED_FILTER_KEYS`）。本 hook 下面所有的**读**都认它，所以旧链接不会进筛选、
+    角标不会数它、`hasFilters` 也不会因为它冒出来——任务 §2 第 2 条要的
+    「当作没传」在这里一次性成立，不必在每个读点各判一遍。
+
+    **省事的写法是拿它当底去写 URL**（下面四类写操作都是从 `searchParams` 起手），
+    于是任何一次改筛选都会顺手把 `person` / `series` 从地址栏带走。这是有意的：
+    那几个键在这个阶段没有消费者，留着只会在下一次分享时被继续传下去。
+
+    **不动地址栏本身**：进来时 URL 原样留在浏览器里，所以恢复时（把 `urlParams` 换回
+    `searchParams`、即删掉这一层）那条旧链接立刻就活了。见任务 §5。
+  */
+  /*
+    ⚠️ 摘掉的是**地址栏那一份**（`urlParams`），摘完的结果才是这个 hook 认的 `searchParams`。
+    两把尺要分开：`rawKey` 只用来当 memo 的依赖，`filtersKey` 是取数参数那一份
+    （`params` 直接从它 build，所以**它必须已经不含 `person` / `series`**——
+    这一点踩过：第一版把 `filtersKey` 留在 `urlParams.toString()` 上，于是参数照样发出去，
+    界面看起来全对、请求日志里却带着 `person=`）。
+  */
+  const rawKey = urlParams.toString()
+  const searchParams = useMemo(() => {
+    const next = new URLSearchParams(rawKey)
+    for (const key of PAUSED_FILTER_KEYS) next.delete(key)
+    return next
+  }, [rawKey])
 
   /*
    * `filtersKey` 是**字符串**、`params` 由它 memo 出来，所以两者都是「查询条件没变就不换引用」的，
@@ -286,6 +333,9 @@ export function useBrowseFilters() {
     /**
      * 当前筛的人物 / 系列 id，`null` = 没筛。**这里给的是 id 不是名字**——
      * URL 里只有 id（SPEC §6.3.2），名字要用 `GET /persons/{id}` 换。
+     *
+     * ⚠️ **暂停期间恒为 `null`**（`searchParams` 已被摘过一遍，见文件头 `PAUSED_FILTER_KEYS`）。
+     *    名字与类型原样保留，恢复时自动又有值，调用点不用改。
      *
      * ⚠️ **不要在按钮上直接显示 id**：那串 uuid 对用户没有意义，而「未命名的人物」
      *    也没有名字可显示。名字由调用方取到之后传进 `BrowseFilters`（见那个文件的

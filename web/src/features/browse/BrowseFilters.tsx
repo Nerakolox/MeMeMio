@@ -5,7 +5,6 @@
  * 这里没有任何本地 state：每一项的真源都是 URL（`use-browse-filters`）。
  */
 
-import { Users, X } from 'lucide-react'
 import { Button } from '../../components/ui/button'
 import {
   Select,
@@ -44,35 +43,13 @@ const ROW_GAP = 'flex flex-col gap-1.5'
 export function BrowseFilters({
   filters,
   user,
-  personLabel,
-  seriesLabel,
-  onOpenPersons,
 }: {
   filters: BrowseFiltersState
   user: User | null
-  /**
-   * 当前筛的人物 / 系列**叫什么**。`null` = 取不到名字（还没拉到、或是「未命名」）。
-   *
-   * ⚠️ **名字由调用方取好传进来，这里不自己拉**：URL 里只有 id（SPEC §6.3.2），
-   *    在这个组件里再拉一次的话，结果列上方那个头部改名之后按钮上还是旧名字。
-   *    取不到时显示「人物」而不是留空——空按钮看起来像坏了。
-   */
-  personLabel: string | null
-  seriesLabel: string | null
-  /** 打开「按人物 / 系列浏览」那个 modal。**只回调开合**：modal 由路由层持有（见那个文件）。 */
-  onOpenPersons: () => void
 }) {
   // tagStatus 只对 admin、或正在筛「只看我的」的人有意义（SPEC §6.3.2 + §3.3）：
   // 别人的打标状态既不是他该看见的信息，也不是他能处理的事。
   const canUseTagStatus = user?.role === 'admin' || filters.uploader === 'me'
-
-  /*
-    人物 / 系列筛选在按钮上的呈现（任务 §5.2）：「有 `person` 或 `series` 筛选时按钮上
-    显示那个名字」。**两个是同一个入口**（modal 里两个 tab），所以按钮上只显示生效的那一个；
-    两个同时有值时优先显示人物——系列那边点进去也能看到自己在哪个人物下。
-  */
-  const activeLabel = filters.person ? personLabel : filters.series ? seriesLabel : null
-  const filtered = filters.person !== null || filters.series !== null
 
   return (
     <div className="flex flex-col gap-4">
@@ -191,35 +168,12 @@ export function BrowseFilters({
       </div>
 
       {/*
-        「人物」按钮：筛选区上半部分**最下面**（任务 §2 第 8 条），在两个下拉之后、
-        词表维度之前。它自己这一组独占一行，因为下面那 190 个 chip 是一整段别的东西。
-
-        **按钮点开 modal，× 清筛选**（两件事不能塞进一个 `<button>` 里：嵌套按钮是
-        非法 HTML，浏览器会把内层拆出去）。× 只在真的筛着的时候出现——没有它的时候
-        整行仍然只有一个按钮，与「清除」那行的做法一致。
+        ⚠️ 这里原本是「人物」按钮（点开 `PersonPickerDialog`，右上 × 清 `person`/`series` 筛选；
+        位置要求见任务 2026-09-29 人物识别与聚类 §2 第 8 条：在两个下拉之后、词表之前）。
+        2026-10-01 起下线，见 routes/browse.tsx 文件头那段与任务 2026-10-01-人物功能临时下线
+        §5 的恢复清单——恢复时按钮本体回到这里，`personLabel` / `seriesLabel` /
+        `onOpenPersons` 三个 props 也要一起接回来。
       */}
-      <div className={ROW}>
-        <Button
-          variant="outline"
-          className={cn(TOUCH, 'min-w-0 flex-1 justify-start')}
-          onClick={onOpenPersons}
-        >
-          <Users className="size-4 shrink-0" />
-          {/* 名字长了要截断，不能把这一列撑宽（220px 的列里名字很容易超） */}
-          <span className="truncate">{filtered ? (activeLabel ?? '人物') : '人物'}</span>
-        </Button>
-        {filtered && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn(TOUCH, 'shrink-0')}
-            aria-label="清除人物筛选"
-            onClick={filters.clearPersons}
-          >
-            <X className="size-4" />
-          </Button>
-        )}
-      </div>
 
       {/*
         六个词表维度（SPEC §4.3）。**整段交给 `VocabSections`**：它内部遍历

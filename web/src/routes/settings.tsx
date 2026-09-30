@@ -4,9 +4,7 @@ import { useAuth } from '../contexts/auth'
 import { Button } from '../components/ui/button'
 import { Separator } from '../components/ui/separator'
 import { EmbedSettings } from '../features/settings/EmbedSettings'
-import { ImageEmbedSettings } from '../features/settings/ImageEmbedSettings'
 import { InviteSettings } from '../features/settings/InviteSettings'
-import { PersonsReindexPanel } from '../features/settings/PersonsReindexPanel'
 import { ReindexPanel } from '../features/settings/ReindexPanel'
 import { RetagPanel } from '../features/settings/RetagPanel'
 import { RuntimeSettings } from '../features/settings/RuntimeSettings'
@@ -41,13 +39,16 @@ import { VisionSettings } from '../features/settings/VisionSettings'
  *
  * 「运行参数」排在 Embedding 之后、用户之前——它与 Embedding 同类（**全站一份的配置**，
  * 由 admin 改），而 `ReindexPanel` / `RetagPanel` 是运维动作面板（没有 `id`，不进这张表）。
+ *
+ * ⚠️ **2026-10-01 起「图片向量」这一行连同两段界面一起下线**（人物聚类暂停待方案，任务
+ * 2026-10-01-人物功能临时下线 §3）：「图片向量」卡（`ImageEmbedSettings`，`#image-embed`
+ * 锚点就落在它身上）与它下面的补跑面板（`PersonsReindexPanel`）。恢复时这一行按原样加回来，
+ * 位置在 Embedding 之后、运行参数之前（见任务 §5 的恢复清单）。
  */
 const SECTIONS = [
   { id: 'vision', label: '视觉模型', adminOnly: false },
   { id: 'invites', label: '邀请码', adminOnly: true },
   { id: 'embedding', label: 'Embedding', adminOnly: true },
-  // 与 Embedding 同类（全站一份、admin 改），排在它后面。补跑面板同 ReindexPanel，没有 id
-  { id: 'image-embed', label: '图片向量', adminOnly: true },
   { id: 'runtime', label: '运行参数', adminOnly: true },
   { id: 'users', label: '用户', adminOnly: true },
 ]
@@ -103,12 +104,11 @@ export function SettingsPage() {
           <EmbedSettings onReindexTriggered={() => setReindexToken((n) => n + 1)} />
 
           {/*
-            图片向量（任务 §5.2）。**与 Embedding 并列的第二张配置卡**：两条独立的配置流
-            （§5.7.1），各自的表与测试记录。紧随其后的是它自己的补跑面板——
-            与 Embedding + ReindexPanel 那一对同构：配置在上、动作在下。
+            ⚠️ 这里原本是「图片向量」那张配置卡（`ImageEmbedSettings`）与它下面的补跑面板
+            （`PersonsReindexPanel`）——两条独立的配置流，形状与上面 Embedding + ReindexPanel
+            那一对同构（配置在上、动作在下）。2026-10-01 起随人物聚类暂停一起下线，
+            组件仍在 `features/settings/`，恢复时按原样挂回这个位置（见任务 §5）。
           */}
-          <ImageEmbedSettings onReindexTriggered={() => setReindexToken((n) => n + 1)} />
-          <PersonsReindexPanel refreshToken={reindexToken} />
 
           {/*
             紧挨 Embedding 之后（同为「全站一份的配置」），在用户之前。它**插在**

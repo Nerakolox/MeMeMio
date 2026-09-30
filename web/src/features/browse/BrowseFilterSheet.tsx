@@ -29,21 +29,19 @@ import type { BrowseFiltersState } from './use-browse-filters'
 export function BrowseFilterSheet({
   filters,
   user,
-  personLabel,
-  seriesLabel,
-  onOpenPersons,
 }: {
   filters: BrowseFiltersState
   user: User | null
-  personLabel: string | null
-  seriesLabel: string | null
-  onOpenPersons: () => void
 }) {
   /*
     抽屉开合是**纯 UI state**（state-navigation.md §3 第一类），不进 URL。之前这里是不受控的
     （`<Sheet>` 不给 `open`），改成受控只为一件事：**点「人物」时先把抽屉收起来再开 modal**
     ——两层模态叠着的时候，Esc 关掉的是哪一层、焦点落在谁那里，都是要靠试才知道的问题
     （`ImageViewer` 的文件头记过同一类）。
+
+    ⚠️ 2026-10-01 起「人物」入口下线（任务 2026-10-01-人物功能临时下线 §3），那个 modal
+    暂时不存在了，所以这个受控 state 眼下没有第二个用途——**留着不删**，恢复入口时
+    `onOpenPersons` 连同「先收抽屉」这一步要一起接回来（§5 的恢复清单）。
   */
   const [open, setOpen] = useState(false)
 
@@ -94,17 +92,7 @@ export function BrowseFilterSheet({
         {/* 只让中间这段滚、标题常驻（同 MemeEditPanel 的结构）：七维共 191 个 chip，
             展开两三维就比屏幕长了（收起时不长，但常驻标题对两种情形都不亏） */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4">
-          <BrowseFilters
-            filters={filters}
-            user={user}
-            personLabel={personLabel}
-            seriesLabel={seriesLabel}
-            // 先收起抽屉再开 modal，理由见上面 `open` 那个 state
-            onOpenPersons={() => {
-              setOpen(false)
-              onOpenPersons()
-            }}
-          />
+          <BrowseFilters filters={filters} user={user} />
         </div>
       </SheetContent>
     </Sheet>

@@ -107,13 +107,21 @@ import { useBrowseActions } from '../features/browse/use-browse-actions'
 import { useBrowseFilters } from '../features/browse/use-browse-filters'
 import { useBrowseList } from '../features/browse/use-browse-list'
 import { MemeEditPanel } from '../features/manage/MemeEditPanel'
-import { PersonFilterBar } from '../features/persons/PersonFilterBar'
-import { PersonPickerDialog } from '../features/persons/PersonPickerDialog'
-import { SeriesFilterBar } from '../features/persons/SeriesFilterBar'
-import { usePerson, useSeries } from '../features/persons/use-entity'
-import { usePersonMemeActions } from '../features/persons/use-person-meme-actions'
 import { TOUCH } from '../lib/touch'
 
+/*
+  ⚠️ **2026-10-01 起人物 / 系列的用户可见面全部下线**（产品负责人指示，聚类暂停待方案，
+  见 joint-tasks/2026-10-01-人物功能临时下线.md §3 与它的 §5 恢复清单）。
+
+  这一层去掉的是**渲染点**，组件与接口层原样留在 `features/persons/`、`lib/api-persons.ts`
+  里没动过。恢复时按 §5 那三行把下面这几处接回来即可：
+    · 筛选区那一行（`BrowseFilters` 的「人物」按钮）与它开的 modal（`PersonPickerDialog`）；
+    · 结果列顶上的 `PersonFilterBar` / `SeriesFilterBar`；
+    · 给 `BrowseResults` 的 `personActions`（卡片「⋯」那两项）。
+
+  URL 里的 `person` / `series` 也是**认到也不进筛选**，落点在 `use-browse-filters`
+  （那里是这次唯一的开关点，旧链接因此不会进到一个「筛着却看不见筛了什么」的半开界面）。
+*/
 export function BrowsePage() {
   const { user } = useAuth()
   const filters = useBrowseFilters()
@@ -124,30 +132,6 @@ export function BrowsePage() {
     而 ref 的 `current` 变化不触发渲染——存 ref 的话第一次量测读到的是 null。
   */
   const [scroller, setScroller] = React.useState<HTMLDivElement | null>(null)
-  /** 「按人物浏览」那个 modal 的开合。**纯 UI state**（state-navigation.md §3 第一类），不进 URL。 */
-  const [pickerOpen, setPickerOpen] = React.useState(false)
-
-  /*
-    当前筛的人物 / 系列。**在这一层取一次**，供两处共用（2026-09-30）：
-    筛选区那个「人物」按钮要显示名字，结果列上方的头部要能改它。
-    两处各拉一次就是两个真源——头部改完名之后按钮上还是旧名字。
-
-    两个 hook 都收 `null`（「没筛」时不发请求），所以没筛的那一侧这里什么都不做。
-  */
-  const personEntity = usePerson(filters.person)
-  const seriesEntity = useSeries(filters.series)
-  // 未命名也照样给一句话：`null` 在这里的含义是「还不知道叫什么」，
-  // 让按钮退回泛称「人物」。取不到名字与「就叫未命名」是两件事。
-  const personLabel =
-    personEntity.state.kind === 'ready' ? (personEntity.state.value.name ?? '未命名') : null
-  const seriesLabel = seriesEntity.state.kind === 'ready' ? seriesEntity.state.value.name : null
-  const openPersons = () => setPickerOpen(true)
-
-  /*
-    卡片「⋯」里那两项（任务 §5.2）。**无条件调用这个 hook**，由 `personId` 是否为 null
-    决定那两项出不出现——不写成 `filters.person !== null &&` 包住 hook。
-  */
-  const personMemeActions = usePersonMemeActions(list, personEntity, filters.person)
 
   return (
     <>
@@ -181,13 +165,7 @@ export function BrowsePage() {
 
           {/* 窄屏工具条：抽屉入口 + 快捷「清除」。桌面这行不存在（筛选列常驻在左边） */}
           <div className="mt-3 flex items-center gap-2 md:hidden">
-            <BrowseFilterSheet
-              filters={filters}
-              user={user}
-              personLabel={personLabel}
-              seriesLabel={seriesLabel}
-              onOpenPersons={openPersons}
-            />
+            <BrowseFilterSheet filters={filters} user={user} />
             {filters.hasFilters && (
               <Button variant="ghost" size="sm" className={TOUCH} onClick={filters.clear}>
                 清除
@@ -229,13 +207,7 @@ export function BrowsePage() {
               会被浮层压住 8px。结果列同理（那边被压的是最右一列的图）。
             */}
             <ScrollArea className="h-full pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain">
-              <BrowseFilters
-                filters={filters}
-                user={user}
-                personLabel={personLabel}
-                seriesLabel={seriesLabel}
-                onOpenPersons={openPersons}
-              />
+              <BrowseFilters filters={filters} user={user} />
             </ScrollArea>
           </ResizablePanel>
 
@@ -271,37 +243,9 @@ export function BrowsePage() {
               className="h-full md:pr-3 [&>[data-slot=scroll-area-viewport]]:overscroll-contain"
             >
               {/*
-                按人物 / 系列筛时，结果列**内容的最上面**多两条头部（任务 §5.2）。
-
-                放在滚动区**里面**而不是钉在它上面：这一条本身有名字框、封面、隐藏开关、
-                「可能是同一个」最多三格——钉住的话在 900 高的视口里它一个人就吃掉四分之一，
-                手机上更夸张。它不是「这一页的标题」，是这一组的内容说明，跟着滚走是对的。
-                （瀑布流量的 `inContent` 会把它算进去，见 `useScrollMetrics`。）
-
-                两个都筛的时候两条都显示（手打 URL 或旧链接才可能），不做「只显示一条」的
-                取巧——那会让另一条筛选在界面上没有出路。
+                ⚠️ 这里原本是按人物 / 系列筛时那两条头部（`PersonFilterBar` / `SeriesFilterBar`），
+                2026-10-01 起一并下线，见文件头那段与任务 §5。
               */}
-              {filters.person !== null && (
-                <div className="mb-4">
-                  <PersonFilterBar
-                    personId={filters.person}
-                    entity={personEntity}
-                    onClear={filters.clearPersons}
-                    onMerged={list.reload}
-                    onPickOther={filters.pickPerson}
-                  />
-                </div>
-              )}
-              {filters.series !== null && (
-                <div className="mb-4">
-                  <SeriesFilterBar
-                    entity={seriesEntity}
-                    onClear={filters.clearPersons}
-                    onMembersChanged={list.reload}
-                  />
-                </div>
-              )}
-
               <BrowseResults
                 list={list}
                 user={user}
@@ -310,17 +254,6 @@ export function BrowsePage() {
                 onSend={(t) => void actions.send(t)}
                 onEdit={(meme) => actions.openEditor(meme.id)}
                 onRemove={actions.remove}
-                // 没按人物筛就不传，卡片菜单上那两项整个不出现（理由见 BrowseResults）
-                personActions={
-                  filters.person === null
-                    ? undefined
-                    : {
-                        // 头部用的是同一份 entity，所以改完名这里立刻跟着变
-                        personName: personEntity.state.kind === 'ready' ? personEntity.state.value.name : null,
-                        onRemoveFromPerson: (m) => void personMemeActions.removeFromPerson(m),
-                        onSetCover: (m) => void personMemeActions.setCover(m),
-                      }
-                }
               />
             </ScrollArea>
           </ResizablePanel>
@@ -328,25 +261,11 @@ export function BrowsePage() {
       </div>
 
       {/*
-        「按人物 / 系列浏览」那个 modal。**挂在这一层**（不是 `BrowseFilters` 里）：
-        桌面筛选列与手机抽屉都渲染 `BrowseFilters`，挂在那里就会有两个 Radix 对话框
-        ——先例与后果写在 `components/ImageViewer.tsx` 的文件头。
-
-        点一格 = 加筛选 + 关 modal。加筛选走 `pickPerson` / `pickSeries`（`replace`，
-        不占历史），并把另一个键删掉——理由在 `use-browse-filters` 那两个函数上。
+        ⚠️ 「按人物 / 系列浏览」那个 modal（`PersonPickerDialog`）原本挂在这一层——
+        **不是 `BrowseFilters` 里**：桌面筛选列与手机抽屉都渲染 `BrowseFilters`，
+        挂在那里就会有两个 Radix 对话框（先例与后果写在 `components/ImageViewer.tsx`
+        的文件头）。2026-10-01 起下线，恢复时连这条「只有一个实例」的约束一起接回来。
       */}
-      <PersonPickerDialog
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        onPickPerson={(id) => {
-          filters.pickPerson(id)
-          setPickerOpen(false)
-        }}
-        onPickSeries={(id) => {
-          filters.pickSeries(id)
-          setPickerOpen(false)
-        }}
-      />
 
       {/*
         编辑侧边栏。key 用 meme.id：换一张图时组件要重挂，草稿才有正确的初始值——
